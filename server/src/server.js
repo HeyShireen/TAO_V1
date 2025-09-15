@@ -35,7 +35,7 @@ app.use('/api/lots', lotRoutes);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // ATTENTION: on sert depuis server/public
-const publicDir = path.resolve(__dirname, '../public');
+const publicDir = path.resolve(__dirname, './public');
 
 app.use(express.static(publicDir));
 app.get('*', (req, res) => {
