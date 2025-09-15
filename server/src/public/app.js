@@ -7,41 +7,41 @@ let token = localStorage.getItem('token') || null;
 let currentProject = null;
 let currentLot = null;
 
-let lotCompanies = [];            // [{id,name}]
-let sheetRows = [];               // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
+let lotCompanies = [];      // [{id,name}]
+let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
+let colModel = [];          // [{ key, editable, wide, cls }]
 const undoStack = [];
 const redoStack = [];
 
+/* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
 const qsa = (s) => Array.from(document.querySelectorAll(s));
 const show = (sel) => qs(sel).classList.remove('hidden');
 const hide = (sel) => qs(sel).classList.add('hidden');
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 
-/* ================= utils ================= */
+/* ====== Num parse/format (FR friendly) ====== */
 function parseNum(v){
   if (v == null || v === '') return NaN;
   if (typeof v === 'number') return v;
   let s = String(v).trim();
-  // enlever espaces (incl. insécables)
-  s = s.replace(/\u00A0|\u202F|\s/g, '');
-  // gérer formats "1.234,56" (FR) ou "1,234.56" (EN)
-  const hasComma = s.includes(',');
-  const hasDot = s.includes('.');
-  if (hasComma && hasDot){
-    // dernier séparateur = décimal, l'autre = milliers (à supprimer)
-    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else {
-      s = s.replace(/,/g, '');
-    }
-  } else if (hasComma) {
-    // "1234,56" -> "1234.56"
-    s = s.replace(',', '.');
+  // enlever espaces (y compris insécables)
+  s = s.replace(/[\u00A0\u202F\s]/g, '');
+  // formats mixtes 1.234,56 / 1,234.56
+  const lastComma = s.lastIndexOf(',');
+  const lastDot   = s.lastIndexOf('.');
+  if (lastComma > -1 || lastDot > -1) {
+    const last = Math.max(lastComma, lastDot);
+    const decSep = s[last];
+    // supprimer tous les autres séparateurs de milliers
+    s = s
+      .replace(/[.,]/g, (m, idx) => (idx === last ? m : ''))
+      .replace(decSep, '.');
   }
-  // garder chiffres, ., - et ( ) pour négatifs style "(123)"
+  // style (123) => -123
   if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
-  s = s.replace(/[^0-9\.\-]/g,'');
+  // garder chiffres, ., -
+  s = s.replace(/[^0-9.\-]/g,'');
   const n = Number(s);
   return Number.isFinite(n) ? n : NaN;
 }
@@ -55,7 +55,7 @@ function amountOf(q, pu){
   return formatNum(n1 * n2);
 }
 
-/* ================= API helper ================= */
+/* ====== API ====== */
 async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
@@ -124,15 +124,20 @@ async function openLot(id, lotMeta){
   activateTab('tab-lot');
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
 
+  // Entreprises du lot
   lotCompanies = await api(`/lots/${id}/companies`);
-  renderLotCompanies();
 
+  // Données pour éditer
   const raw = await api(`/lots/${id}`); // {items, moe, companies, offers}
   buildSheetModel(raw);
 
+  // Afficher comparatif par défaut
   await refreshCompare();
   hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
   qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
+
+  // Chips entreprises
+  renderLotCompanies();
 }
 
 /* ================= Comparatif (lecture) ================= */
@@ -155,6 +160,7 @@ async function refreshCompare(){
 }
 
 /* ================= Tableur (édition) ================= */
+/** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
   const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
   const offersByItem = new Map();
@@ -183,86 +189,117 @@ function buildSheetModel(raw){
   if (sheetRows.length === 0)
     sheetRows.push({ item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
 
-  renderSheet();
+  buildColModel();
+  renderSheetInitial();
 }
 
-function renderLotCompanies(){
-  const wrap = qs('#lot-companies');
-  wrap.innerHTML = '';
-  for (const c of lotCompanies) {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
-    chip.querySelector('button').addEventListener('click', async () => {
-      await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
-      lotCompanies = lotCompanies.filter(x => x.id !== c.id);
-      for (const r of sheetRows) delete r.offers[c.id];
-      renderLotCompanies();
-      renderSheet();
-      await refreshCompare();
-    });
-    wrap.appendChild(chip);
+function buildColModel(){
+  // base 6 colonnes
+  colModel = [
+    { key:'num',        editable:true },
+    { key:'designation',editable:true,  wide:true },
+    { key:'unit',       editable:true },
+    { key:'moe.qty',    editable:true,  cls:'moe-col' },
+    { key:'moe.pu',     editable:true,  cls:'moe-col' },
+    { key:'moe.mt',     editable:false, cls:'moe-col' },
+  ];
+  // groupes par entreprise : 4 colonnes
+  for (const c of lotCompanies){
+    colModel.push({ key:`c.${c.id}.u`,   editable:true  });
+    colModel.push({ key:`c.${c.id}.qty`, editable:true  });
+    colModel.push({ key:`c.${c.id}.pu`,  editable:true  });
+    colModel.push({ key:`c.${c.id}.mt`,  editable:false });
   }
 }
 
-function headerStructure(){
-  const base = [
-    { key:'num', label:'Num', readonly:false },
-    { key:'designation', label:'Désignation', readonly:false, wide:true },
-    { key:'unit', label:'Unité', readonly:false },
-    { key:'moe.qty', label:'Quantité MOE', readonly:false, cls:'moe-col' },
-    { key:'moe.pu',  label:'PU MOE',       readonly:false, cls:'moe-col' },
-    { key:'moe.mt',  label:'Mt MOE',       readonly:true,  cls:'moe-col' },
-  ];
-  const comps = lotCompanies.map(c => ({
-    id: c.id,
-    name: c.name,
-    cols: [
-      { key:`c.${c.id}.u`,  label:'Unité',  readonly:false },
-      { key:`c.${c.id}.qty`,label:'Qté',    readonly:false },
-      { key:`c.${c.id}.pu`, label:'PU',     readonly:false },
-      { key:`c.${c.id}.mt`, label:'Mt',     readonly:true  },
-    ]
-  }));
-  return { base, comps };
+function headerLabelFor(key){
+  if (key === 'num') return 'Num';
+  if (key === 'designation') return 'Désignation';
+  if (key === 'unit') return 'Unité';
+  if (key === 'moe.qty') return 'Quantité MOE';
+  if (key === 'moe.pu')  return 'PU MOE';
+  if (key === 'moe.mt')  return 'Mt MOE';
+  if (key.startsWith('c.')){
+    const [, cid, sub] = key.split('.');
+    if (sub === 'u')  return 'Unité';
+    if (sub === 'qty')return 'Qté';
+    if (sub === 'pu') return 'PU';
+    if (sub === 'mt') return 'Mt';
+  }
+  return key;
+}
+function companyNameFor(cid){
+  const c = lotCompanies.find(x => String(x.id) === String(cid));
+  return c ? c.name : `C${cid}`;
 }
 
-function renderSheet(){
-  const { base, comps } = headerStructure();
-  const head = qs('#sheet-head'); const body = qs('#sheet-body');
+/** Rendu initial sans réutiliser pendant les collages */
+function renderSheetInitial(){
+  const head = qs('#sheet-head');
+  const body = qs('#sheet-body');
   head.innerHTML = ''; body.innerHTML = '';
 
-  // header top
+  // top header: base (rowSpan=2) + groupes
   const tr1 = document.createElement('tr');
-  for (const b of base){ const th = document.createElement('th'); th.textContent = b.label; th.rowSpan = 2; if (b.cls) th.classList.add(b.cls); tr1.appendChild(th); }
-  for (const g of comps){ const th = document.createElement('th'); th.textContent = g.name; th.colSpan = 4; th.classList.add('company-col'); tr1.appendChild(th); }
+  // base (6) en rowSpan
+  const baseCount = 6;
+  for (let i=0;i<baseCount;i++){
+    const col = colModel[i];
+    const th = document.createElement('th');
+    th.textContent = headerLabelFor(col.key);
+    th.rowSpan = 2;
+    if (col.cls) th.classList.add(col.cls);
+    tr1.appendChild(th);
+  }
+  // groupes par entreprise (4 colonnes)
+  for (let i=baseCount;i<colModel.length;i+=4){
+    const col = colModel[i];
+    const [, cid] = col.key.split('.');
+    const th = document.createElement('th');
+    th.textContent = companyNameFor(cid);
+    th.colSpan = 4;
+    th.classList.add('company-col');
+    tr1.appendChild(th);
+  }
   head.appendChild(tr1);
-  // header bottom
+
+  // bottom header: libellés des 4 colonnes par entreprise
   const tr2 = document.createElement('tr');
-  for (const g of comps){ for (const c of g.cols){ const th = document.createElement('th'); th.textContent = c.label; tr2.appendChild(th); } }
+  for (let i=baseCount;i<colModel.length;i++){
+    const th = document.createElement('th');
+    th.textContent = headerLabelFor(colModel[i].key);
+    tr2.appendChild(th);
+  }
   head.appendChild(tr2);
 
-  // body
-  sheetRows.forEach((row, rIndex) => {
-    const tr = document.createElement('tr');
-    let colIndex = 0;
-    for (const b of base){
-      tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide, colIndex++));
-    }
-    for (const g of comps){
-      for (const c of g.cols){
-        tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key), false, colIndex++));
-      }
-    }
-    body.appendChild(tr);
-    recalcRowAmounts(rIndex);
-  });
+  // lignes existantes
+  for (let r=0; r<sheetRows.length; r++){
+    appendRowDOM(r, sheetRows[r]);
+  }
 
-  // (ré)attacher la délégation d’événements sur le body du tableur
+  // délégation d’événements (une seule fois)
   attachSheetDelegates();
+  // recalcul initial
+  for (let r=0; r<sheetRows.length; r++) recalcRowAmountsRow(r);
 }
 
-function rowValue(row, key){
+/** appendRowDOM : ne rerend PAS tout */
+function appendRowDOM(rIndex, data){
+  const tr = document.createElement('tr');
+  for (let c=0;c<colModel.length;c++){
+    const col = colModel[c];
+    const td = document.createElement('td');
+    td.dataset.r = String(rIndex);
+    td.dataset.c = String(c);
+    if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
+    if (col.wide) td.style.minWidth = '320px';
+    td.textContent = valueForCell(data, col.key);
+    tr.appendChild(td);
+  }
+  qs('#sheet-body').appendChild(tr);
+}
+function valueForCell(row, key){
+  if (!row) return '';
   if (key === 'num') return row.num ?? '';
   if (key === 'designation') return row.designation ?? '';
   if (key === 'unit') return row.unit ?? '';
@@ -278,241 +315,277 @@ function rowValue(row, key){
   return '';
 }
 
-function setRowValue(rIndex, key, val){
-  const row = sheetRows[rIndex];
-  if (!row) return;
-  if (key === 'num') row.num = val;
-  else if (key === 'designation') row.designation = val;
-  else if (key === 'unit') row.unit = val;
-  else if (key === 'moe.qty') row.moe.qty = val;
-  else if (key === 'moe.pu')  row.moe.pu  = val;
+/** ====== Mutations incrémentales ====== */
+function ensureRows(n){
+  // compléter sheetRows + DOM jusqu’à n lignes
+  while (qsa('#sheet-body tr').length < n) {
+    const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+    sheetRows.push(blank);
+    const rIndex = sheetRows.length - 1;
+    appendRowDOM(rIndex, blank);
+    // recalcul (vide au départ, mais garde la logique)
+    recalcRowAmountsRow(rIndex);
+  }
+}
+function getCell(r, c){
+  const rowEl = qsa('#sheet-body tr')[r];
+  return rowEl ? rowEl.children[c] : null;
+}
+function setCell(r, c, text){
+  const td = getCell(r, c); if (!td) return;
+  td.textContent = text ?? '';
+  // mettre à jour le modèle
+  const key = colModel[c].key;
+  const row = sheetRows[r] || (sheetRows[r] = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
+  if (key === 'num') row.num = text;
+  else if (key === 'designation') row.designation = text;
+  else if (key === 'unit') row.unit = text;
+  else if (key === 'moe.qty') { row.moe.qty = text; }
+  else if (key === 'moe.pu')  { row.moe.pu  = text; }
   else if (key.startsWith('c.')){
     const [, cid, sub] = key.split('.');
     row.offers[cid] = row.offers[cid] || { u:'', qty:'', pu:'' };
-    if (sub !== 'mt') row.offers[cid][sub] = val;
+    if (sub !== 'mt') row.offers[cid][sub] = text;
   }
 }
 
-function makeCell(r, key, readonly, value, wide=false, colIndex=null){
-  const td = document.createElement('td');
-  if (!readonly) td.contentEditable = 'true';
-  if (readonly) td.classList.add('cell-readonly');
-  if (wide) td.style.minWidth = '320px';
-  td.textContent = value ?? '';
-  td.dataset.r = String(r);
-  td.dataset.key = key;
-  td.dataset.c = String(colIndex ?? 0);  // index de colonne pour navigation
-  return td;
+/** recalcul par ligne (MOE + chaque entreprise) */
+function recalcRowAmountsRow(r){
+  const rowEl = qsa('#sheet-body tr')[r]; if (!rowEl) return;
+  // MOE
+  const cQty = colModel.findIndex(c => c.key === 'moe.qty');
+  const cPu  = colModel.findIndex(c => c.key === 'moe.pu');
+  const cMt  = colModel.findIndex(c => c.key === 'moe.mt');
+  if (cQty>=0 && cPu>=0 && cMt>=0){
+    const qty = getCell(r,cQty)?.textContent.trim();
+    const pu  = getCell(r,cPu )?.textContent.trim();
+    const mt  = getCell(r,cMt );
+    if (mt) mt.textContent = amountOf(qty, pu);
+  }
+  // Entreprises
+  for (const c of lotCompanies){
+    const base = `c.${c.id}.`;
+    const ciQty = colModel.findIndex(x => x.key === base+'qty');
+    const ciPu  = colModel.findIndex(x => x.key === base+'pu');
+    const ciMt  = colModel.findIndex(x => x.key === base+'mt');
+    if (ciQty>=0 && ciPu>=0 && ciMt>=0){
+      const qty = getCell(r,ciQty)?.textContent.trim();
+      const pu  = getCell(r,ciPu )?.textContent.trim();
+      const mt  = getCell(r,ciMt );
+      if (mt) mt.textContent = amountOf(qty, pu);
+    }
+  }
 }
 
-/* ===== Délégation d’événements (fiable sous tous navigateurs) ===== */
-let delegatesAttached = false;
-function attachSheetDelegates(){
-  if (delegatesAttached) return;
-  const body = qs('#sheet-body');
-  body.addEventListener('focusin', (e) => {
-    const td = e.target.closest('td[contenteditable], td');
-    if (!td) return;
-    td.dataset.prev = td.textContent;
-  });
-  body.addEventListener('blur', (e) => {
-    const td = e.target.closest('td[contenteditable], td');
-    if (!td) return;
-    const r = Number(td.dataset.r);
-    const key = td.dataset.key;
-    const prev = td.dataset.prev ?? '';
-    const now  = td.textContent;
-    if (prev !== now) { pushUndo({ r, key, prev, next: now }); redoStack.length = 0; }
-  }, true);
-  body.addEventListener('input', (e) => {
-    const td = e.target.closest('td[contenteditable], td');
-    if (!td) return;
-    const r = Number(td.dataset.r);
-    const key = td.dataset.key;
-    setRowValue(r, key, td.textContent.trim());
-    recalcRowAmounts(r);
-  });
-  body.addEventListener('keydown', onCellKeyDown, true);
-  body.addEventListener('paste', onSheetPaste, true);
-  delegatesAttached = true;
-}
+/** focus cellule (ajoute lignes si nécessaire), saute readonly */
+function focusCell(r, c){
+  if (r < 0) r = 0;
+  if (c < 0) c = 0;
+  ensureRows(r+1);
+  if (c >= colModel.length) c = colModel.length - 1;
 
-function onCellKeyDown(e){
-  const td = e.target.closest('td');
-  if (!td) return;
-  const r  = Number(td.dataset.r);
-  const ci = Number(td.dataset.c);
-  const key = td.dataset.key;
-
-  // Undo/Redo clavier
-  if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
-  if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && (e.key === 'Z' || e.key === 'z')))) { e.preventDefault(); redo(); return; }
-
-  const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
-  if (!navKeys.includes(e.key)) return;
-
-  // commit avant navigation
-  const prev = td.dataset.prev ?? '';
-  const now  = td.textContent;
-  if (prev !== now) { pushUndo({ r, key, prev, next: now }); redoStack.length = 0; td.dataset.prev = now; }
-
-  let nr = r, nc = ci;
-  if (e.key === 'ArrowLeft')  nc = Math.max(0, ci - 1);
-  if (e.key === 'ArrowRight') nc = ci + 1;
-  if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
-  if (e.key === 'ArrowDown')  nr = r + 1;
-  if (e.key === 'Enter')      nr = r + 1;
-  if (e.key === 'Tab')        nc = ci + (e.shiftKey ? -1 : 1);
-
-  e.preventDefault();
-  focusEditableByIndex(nr, nc);
-}
-
-function focusEditableByIndex(rowIndex, colIndex){
-  while (rowIndex >= qsa('#sheet-body tr').length) addRow();
-  const rowEl = qsa('#sheet-body tr')[rowIndex];
-  let td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
-  // sauter les colonnes readonly
+  // sauter les colonnes non éditables
   let guard = 0;
-  while (td && td.classList.contains('cell-readonly') && guard++ < 100) {
-    colIndex += 1;
-    td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
-  }
-  if (td) {
+  while (!colModel[c]?.editable && guard++ < 100) c++;
+  if (c >= colModel.length) c = colModel.findIndex(x => x.editable);
+  const td = getCell(r, c);
+  if (td){
     td.focus();
-    const range = document.createRange();
-    range.selectNodeContents(td); range.collapse(false);
+    const range = document.createRange(); range.selectNodeContents(td); range.collapse(false);
     const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
   }
 }
 
-/* ===== Collage multi-cellules ===== */
+/* ====== Délégation d’événements (pas de listeners par cellule) ====== */
+let delegatesAttached = false;
+function attachSheetDelegates(){
+  if (delegatesAttached) return;
+  const body = qs('#sheet-body');
+
+  body.addEventListener('focusin', (e) => {
+    const td = e.target.closest('td'); if (!td) return;
+    td.dataset.prev = td.textContent;
+  });
+
+  // commit & undo tracking à la sortie de cellule
+  body.addEventListener('blur', (e) => {
+    const td = e.target.closest('td'); if (!td) return;
+    const r = Number(td.dataset.r), c = Number(td.dataset.c);
+    const prev = td.dataset.prev ?? '';
+    const now  = td.textContent;
+    if (prev !== now) { pushUndo({ r, c, key: colModel[c].key, prev, next: now }); redoStack.length = 0; }
+  }, true);
+
+  // input = maj modèle + recalcul
+  body.addEventListener('input', (e) => {
+    const td = e.target.closest('td'); if (!td) return;
+    const r = Number(td.dataset.r), c = Number(td.dataset.c);
+    setCell(r, c, td.textContent.trim());
+    recalcRowAmountsRow(r);
+  });
+
+  // navigation clavier
+  body.addEventListener('keydown', (e) => {
+    const td = e.target.closest('td'); if (!td) return;
+    const r = Number(td.dataset.r), c = Number(td.dataset.c);
+
+    // Undo/Redo
+    if (e.ctrlKey && (e.key==='z' || e.key==='Z')) { e.preventDefault(); undo(); return; }
+    if (e.ctrlKey && (e.key==='y' || (e.shiftKey && (e.key==='Z'||e.key==='z')))) { e.preventDefault(); redo(); return; }
+
+    const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
+    if (!navKeys.includes(e.key)) return;
+
+    // commit avant navigation
+    const prev = td.dataset.prev ?? '';
+    const now  = td.textContent;
+    if (prev !== now) { pushUndo({ r, c, key: colModel[c].key, prev, next: now }); redoStack.length = 0; td.dataset.prev = now; }
+
+    let nr = r, nc = c;
+    if (e.key === 'ArrowLeft')  nc = Math.max(0, c - 1);
+    if (e.key === 'ArrowRight') nc = c + 1;
+    if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
+    if (e.key === 'ArrowDown')  nr = r + 1;
+    if (e.key === 'Enter')      nr = r + 1;
+    if (e.key === 'Tab')        nc = c + (e.shiftKey ? -1 : 1);
+
+    e.preventDefault();
+    focusCell(nr, nc);
+  }, true);
+
+  // collage multi-cellules (Excel / CSV ; ; , auto)
+  body.addEventListener('paste', (e) => {
+    const td = e.target.closest('td'); if (!td) return;
+    e.preventDefault();
+
+    const startR = Number(td.dataset.r);
+    const startC = Number(td.dataset.c);
+
+    const text = e.clipboardData.getData('text/plain') || '';
+    const delim = detectDelimiter(text);
+    const lines = text.replace(/\r/g,'').split('\n').filter(l => l !== '');
+    if (!lines.length) return;
+    const grid = lines.map(l => l.split(delim));
+
+    ensureRows(startR + grid.length);
+
+    for (let i = 0; i < grid.length; i++) {
+      let col = startC;
+      for (let j = 0; j < grid[i].length; j++) {
+        // sauter colonnes non éditables (ex: Mt)
+        let guard = 0;
+        while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
+        if (col >= colModel.length) break;
+
+        const val = String(grid[i][j]).trim();
+        const prev = getCell(startR+i, col).textContent;
+
+        setCell(startR+i, col, val);
+        if (prev !== val) { pushUndo({ r:startR+i, c:col, key: colModel[col].key, prev, next: val }); redoStack.length = 0; }
+        col++;
+      }
+      recalcRowAmountsRow(startR + i);
+    }
+  }, true);
+
+  delegatesAttached = true;
+}
+
 function detectDelimiter(sample){
   if (sample.includes('\t')) return '\t';
-  // heuristique FR CSV
   const sc = (sample.split(';').length-1), cc = (sample.split(',').length-1);
-  if (sc > cc) return ';';
-  return ',';
-}
-function onSheetPaste(e){
-  const td = e.target.closest('td');
-  if (!td) return;
-  e.preventDefault();
-
-  const startR = Number(td.dataset.r);
-  const startC = Number(td.dataset.c);
-
-  const text = e.clipboardData.getData('text/plain') || '';
-  const delim = detectDelimiter(text);
-  const lines = text.replace(/\r/g,'').split('\n').filter(l => l !== '');
-  if (lines.length === 0) return;
-  const grid = lines.map(l => l.split(delim));
-
-  const needRows = startR + grid.length;
-  while (qsa('#sheet-body tr').length < needRows) addRow();
-
-  for (let i = 0; i < grid.length; i++) {
-    const tr = qsa('#sheet-body tr')[startR + i];
-    let targetCol = startC;
-
-    for (let j = 0; j < grid[i].length; j++) {
-      // sauter les colonnes readonly (ex: Mt)
-      let cell = qsa('td', tr).find(x => Number(x.dataset.c) === targetCol);
-      let guard = 0;
-      while (cell && cell.classList.contains('cell-readonly') && guard++ < 100) {
-        targetCol += 1;
-        cell = qsa('td', tr).find(x => Number(x.dataset.c) === targetCol);
-      }
-      if (!cell) break;
-
-      const val = grid[i][j].trim();
-      const r = Number(cell.dataset.r);
-      const key = cell.dataset.key;
-      const prev = cell.textContent;
-
-      cell.textContent = val;
-      setRowValue(r, key, val);
-      if (prev !== val) { pushUndo({ r, key, prev, next: val }); redoStack.length = 0; }
-
-      targetCol += 1;
-    }
-    recalcRowAmounts(startR + i);
-  }
+  return sc >= cc ? ';' : ',';
 }
 
-/* ===== Recalcul montants ===== */
-function recalcRowAmounts(r){
-  const tr = qsa('#sheet-body tr')[r];
-  if (!tr) return;
-
-  const moeQtyCell = tr.querySelector('td[data-key="moe.qty"]');
-  const moePuCell  = tr.querySelector('td[data-key="moe.pu"]');
-  const moeMtCell  = tr.querySelector('td[data-key="moe.mt"]');
-  if (moeMtCell) moeMtCell.textContent = amountOf(moeQtyCell?.textContent.trim(), moePuCell?.textContent.trim());
-
-  for (const c of lotCompanies) {
-    const qty = tr.querySelector(`td[data-key="c.${c.id}.qty"]`)?.textContent.trim();
-    const pu  = tr.querySelector(`td[data-key="c.${c.id}.pu"]`)?.textContent.trim();
-    const mt  = tr.querySelector(`td[data-key="c.${c.id}.mt"]`);
-    if (mt) mt.textContent = amountOf(qty, pu);
-  }
-}
-
-/* ===== Undo / Redo ===== */
-function pushUndo(change){ undoStack.push(change); }
+/* ====== Undo/Redo ====== */
+function pushUndo(ch){ undoStack.push(ch); }
 function undo(){
   const ch = undoStack.pop(); if (!ch) return;
   redoStack.push(ch);
-  applyChange(ch.r, ch.key, ch.prev);
+  setCell(ch.r, ch.c, ch.prev);
+  const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
+  recalcRowAmountsRow(ch.r);
 }
 function redo(){
   const ch = redoStack.pop(); if (!ch) return;
   undoStack.push(ch);
-  applyChange(ch.r, ch.key, ch.next);
-}
-function applyChange(r, key, val){
-  const tr = qsa('#sheet-body tr')[r]; if (!tr) return;
-  const td = tr.querySelector(`td[data-key="${CSS.escape(key)}"]`); if (!td) return;
-  td.textContent = val ?? '';
-  setRowValue(r, key, val ?? '');
-  recalcRowAmounts(r);
-  td.dataset.prev = td.textContent;
+  setCell(ch.r, ch.c, ch.next);
+  const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
+  recalcRowAmountsRow(ch.r);
 }
 
-/* ===== Actions édition ===== */
+/* ====== Actions édition ====== */
+function renderLotCompanies(){
+  const wrap = qs('#lot-companies'); if (!wrap) return;
+  wrap.innerHTML = '';
+  for (const c of lotCompanies) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+    chip.querySelector('button').addEventListener('click', async () => {
+      await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
+      lotCompanies = lotCompanies.filter(x => x.id !== c.id);
+
+      // MAJ modèle de colonnes + sheetRows (supprimer les offres de cette entreprise)
+      for (const r of sheetRows) delete r.offers[c.id];
+      buildColModel();
+      renderSheetInitial();  // (on rerend la structure car nombre de colonnes change)
+      refreshCompare();
+    });
+    wrap.appendChild(chip);
+  }
+}
+
 function addRow(){
-  const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-  for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
-  sheetRows.push(blank);
-  renderSheet();
-  const lastIndex = sheetRows.length - 1;
-  focusEditableByIndex(lastIndex, 0);
+  ensureRows(qsa('#sheet-body tr').length + 1);
+  // focus première colonne éditable de la nouvelle ligne
+  const r = qsa('#sheet-body tr').length - 1;
+  const firstEditable = colModel.findIndex(c => c.editable);
+  if (firstEditable >= 0) focusCell(r, firstEditable);
 }
 
 async function saveGrid(){
+  // Reconstituer les rows depuis le DOM + colModel
   const rows = [];
-  const trs = qsa('#sheet-body tr');
-  for (let r=0; r<trs.length; r++){
-    const tr = trs[r];
-    const get = (k) => tr.querySelector(`td[data-key="${CSS.escape(k)}"]`)?.textContent.trim() ?? '';
-    const designation = get('designation');
+  const totalRows = qsa('#sheet-body tr').length;
+
+  for (let r=0; r<totalRows; r++){
+    const getByKey = (key) => {
+      const c = colModel.findIndex(x => x.key === key);
+      return c >= 0 ? (getCell(r, c)?.textContent.trim() ?? '') : '';
+    };
+
+    const designation = getByKey('designation');
+    const num = getByKey('num');
+    const unit = getByKey('unit');
+    const moeQty = getByKey('moe.qty');
+    const moePu  = getByKey('moe.pu');
+
+    // ignorer lignes totalement vides (pas de désignation)
     if (!designation) continue;
 
     const row = {
       item_id: sheetRows[r]?.item_id || null,
-      num: get('num'),
-      designation,
-      unit: get('unit'),
-      moe: { qty: get('moe.qty'), pu: get('moe.pu') },
+      num, designation, unit,
+      moe: { qty: moeQty, pu: moePu },
       offers: {}
     };
-    for (const c of lotCompanies) {
-      row.offers[c.id] = { u: get(`c.${c.id}.u`), qty: get(`c.${c.id}.qty`), pu: get(`c.${c.id}.pu`) };
+
+    for (const c of lotCompanies){
+      const base = `c.${c.id}.`;
+      row.offers[c.id] = {
+        u:  getByKey(base+'u'),
+        qty:getByKey(base+'qty'),
+        pu: getByKey(base+'pu'),
+      };
     }
     rows.push(row);
   }
 
   await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
+
+  // recharger pour récupérer item_id & offres mis à jour proprement
   const raw = await api(`/lots/${currentLot.id}`);
   buildSheetModel(raw);
   await refreshCompare();
@@ -521,6 +594,7 @@ async function saveGrid(){
 
 /* ================= Bindings UI ================= */
 function renderSheetBindings(){
+  // boutons édition
   qs('#add-row').addEventListener('click', addRow);
 
   qs('#add-company').addEventListener('click', async () => {
@@ -528,16 +602,20 @@ function renderSheetBindings(){
     if (!name) return;
     const created = await api(`/lots/${currentLot.id}/companies`, { method:'POST', body:{ name }});
     if (!lotCompanies.find(c => c.id === created.id)) lotCompanies.push(created);
+
+    // rebuild colonnes (changement de structure), et étendre les rows
     for (const r of sheetRows) r.offers[created.id] = r.offers[created.id] || { u:'', qty:'', pu:'' };
-    qs('#company-input').value = '';
+    buildColModel();
+    renderSheetInitial();
     renderLotCompanies();
-    renderSheet();
+    qs('#company-input').value = '';
   });
 
   qs('#save-grid').addEventListener('click', saveGrid);
   qs('#undo').addEventListener('click', undo);
   qs('#redo').addEventListener('click', redo);
 
+  // bascule modes
   qs('#mode-compare').addEventListener('click', () => {
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
     qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
@@ -547,6 +625,7 @@ function renderSheetBindings(){
     qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
   });
 
+  // Ctrl+S → sauvegarder
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault(); saveGrid();
@@ -554,7 +633,7 @@ function renderSheetBindings(){
   });
 }
 
-/* ================= INIT ================= */
+/* ================== INIT ================== */
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
 
 function bindUI(){
@@ -567,8 +646,21 @@ function bindUI(){
   qsa('.tab').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
 
   // projets / lots
-  qs('#create-project').addEventListener('click', async ()=>{ try{ const body={ name:qs('#proj-name').value.trim(), reference:qs('#proj-ref').value.trim(), client:qs('#proj-client').value.trim(), location:qs('#proj-location').value.trim() }; if(!body.name) return alert('Nom requis'); await api('/projects',{method:'POST',body}); qsa('#proj-name,#proj-ref,#proj-client,#proj-location').forEach(i=>i.value=''); await refreshProjects(); }catch(e){ alert(e.message);} });
-  qs('#add-lot').addEventListener('click', async ()=>{ try{ if(!currentProject) return alert('Ouvrir un projet'); const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim(); if(!name) return alert('Nom du lot requis'); await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}}); qsa('#lot-code,#lot-name').forEach(i=>i.value=''); await openProject(currentProject.id);}catch(e){ alert(e.message);} });
+  qs('#create-project').addEventListener('click', async ()=>{ try{
+    const body={ name:qs('#proj-name').value.trim(), reference:qs('#proj-ref').value.trim(), client:qs('#proj-client').value.trim(), location:qs('#proj-location').value.trim() };
+    if(!body.name) return alert('Nom requis');
+    await api('/projects',{method:'POST',body});
+    qsa('#proj-name,#proj-ref,#proj-client,#proj-location').forEach(i=>i.value='');
+    await refreshProjects();
+  }catch(e){ alert(e.message);} });
+
+  qs('#add-lot').addEventListener('click', async ()=>{ try{
+    if(!currentProject) return alert('Ouvrir un projet');
+    const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim();
+    if(!name) return alert('Nom du lot requis');
+    await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}});
+    qsa('#lot-code,#lot-name').forEach(i=>i.value=''); await openProject(currentProject.id);
+  }catch(e){ alert(e.message);} });
 
   renderSheetBindings();
 }
