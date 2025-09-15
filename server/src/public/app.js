@@ -264,7 +264,7 @@ function amountOf(q, pu){
   return (n1 * n2).toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
-function makeCell(r, key, readonly, value, wide=false){
+function makeCell(r, key, readonly, value, wide=false, colIndex=null){
   const td = document.createElement('td');
   if (!readonly) td.contentEditable = 'true';
   if (readonly) td.classList.add('cell-readonly');
@@ -272,12 +272,15 @@ function makeCell(r, key, readonly, value, wide=false){
   td.textContent = value ?? '';
   td.dataset.r = String(r);
   td.dataset.key = key;
+  td.dataset.c = String(colIndex ?? 0);  // <-- index de colonne
   td.addEventListener('focusin', onCellFocus);
   td.addEventListener('blur', onCellBlur);
   td.addEventListener('keydown', onCellKeyDown);
   td.addEventListener('input', onCellInput);
+  td.addEventListener('paste', onSheetPaste); // <-- collage multi-cellules
   return td;
 }
+
 
 function onCellFocus(e){
   const td = e.currentTarget;
@@ -307,11 +310,13 @@ function onCellInput(e){
 
 function onCellKeyDown(e){
   const td = e.currentTarget;
-  const r = Number(td.dataset.r);
+  const r  = Number(td.dataset.r);
+  const ci = Number(td.dataset.c);
   const key = td.dataset.key;
 
+  // Undo/Redo clavier
   if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
-  if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && (e.key==='Z'||e.key==='z')))) { e.preventDefault(); redo(); return; }
+  if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && (e.key === 'Z' || e.key === 'z')))) { e.preventDefault(); redo(); return; }
 
   const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
   if (!navKeys.includes(e.key)) return;
@@ -321,19 +326,34 @@ function onCellKeyDown(e){
   const now  = td.textContent;
   if (prev !== now) { pushUndo({ r, key, prev, next: now }); redoStack.length = 0; td.dataset.prev = now; }
 
-  const { ci, maxCols } = cellIndex(td);
   let nr = r, nc = ci;
-
   if (e.key === 'ArrowLeft')  nc = Math.max(0, ci - 1);
   if (e.key === 'ArrowRight') nc = ci + 1;
   if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
   if (e.key === 'ArrowDown')  nr = r + 1;
   if (e.key === 'Enter')      nr = r + 1;
-  if (e.key === 'Tab')       { nc = ci + (e.shiftKey ? -1 : 1); }
+  if (e.key === 'Tab')        nc = ci + (e.shiftKey ? -1 : 1);
 
   e.preventDefault();
-  focusEditable(nr, nc);
+  focusEditableByIndex(nr, nc);
 }
+
+function focusEditableByIndex(rowIndex, colIndex){
+  // ajoute une ligne si on descend en-dessous de la dernière
+  while (rowIndex >= qsa('#sheet-body tr').length) addRow();
+
+  const rowEl = qsa('#sheet-body tr')[rowIndex];
+  // cherche la cellule avec le même index de colonne
+  let td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
+  // si la cellule est en lecture seule, avance jusqu’à la prochaine éditable
+  let guard = 0;
+  while (td && td.classList.contains('cell-readonly') && guard++ < 100) {
+    colIndex += 1;
+    td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
+  }
+  if (td) { td.focus(); placeCaretEnd(td); }
+}
+
 
 function cellIndex(td){
   const tr = td.parentElement;
@@ -366,6 +386,55 @@ function placeCaretEnd(el){
   range.collapse(false);
   const sel = window.getSelection();
   sel.removeAllRanges(); sel.addRange(range);
+}
+
+function onSheetPaste(e){
+  // collage multi-cellules: répartir sur lignes/colonnes à partir de la cellule courante
+  e.preventDefault();
+  const td = e.currentTarget;
+  const startR = Number(td.dataset.r);
+  const startC = Number(td.dataset.c);
+
+  const text = e.clipboardData.getData('text/plain') || '';
+  const lines = text.replace(/\r/g,'').split('\n').filter(l => l !== '');
+  if (lines.length === 0) return;
+  const grid = lines.map(l => l.split('\t'));
+
+  // étendre le nombre de lignes si nécessaire
+  const needRows = startR + grid.length;
+  while (qsa('#sheet-body tr').length < needRows) addRow();
+
+  for (let i = 0; i < grid.length; i++) {
+    const tr = qsa('#sheet-body tr')[startR + i];
+    let targetCol = startC;
+
+    for (let j = 0; j < grid[i].length; j++) {
+      // sauter les colonnes readonly (ex: Mt)
+      let cell = qsa('td', tr).find(x => Number(x.dataset.c) === targetCol);
+      let guard = 0;
+      while (cell && cell.classList.contains('cell-readonly') && guard++ < 100) {
+        targetCol += 1;
+        cell = qsa('td', tr).find(x => Number(x.dataset.c) === targetCol);
+      }
+      if (!cell) break;
+
+      const val = grid[i][j].trim();
+      const r = Number(cell.dataset.r);
+      const key = cell.dataset.key;
+      const prev = cell.textContent;
+
+      // maj DOM + modèle
+      cell.textContent = val;
+      setRowValue(r, key, val);
+
+      // pile undo
+      if (prev !== val) { pushUndo({ r, key, prev, next: val }); redoStack.length = 0; }
+
+      targetCol += 1;
+    }
+    // recalcul des montants pour la ligne
+    recalcRowAmounts(startR + i);
+  }
 }
 
 function recalcRowAmounts(r){
@@ -462,42 +531,42 @@ async function saveGrid(){
 }
 
 /* UI bindings */
-function renderSheetBindings(){
-  qs('#add-row').addEventListener('click', addRow);
+function renderSheet(){
+  const { base, comps } = headerStructure();
+  const head = qs('#sheet-head'); const body = qs('#sheet-body');
+  head.innerHTML = ''; body.innerHTML = '';
 
-  qs('#add-company').addEventListener('click', async () => {
-    const name = qs('#company-input').value.trim();
-    if (!name) return;
-    const created = await api(`/lots/${currentLot.id}/companies`, { method:'POST', body:{ name }});
-    if (!lotCompanies.find(c => c.id === created.id)) lotCompanies.push(created);
-    // étendre le modèle existant
-    for (const r of sheetRows) r.offers[created.id] = r.offers[created.id] || { u:'', qty:'', pu:'' };
-    qs('#company-input').value = '';
-    renderLotCompanies();
-    renderSheet();
-  });
+  // header top
+  const tr1 = document.createElement('tr');
+  for (const b of base){ const th = document.createElement('th'); th.textContent = b.label; th.rowSpan = 2; if (b.cls) th.classList.add(b.cls); tr1.appendChild(th); }
+  for (const g of comps){ const th = document.createElement('th'); th.textContent = g.name; th.colSpan = 4; th.classList.add('company-col'); tr1.appendChild(th); }
+  head.appendChild(tr1);
+  // header bottom
+  const tr2 = document.createElement('tr');
+  for (const g of comps){ for (const c of g.cols){ const th = document.createElement('th'); th.textContent = c.label; tr2.appendChild(th); } }
+  head.appendChild(tr2);
 
-  qs('#save-grid').addEventListener('click', saveGrid);
-  qs('#undo').addEventListener('click', undo);
-  qs('#redo').addEventListener('click', redo);
+  // body
+  const totalCols = base.length + comps.length * 4;
+  sheetRows.forEach((row, rIndex) => {
+    const tr = document.createElement('tr');
+    let colIndex = 0;
 
-  // bascule modes
-  qs('#mode-compare').addEventListener('click', () => {
-    hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
-    qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
-  });
-  qs('#mode-edit').addEventListener('click', () => {
-    show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
-    qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
-  });
-
-  // Ctrl+S → sauvegarder
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-      e.preventDefault(); saveGrid();
+    // base cells
+    for (const b of base){
+      tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide, colIndex++));
     }
+    // company cells
+    for (const g of comps){
+      for (const c of g.cols){
+        tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key), false, colIndex++));
+      }
+    }
+    body.appendChild(tr);
+    recalcRowAmounts(rIndex);
   });
 }
+
 
 /* ===== INIT ===== */
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
