@@ -1,86 +1,118 @@
+<!-- frontend/index.html -->
 <!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Comparateur d'offres - Bureau</title>
+  <title>Comparateur d'offres — Bureau</title>
   <link rel="stylesheet" href="./styles.css"/>
 </head>
 <body>
   <div id="app">
-    <div id="login-view" class="card">
-      <h1>Connexion</h1>
-      <label>Email<br/><input id="email" type="email" placeholder="you@dmx.fr"></label>
-      <label>Mot de passe<br/><input id="password" type="password" placeholder="••••••••"></label>
-      <button id="login-btn">Se connecter</button>
-      <p id="login-msg" class="muted"></p>
-      <hr/>
-      <details>
-        <summary>Première utilisation (créer l'admin)</summary>
-        <p>Si la base n'a pas d'utilisateur, ce bouton crée le premier compte administrateur.</p>
-        <button id="bootstrap-admin">Créer admin (email + mot de passe ci-dessus)</button>
-      </details>
-    </div>
 
-    <div id="dashboard" class="hidden">
+    <!-- ====== LOGIN ====== -->
+    <section id="login-view" class="card max-480">
+      <h1>Connexion</h1>
+      <p class="muted">Entrez vos identifiants ou créez l’admin si c’est la première utilisation.</p>
+
+      <label class="field">
+        <span>Email</span>
+        <input id="email" type="email" placeholder="vous@exemple.fr" autocomplete="username" />
+      </label>
+
+      <label class="field">
+        <span>Mot de passe</span>
+        <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+      </label>
+
+      <div class="row gap">
+        <button id="login-btn" class="btn">Se connecter</button>
+        <button id="bootstrap-admin" class="btn ghost">Créer admin</button>
+      </div>
+
+      <p id="login-msg" class="muted"></p>
+    </section>
+
+    <!-- ====== DASHBOARD ====== -->
+    <section id="dashboard" class="hidden">
       <header class="header">
         <h1>Projets</h1>
         <div class="spacer"></div>
-        <button id="logout">Déconnexion</button>
+        <button id="api-config" class="icon-btn" title="Configurer l’URL d’API">⚙️</button>
+        <button id="logout" class="btn ghost">Déconnexion</button>
       </header>
 
+      <!-- Nouveau projet -->
       <section class="card">
         <h2>Nouveau projet</h2>
-        <div class="grid">
-          <input id="proj-name" placeholder="Nom du projet"/>
-          <input id="proj-ref" placeholder="Référence"/>
-          <input id="proj-client" placeholder="Client"/>
-          <input id="proj-location" placeholder="Localisation"/>
+        <div class="grid grid-4 gap">
+          <input id="proj-name" placeholder="Nom du projet *" />
+          <input id="proj-ref" placeholder="Référence" />
+          <input id="proj-client" placeholder="Client" />
+          <input id="proj-location" placeholder="Localisation" />
         </div>
-        <button id="create-project">Créer</button>
+        <div class="row">
+          <button id="create-project" class="btn">Créer</button>
+        </div>
       </section>
 
+      <!-- Liste des projets -->
       <section class="card">
         <h2>Liste des projets</h2>
-        <table id="projects-table">
-          <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-wrapper">
+          <table id="projects-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
 
+      <!-- Vue projet -->
       <section id="project-view" class="card hidden">
-        <h2 id="project-title"></h2>
-        <div class="grid">
+        <h2 id="project-title">Projet</h2>
+
+        <div class="grid grid-3 gap">
           <input id="lot-code" placeholder="Code lot (ex: GO)"/>
-          <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre)"/>
-          <button id="add-lot">Ajouter le lot</button>
+          <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
+          <button id="add-lot" class="btn">Ajouter le lot</button>
         </div>
 
-        <table id="lots-table">
-          <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-wrapper">
+          <table id="lots-table">
+            <thead>
+              <tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
 
+      <!-- Vue lot / comparatif -->
       <section id="lot-view" class="card hidden">
         <div class="lot-header">
-          <h2 id="lot-title"></h2>
-          <div class="actions">
+          <h2 id="lot-title">Lot</h2>
+          <div class="row gap">
             <label class="file">
               <input id="excel-file" type="file" accept=".xlsx,.xls" />
               <span>Importer Excel</span>
             </label>
-            <button id="refresh-table">Rafraîchir</button>
+            <button id="refresh-table" class="btn ghost">Rafraîchir</button>
           </div>
         </div>
-        <div class="table-wrapper">
+
+        <div class="table-wrapper tall">
           <table id="compare-table">
             <thead id="compare-head"></thead>
             <tbody id="compare-body"></tbody>
           </table>
         </div>
       </section>
-    </div>
+    </section>
+
   </div>
 
   <script src="./app.js"></script>
