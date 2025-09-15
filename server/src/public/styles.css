@@ -49,3 +49,14 @@ thead{ background:var(--sticky); position:sticky; top:0; z-index:2 }
 .modal{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:24px }
 .modal-card{ width:min(100%, 980px); background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px }
 #paste-area{ width:100%; height:180px; margin:8px 0 12px 0; border-radius:12px; border:1px solid var(--border); background:#0e1218; color:var(--fg); padding:10px }
+
+/* chips entreprises */
+.chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
+.chip{ background:#0e1218; border:1px solid var(--border); color:var(--fg); padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
+.chip button{ background:#0000; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1 }
+.chip button:hover{ color:#fff }
+
+/* cellules éditables */
+#paste-grid td[contenteditable]{ min-width:110px; background:#0f141c; outline:none }
+#paste-grid td[contenteditable]:focus{ box-shadow:inset 0 0 0 2px #35507a; }
+#paste-grid th{ position:sticky; top:0; z-index:2 }

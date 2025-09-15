@@ -111,58 +111,202 @@ function bindExcelImport(){
   });
 }
 
-/* ===== IMPORT PASTE ===== */
-function detectDelimiter(text){
-  const first = text.split(/\r?\n/)[0] || '';
-  if (first.includes('\t')) return '\t';
-  if (first.split(';').length > first.split(',').length) return ';';
-  return ',';
+/* ===== IMPORT PASTE — ÉDITEUR TABLEAU ===== */
+const PASTE = {
+  baseCols: [
+    { key:'num',     label:'Num' },
+    { key:'des',     label:'Désignation' },
+    { key:'u',       label:'U' },
+    { key:'moeqty',  label:'Quantité MOE' },
+    { key:'moepu',   label:'PU MOE' },
+    { key:'moemt',   label:'Montant MOE' },
+  ],
+  companies: [],   // ["Entreprise A", "Entreprise B", ...]
+  rows: 20,
+};
+
+function openPasteEditor(){
+  // init entreprises à partir du lot (si dispo)
+  initCompaniesFromLot().then(() => {
+    qs('#rows-count').value = PASTE.rows;
+    rebuildPasteGrid();
+    show('#paste-modal');
+    // focus première cellule
+    const first = qs('#grid-body td[contenteditable]');
+    if (first) first.focus();
+  });
 }
-function parseGrid(text){
-  const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim()!=='');
-  if (!lines.length) return { headers:[], rows:[] };
-  const d = detectDelimiter(text);
-  const headers = lines[0].split(d).map(s => s.trim());
-  const rows = lines.slice(1).map(l => l.split(d).map(s => s.trim()));
-  return { headers, rows };
+
+async function initCompaniesFromLot(){
+  try{
+    const raw = await api(`/lots/${currentLot.id}`); // retourne companies[]
+    if (raw?.companies?.length) {
+      PASTE.companies = raw.companies.map(c => c.name);
+    } else if (PASTE.companies.length === 0) {
+      PASTE.companies = []; // laisse vide si aucune
+    }
+    renderCompanyChips();
+  }catch{ /* ignore */ }
 }
-function renderPastePreview(headers, rows){
-  const thead = qs('#paste-head'), tbody = qs('#paste-body');
-  thead.innerHTML = '<tr>' + headers.map(h=>`<th>${h||''}</th>`).join('') + '</tr>';
-  tbody.innerHTML = '';
-  for (const r of rows.slice(0,200)){ // limiter l’aperçu
-    const tr = '<tr>' + headers.map((_,i)=>`<td>${r[i]??''}</td>`).join('') + '</tr>';
-    tbody.insertAdjacentHTML('beforeend', tr);
+
+function renderCompanyChips(){
+  const wrap = qs('#comp-list'); wrap.innerHTML = '';
+  PASTE.companies.forEach((name, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${name}<button data-i="${idx}" title="Supprimer">×</button>`;
+    chip.querySelector('button').addEventListener('click', () => { 
+      PASTE.companies.splice(idx,1); renderCompanyChips(); rebuildPasteGrid(); 
+    });
+    wrap.appendChild(chip);
+  });
+}
+
+function rebuildPasteGrid(){
+  // en-têtes groupés
+  const headTop = qs('#grid-head-top');
+  const headBot = qs('#grid-head-bottom');
+  headTop.innerHTML = '';
+  headBot.innerHTML = '';
+
+  // Base (6 colonnes)
+  PASTE.baseCols.forEach((c, i) => {
+    const th = document.createElement('th');
+    th.rowSpan = 2; th.textContent = c.label;
+    headTop.appendChild(th);
+  });
+
+  // Groupes par entreprise (4 colonnes chacun)
+  PASTE.companies.forEach(name => {
+    const th = document.createElement('th');
+    th.colSpan = 4; th.className = 'company-col'; th.textContent = name;
+    headTop.appendChild(th);
+    ['U','Quantité','PU','Montant'].forEach(lbl => {
+      const sub = document.createElement('th');
+      sub.textContent = lbl;
+      headBot.appendChild(sub);
+    });
+  });
+
+  // si pas d’entreprise, mettre une info
+  if (PASTE.companies.length === 0) {
+    const th = document.createElement('th');
+    th.colSpan = 4; th.className = 'company-col muted';
+    th.textContent = 'Ajoute une entreprise pour créer les colonnes';
+    headTop.appendChild(th);
+  }
+
+  // corps
+  const body = qs('#grid-body'); body.innerHTML = '';
+  for (let r = 0; r < PASTE.rows; r++) {
+    const tr = document.createElement('tr');
+    // 6 colonnes base
+    for (let c = 0; c < 6; c++) tr.appendChild(makeCell(r, c));
+    // colonnes entreprises
+    for (let k = 0; k < PASTE.companies.length; k++) {
+      for (let c = 0; c < 4; c++) tr.appendChild(makeCell(r, 6 + k*4 + c));
+    }
+    body.appendChild(tr);
   }
 }
-function bindPasteModal(){
-  const modal = qs('#paste-modal');
-  const area = qs('#paste-area');
-  const btnPreview = qs('#paste-preview');
-  const btnImport = qs('#paste-import');
-  const btnClose = qs('#paste-close');
 
-  qs('#open-paste').addEventListener('click', () => { show('#paste-modal'); area.value=''; hide('#paste-preview-wrap'); btnImport.disabled=true; setTimeout(()=>area.focus(),50); });
-  btnClose.addEventListener('click', ()=> hide('#paste-modal'));
+function makeCell(r, c){
+  const td = document.createElement('td');
+  td.contentEditable = 'true';
+  td.dataset.ri = String(r);
+  td.dataset.ci = String(c);
+  td.addEventListener('paste', onPasteIntoGrid);
+  return td;
+}
 
-  btnPreview.addEventListener('click', () => {
-    const { headers, rows } = parseGrid(area.value);
-    if (!headers.length || !rows.length) { alert('Données vides'); return; }
-    renderPastePreview(headers, rows);
-    show('#paste-preview-wrap'); btnImport.disabled=false;
-    btnImport.dataset.headers = JSON.stringify(headers);
-    btnImport.dataset.rows = JSON.stringify(rows);
-  });
+function onPasteIntoGrid(e){
+  // Collage multi-cellules façon Excel
+  e.preventDefault();
+  const text = e.clipboardData.getData('text/plain') || '';
+  const rows = text.replace(/\r/g,'').split('\n').filter(l => l.length>0).map(l => l.split('\t'));
+  const startR = Number(e.currentTarget.dataset.ri);
+  const startC = Number(e.currentTarget.dataset.ci);
 
-  btnImport.addEventListener('click', async () => {
-    try{
-      const headers = JSON.parse(btnImport.dataset.headers||'[]');
-      const rows = JSON.parse(btnImport.dataset.rows||'[]');
-      await api(`/lots/${currentLot.id}/import-clipboard`, { method:'POST', body: { headers, rows }});
-      hide('#paste-modal'); await refreshCompare();
-    }catch(e){ alert('Import (copier/coller) échoué : ' + e.message); }
+  // étendre le nombre de lignes si besoin
+  const need = startR + rows.length;
+  if (need > PASTE.rows) {
+    PASTE.rows = need;
+    qs('#rows-count').value = PASTE.rows;
+    rebuildPasteGrid();
+  }
+
+  // remplir
+  rows.forEach((cells, i) => {
+    const tr = qs(`#grid-body tr:nth-child(${startR + i + 1})`);
+    cells.forEach((val, j) => {
+      const td = tr?.querySelector(`td:nth-child(${startC + j + 1})`);
+      if (td) td.textContent = val;
+    });
   });
 }
+
+function collectGridData(){
+  // headers plats que l’API attend
+  const flatHeaders = [
+    'Num','Désignation','U','Quantité MOE','PU MOE','Montant MOE',
+    ...PASTE.companies.flatMap(name => [
+      `${name} U`, `${name} Quantité`, `${name} PU`, `${name} Montant`
+    ])
+  ];
+
+  const rows = [];
+  const trs = qsa('#grid-body tr');
+  for (const tr of trs) {
+    const tds = qsa('td', tr);
+    // ignore les lignes totalement vides
+    const vals = tds.map(td => td.textContent.trim());
+    if (vals.every(v => v === '')) continue;
+    rows.push(vals);
+  }
+  return { headers: flatHeaders, rows };
+}
+
+function bindPasteEditorUI(){
+  // ouverture / fermeture
+  qs('#open-paste').addEventListener('click', openPasteEditor);
+  qs('#paste-close').addEventListener('click', () => hide('#paste-modal'));
+
+  // entreprises
+  qs('#comp-add').addEventListener('click', () => {
+    const name = qs('#comp-input').value.trim();
+    if (!name) return;
+    if (!PASTE.companies.includes(name)) PASTE.companies.push(name);
+    qs('#comp-input').value = '';
+    renderCompanyChips();
+    rebuildPasteGrid();
+  });
+
+  // gestion lignes
+  qs('#rows-count').addEventListener('change', (e) => {
+    const v = Math.max(1, Number(e.target.value||1));
+    PASTE.rows = v; rebuildPasteGrid();
+  });
+  qs('#rows-add-50').addEventListener('click', () => {
+    PASTE.rows += 50; qs('#rows-count').value = PASTE.rows; rebuildPasteGrid();
+  });
+  qs('#rows-clear').addEventListener('click', () => {
+    qsa('#grid-body td').forEach(td => td.textContent = '');
+  });
+
+  // import
+  qs('#paste-import').addEventListener('click', async () => {
+    try{
+      const payload = collectGridData();
+      if (!payload.rows.length) return alert('Aucune donnée à importer');
+      await api(`/lots/${currentLot.id}/import-clipboard`, { method:'POST', body: payload });
+      hide('#paste-modal');
+      await refreshCompare();
+    }catch(e){
+      alert('Import (copier/coller) échoué : ' + e.message);
+    }
+  });
+}
+
 
 /* ===== INIT ===== */
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
@@ -181,7 +325,8 @@ function bindUI(){
 
   // imports
   bindExcelImport();
-  bindPasteModal();
+  bindPasteEditorUI();
+
 
   // refresh
   qs('#refresh-table').addEventListener('click', refreshCompare);

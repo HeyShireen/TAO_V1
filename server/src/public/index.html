@@ -103,25 +103,46 @@
   </div>
 
   <!-- ===== MODAL PASTE ===== -->
-  <div id="paste-modal" class="modal hidden">
-    <div class="modal-card">
-      <h3>Importer par copier/coller</h3>
-      <p class="muted">
-        Colle ici les cellules depuis Excel/LibreOffice (la 1ère ligne = en-têtes).
-        Pour les entreprises, nomme les colonnes <em>Entreprise Quantité</em>, <em>Entreprise PU</em>, <em>Entreprise Montant</em>, <em>Entreprise U</em>.
-      </p>
-      <textarea id="paste-area" placeholder="Collez vos données ici (Ctrl+V)"></textarea>
-      <div class="row gap">
-        <button id="paste-preview" class="btn">Prévisualiser</button>
-        <button id="paste-import"  class="btn ghost" disabled>Importer</button>
-        <div class="spacer"></div>
-        <button id="paste-close"   class="btn ghost">Fermer</button>
-      </div>
-      <div id="paste-preview-wrap" class="table-wrapper hidden">
-        <table><thead id="paste-head"></thead><tbody id="paste-body"></tbody></table>
-      </div>
+<div id="paste-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Importer par copier/coller (éditeur en tableau)</h3>
+    <p class="muted">
+      Les colonnes MOE sont fixes. Ajoute les entreprises ci-dessous : chaque entreprise aura
+      <em>U</em>, <em>Quantité</em>, <em>PU</em>, <em>Montant</em>. Colle ensuite tes cellules Excel directement dans le tableau.
+    </p>
+
+    <!-- gestion des entreprises -->
+    <div class="row gap">
+      <input id="comp-input" placeholder="Nom d’une entreprise (ex: Entreprise A)" />
+      <button id="comp-add" class="btn">Ajouter</button>
+      <div class="chips" id="comp-list"></div>
+      <div class="spacer"></div>
+      <label class="muted">Lignes :
+        <input id="rows-count" type="number" min="1" value="20" style="width:80px;margin-left:6px;">
+      </label>
+      <button id="rows-add-50" class="btn ghost">+50</button>
+      <button id="rows-clear" class="btn ghost">Vider</button>
+    </div>
+
+    <!-- table d’édition -->
+    <div class="table-wrapper tall" style="margin-top:10px">
+      <table id="paste-grid">
+        <thead>
+          <tr id="grid-head-top"></tr>
+          <tr id="grid-head-bottom"></tr>
+        </thead>
+        <tbody id="grid-body"></tbody>
+      </table>
+    </div>
+
+    <div class="row gap" style="margin-top:12px">
+      <button id="paste-import" class="btn">Importer</button>
+      <div class="spacer"></div>
+      <button id="paste-close" class="btn ghost">Fermer</button>
     </div>
   </div>
+</div>
+
 
   <script src="./app.js"></script>
 </body>
