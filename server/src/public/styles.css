@@ -9,6 +9,7 @@ h1,h2{ margin:0 0 .6rem 0 } .muted{ color:var(--muted) } .hidden{ display:none !
 
 .btn{ background:var(--accent); color:#fff; border:none; border-radius:12px; padding:10px 14px; cursor:pointer; transition:filter .15s }
 .btn:hover{ filter:brightness(1.05) } .btn.ghost{ background:transparent; border:1px solid var(--border); color:var(--fg) }
+.active-mode{ filter:brightness(1.05) }
 
 .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; margin:16px }
 .max-480{ max-width:480px; margin:40px auto }
@@ -24,9 +25,21 @@ h1,h2{ margin:0 0 .6rem 0 } .muted{ color:var(--muted) } .hidden{ display:none !
 input{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#0e1218; color:var(--fg) }
 input:focus{ border-color:#35507a; box-shadow:0 0 0 3px rgba(77,163,255,.12) }
 
-.file{ display:inline-flex; align-items:center; gap:8px } .file input{ display:none }
-.file span{ padding:10px 12px; border-radius:12px; border:1px dashed var(--border); background:#0e1218; cursor:pointer }
+/* Tabs */
+.tabs{ display:flex; gap:8px; margin-left:16px }
+.tab{ background:#0e1218; color:var(--fg); border:1px solid var(--border); border-radius:10px; padding:8px 12px; cursor:pointer }
+.tab.active{ background:var(--accent-ghost); border-color:#35507a }
+.tab:disabled{ opacity:.5; cursor:not-allowed }
+.tabpanel{ margin:0 8px }
 
+/* Chips entreprises */
+.chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
+.chip{ background:#0e1218; border:1px solid var(--border); color:var(--fg);
+       padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
+.chip button{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; }
+.chip button:hover{ color:#fff }
+
+/* Tables */
 .table-wrapper{ width:100%; overflow:auto; border:1px solid var(--border); border-radius:12px; background:#0e1218 }
 .table-wrapper.tall{ max-height:60vh }
 table{ width:100%; border-collapse:separate; border-spacing:0 }
@@ -35,35 +48,9 @@ thead{ background:var(--sticky); position:sticky; top:0; z-index:2 }
 .moe-col{ background:#101722 } .company-col{ background:#111a25 }
 .sticky-col{ position:sticky; left:0; z-index:3; background:#0f141c; border-right:1px solid var(--border) }
 .sticky-col2{ position:sticky; left:140px; z-index:3; background:#0f141c; border-right:1px solid var(--border); min-width:320px; max-width:520px; white-space:normal }
-
 .delta-pos{ color:var(--success); font-weight:600 } .delta-neg{ color:var(--danger); font-weight:600 }
 
-/* Tabs */
-.tabs{ display:flex; gap:8px; margin-left:16px }
-.tab{ background:#0e1218; color:var(--fg); border:1px solid var(--border); border-radius:10px; padding:8px 12px; cursor:pointer }
-.tab.active{ background:var(--accent-ghost); border-color:#35507a }
-.tab:disabled{ opacity:.5; cursor:not-allowed }
-.tabpanel{ margin:0 8px }
-
-/* Modal Paste */
-.modal{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:24px; z-index: 10000; }
-.modal-card{ width:min(100%, 980px); background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px }
-body.modal-open { overflow: hidden; }
-#paste-area{ width:100%; height:180px; margin:8px 0 12px 0; border-radius:12px; border:1px solid var(--border); background:#0e1218; color:var(--fg); padding:10px }
-
-/* chips entreprises */
-.chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
-.chip{ background:#0e1218; border:1px solid var(--border); color:var(--fg); padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
-.chip button{ background:#0000; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1 }
-.chip button:hover{ color:#fff }
-
-/* cellules éditables */
-#paste-grid td[contenteditable]{ min-width:110px; background:#0f141c; outline:none }
-#paste-grid td[contenteditable]:focus{ box-shadow:inset 0 0 0 2px #35507a; }
-#paste-grid th{ position:sticky; top:0; z-index:2 }
-
-.chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
-.chip{ background:#0e1218; border:1px solid var(--border); color:var(--fg);
-       padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
-.chip button{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; }
-.chip button:hover{ color:#fff }
+/* Tableur d'édition */
+#sheet-table td[contenteditable]{ min-width:110px; background:#0f141c; outline:none }
+#sheet-table td[contenteditable]:focus{ box-shadow:inset 0 0 0 2px #35507a }
+.cell-readonly{ color:var(--muted) }

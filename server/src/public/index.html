@@ -83,21 +83,33 @@
           <div class="lot-header">
             <h2 id="lot-title">Lot</h2>
             <div class="row gap">
-              <label class="file">
-                <input id="excel-file" type="file" accept=".xlsx,.xls" />
-                <span>Importer Excel</span>
-              </label>
-              <button id="open-paste" class="btn ghost">Copier/Coller</button>
-              <button id="refresh-table" class="btn ghost">Rafraîchir</button>
+              <button id="mode-compare" class="btn ghost active-mode">Comparatif</button>
+              <button id="mode-edit" class="btn">Édition (tableur)</button>
             </div>
           </div>
-          <!-- Gestion des entreprises du lot -->
-          <div class="row gap" style="margin:10px 0 6px 0">
-            <input id="company-input" placeholder="Nom d’une entreprise (ex: Entreprise A)"/>
-            <button id="add-company" class="btn">Ajouter entreprise</button>
+
+          <!-- Actions tableur -->
+          <div id="sheet-actions" class="row gap hidden">
+            <button id="add-row" class="btn">+ Ligne</button>
+            <input id="company-input" placeholder="Nom d’une entreprise"/>
+            <button id="add-company" class="btn ghost">+ Entreprise</button>
             <div id="lot-companies" class="chips"></div>
+            <div class="spacer"></div>
+            <button id="undo" class="btn ghost">Ctrl+Z</button>
+            <button id="redo" class="btn ghost">Ctrl+Y</button>
+            <button id="save-grid" class="btn">Sauvegarder</button>
           </div>
-          <div class="table-wrapper tall">
+
+          <!-- VUE TABLEUR -->
+          <div id="sheet-view" class="table-wrapper tall hidden">
+            <table id="sheet-table">
+              <thead id="sheet-head"></thead>
+              <tbody id="sheet-body"></tbody>
+            </table>
+          </div>
+
+          <!-- VUE COMPARATIF -->
+          <div id="compare-view" class="table-wrapper tall">
             <table id="compare-table">
               <thead id="compare-head"></thead>
               <tbody id="compare-body"></tbody>
@@ -106,49 +118,8 @@
         </div>
       </section>
     </section>
+
   </div>
-
-  <!-- ===== MODAL PASTE ===== -->
-<div id="paste-modal" class="modal hidden">
-  <div class="modal-card">
-    <h3>Importer par copier/coller (éditeur en tableau)</h3>
-    <p class="muted">
-      Les colonnes MOE sont fixes. Ajoute les entreprises ci-dessous : chaque entreprise aura
-      <em>U</em>, <em>Quantité</em>, <em>PU</em>, <em>Montant</em>. Colle ensuite tes cellules Excel directement dans le tableau.
-    </p>
-
-    <!-- gestion des entreprises -->
-    <div class="row gap">
-      <input id="comp-input" placeholder="Nom d’une entreprise (ex: Entreprise A)" />
-      <button id="comp-add" class="btn">Ajouter</button>
-      <div class="chips" id="comp-list"></div>
-      <div class="spacer"></div>
-      <label class="muted">Lignes :
-        <input id="rows-count" type="number" min="1" value="20" style="width:80px;margin-left:6px;">
-      </label>
-      <button id="rows-add-50" class="btn ghost">+50</button>
-      <button id="rows-clear" class="btn ghost">Vider</button>
-    </div>
-
-    <!-- table d’édition -->
-    <div class="table-wrapper tall" style="margin-top:10px">
-      <table id="paste-grid">
-        <thead>
-          <tr id="grid-head-top"></tr>
-          <tr id="grid-head-bottom"></tr>
-        </thead>
-        <tbody id="grid-body"></tbody>
-      </table>
-    </div>
-
-    <div class="row gap" style="margin-top:12px">
-      <button id="paste-import" class="btn">Importer</button>
-      <div class="spacer"></div>
-      <button id="paste-close" class="btn ghost">Fermer</button>
-    </div>
-  </div>
-</div>
-
 
   <script src="./app.js"></script>
 </body>
