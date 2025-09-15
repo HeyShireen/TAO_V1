@@ -5,6 +5,7 @@ const API_BASE = API_ROOT + '/api';
 let token = localStorage.getItem('token') || null;
 let currentProject = null;
 let currentLot = null;
+let lotCompanies = []; // {id, name} pour le lot courant
 
 const qs  = (s) => document.querySelector(s);
 const qsa = (s) => Array.from(document.querySelectorAll(s));
@@ -77,6 +78,8 @@ async function openLot(id, lotMeta){
   enableTab('tab-lot', true);
   activateTab('tab-lot');
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
+  lotCompanies = await api(`/lots/${id}/companies`);
+  renderLotCompanies();
   await refreshCompare();
 }
 
@@ -138,15 +141,28 @@ function openPasteEditor(){
 }
 
 async function initCompaniesFromLot(){
-  try{
-    const raw = await api(`/lots/${currentLot.id}`); // retourne companies[]
-    if (raw?.companies?.length) {
-      PASTE.companies = raw.companies.map(c => c.name);
-    } else if (PASTE.companies.length === 0) {
-      PASTE.companies = []; // laisse vide si aucune
-    }
-    renderCompanyChips();
-  }catch{ /* ignore */ }
+  // On se base sur les entreprises déjà chargées pour le lot
+  PASTE.companies = (lotCompanies || []).map(c => c.name);
+  renderCompanyChips();
+}
+
+
+function renderLotCompanies(){
+  const wrap = qs('#lot-companies');
+  wrap.innerHTML = '';
+  for (const c of lotCompanies) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+    chip.querySelector('button').addEventListener('click', async () => {
+      // retirer l'entreprise de ce lot
+      await api(`/lots/${currentLot.id}/companies/${c.id}`, { method: 'DELETE' });
+      lotCompanies = lotCompanies.filter(x => x.id !== c.id);
+      renderLotCompanies();
+      await refreshCompare();
+    });
+    wrap.appendChild(chip);
+  }
 }
 
 function renderCompanyChips(){
@@ -315,6 +331,19 @@ function bindUI(){
   qs('#login-btn').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await login(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
   qs('#bootstrap-admin').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await registerFirst(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
   qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
+  qs('#add-company').addEventListener('click', async () => {
+    const name = qs('#company-input').value.trim();
+    if (!name) return;
+    const created = await api(`/lots/${currentLot.id}/companies`, {
+      method: 'POST',
+      body: { name }
+    });
+    // mettre à jour l'état + UI
+    if (!lotCompanies.find(c => c.id === created.id)) lotCompanies.push(created);
+    qs('#company-input').value = '';
+    renderLotCompanies();
+    await refreshCompare();
+  });
 
   // tabs
   qsa('.tab').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));

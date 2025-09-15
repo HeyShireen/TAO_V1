@@ -9,6 +9,46 @@ const upload = multer();
 const router = express.Router();
 router.use(requireAuth);
 
+// === ENTREPRISES D'UN LOT ===
+
+// Liste des entreprises du lot
+router.get('/:id/companies', async (req, res) => {
+  const id = req.params.id;
+  const r = await query(
+    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id = lc.company_id WHERE lc.lot_id = $1 ORDER BY c.name',
+    [id]
+  );
+  res.json(r.rows);
+});
+
+// Ajouter une entreprise au lot (créée si elle n'existe pas)
+router.post('/:id/companies', async (req, res) => {
+  const id = req.params.id;
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Nom requis' });
+
+  const clean = name.trim();
+  const upsert = await query(
+    'INSERT INTO companies (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id, name',
+    [clean]
+  );
+  const company = upsert.rows[0];
+
+  await query(
+    'INSERT INTO lot_companies (lot_id, company_id) VALUES ($1, $2) ON CONFLICT (lot_id, company_id) DO NOTHING',
+    [id, company.id]
+  );
+
+  res.json(company);
+});
+
+// Retirer une entreprise du lot (ne supprime pas la société globale)
+router.delete('/:id/companies/:companyId', async (req, res) => {
+  const { id, companyId } = req.params;
+  await query('DELETE FROM lot_companies WHERE lot_id=$1 AND company_id=$2', [id, companyId]);
+  res.json({ ok: true });
+});
+
 // Get raw lot data
 router.get('/:id', async (req, res) => {
   const id = req.params.id;
