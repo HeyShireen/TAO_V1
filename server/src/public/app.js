@@ -1,5 +1,5 @@
 // server/src/public/app.js
-// App monolithique (same-origin) : front + API sur le même domaine
+// Front monolithique (same-origin)
 const API_ROOT = window.location.origin;
 const API_BASE = API_ROOT + '/api';
 
@@ -18,6 +18,44 @@ const show = (sel) => qs(sel).classList.remove('hidden');
 const hide = (sel) => qs(sel).classList.add('hidden');
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 
+/* ================= utils ================= */
+function parseNum(v){
+  if (v == null || v === '') return NaN;
+  if (typeof v === 'number') return v;
+  let s = String(v).trim();
+  // enlever espaces (incl. insécables)
+  s = s.replace(/\u00A0|\u202F|\s/g, '');
+  // gérer formats "1.234,56" (FR) ou "1,234.56" (EN)
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  if (hasComma && hasDot){
+    // dernier séparateur = décimal, l'autre = milliers (à supprimer)
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    // "1234,56" -> "1234.56"
+    s = s.replace(',', '.');
+  }
+  // garder chiffres, ., - et ( ) pour négatifs style "(123)"
+  if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
+  s = s.replace(/[^0-9\.\-]/g,'');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+function formatNum(n){
+  if (!Number.isFinite(n)) return '';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+function amountOf(q, pu){
+  const n1 = parseNum(q), n2 = parseNum(pu);
+  if (!Number.isFinite(n1) || !Number.isFinite(n2)) return '';
+  return formatNum(n1 * n2);
+}
+
+/* ================= API helper ================= */
 async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
@@ -31,7 +69,7 @@ async function api(path, opts = {}) {
   return data;
 }
 
-/* ================== Onglets ================== */
+/* ================= Onglets ================= */
 function activateTab(id){
   qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   qsa('.tabpanel').forEach(p => p.id === id ? show('#'+id) : hide('#'+p.id));
@@ -41,7 +79,7 @@ function enableTab(id, enabled=true){
   if (btn){ btn.disabled = !enabled; }
 }
 
-/* ================== Auth ================== */
+/* ================= Auth ================= */
 async function login(email, password){
   const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
@@ -53,7 +91,7 @@ async function registerFirst(email, password){
   token = j.token; localStorage.setItem('token', token); return j.user;
 }
 
-/* ================== Projets / Lots ================== */
+/* ================= Projets / Lots ================= */
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   for (const p of list){
@@ -86,31 +124,28 @@ async function openLot(id, lotMeta){
   activateTab('tab-lot');
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
 
-  // Entreprises du lot
   lotCompanies = await api(`/lots/${id}/companies`);
   renderLotCompanies();
 
-  // Modèle d’édition
   const raw = await api(`/lots/${id}`); // {items, moe, companies, offers}
   buildSheetModel(raw);
 
-  // Comparatif par défaut
   await refreshCompare();
   hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
   qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
 }
 
-/* ================== Comparatif (lecture) ================== */
+/* ================= Comparatif (lecture) ================= */
 function fmtPct(p){ if (p==null || isNaN(p)) return ''; const cls = p>0?'delta-neg':(p<0?'delta-pos':''); const s=(p>0?'+':'')+p.toFixed(1)+'%'; return `<span class="${cls}">${s}</span>`; }
-function fmtNum(v){ if (v==null || v==='') return ''; const n=Number(v); return isNaN(n)?String(v):n.toLocaleString(undefined,{maximumFractionDigits:3}); }
+function fmtNum(v){ const n = parseNum(v); return Number.isFinite(n) ? formatNum(n) : (v ?? ''); }
 
 async function refreshCompare(){
   if (!currentLot) return;
   const data = await api('/lots/'+currentLot.id+'/table');
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
-  let h1 = `<tr><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">U</th><th colspan="3" class="moe-col">MOE</th>`;
+  let h1 = `<tr><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
-  let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; for (let i=0;i<data.companies.length;i++) h2 += '<th>U</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; h2 += '</tr>';
+  let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; for (let i=0;i<data.companies.length;i++) h2 += '<th>Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; h2 += '</tr>';
   head.innerHTML = h1 + h2;
   for (const r of data.rows){
     let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td>${fmtNum(r.moe.qty)}</td><td>${fmtNum(r.moe.pu)}</td><td>${fmtNum(r.moe.mt)}</td>`;
@@ -119,7 +154,7 @@ async function refreshCompare(){
   }
 }
 
-/* ================== Tableur (édition) ================== */
+/* ================= Tableur (édition) ================= */
 function buildSheetModel(raw){
   const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
   const offersByItem = new Map();
@@ -174,7 +209,7 @@ function headerStructure(){
   const base = [
     { key:'num', label:'Num', readonly:false },
     { key:'designation', label:'Désignation', readonly:false, wide:true },
-    { key:'unit', label:'U', readonly:false },
+    { key:'unit', label:'Unité', readonly:false },
     { key:'moe.qty', label:'Quantité MOE', readonly:false, cls:'moe-col' },
     { key:'moe.pu',  label:'PU MOE',       readonly:false, cls:'moe-col' },
     { key:'moe.mt',  label:'Mt MOE',       readonly:true,  cls:'moe-col' },
@@ -183,10 +218,10 @@ function headerStructure(){
     id: c.id,
     name: c.name,
     cols: [
-      { key:`c.${c.id}.u`,  label:'U',  readonly:false },
-      { key:`c.${c.id}.qty`,label:'Qté',readonly:false },
-      { key:`c.${c.id}.pu`, label:'PU', readonly:false },
-      { key:`c.${c.id}.mt`, label:'Mt', readonly:true  },
+      { key:`c.${c.id}.u`,  label:'Unité',  readonly:false },
+      { key:`c.${c.id}.qty`,label:'Qté',    readonly:false },
+      { key:`c.${c.id}.pu`, label:'PU',     readonly:false },
+      { key:`c.${c.id}.mt`, label:'Mt',     readonly:true  },
     ]
   }));
   return { base, comps };
@@ -211,11 +246,9 @@ function renderSheet(){
   sheetRows.forEach((row, rIndex) => {
     const tr = document.createElement('tr');
     let colIndex = 0;
-    // base cells
     for (const b of base){
       tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide, colIndex++));
     }
-    // company cells
     for (const g of comps){
       for (const c of g.cols){
         tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key), false, colIndex++));
@@ -224,6 +257,9 @@ function renderSheet(){
     body.appendChild(tr);
     recalcRowAmounts(rIndex);
   });
+
+  // (ré)attacher la délégation d’événements sur le body du tableur
+  attachSheetDelegates();
 }
 
 function rowValue(row, key){
@@ -244,6 +280,7 @@ function rowValue(row, key){
 
 function setRowValue(rIndex, key, val){
   const row = sheetRows[rIndex];
+  if (!row) return;
   if (key === 'num') row.num = val;
   else if (key === 'designation') row.designation = val;
   else if (key === 'unit') row.unit = val;
@@ -256,13 +293,6 @@ function setRowValue(rIndex, key, val){
   }
 }
 
-function amountOf(q, pu){
-  const n1 = Number(q), n2 = Number(pu);
-  if (!isFinite(n1) || !isFinite(n2)) return '';
-  if (q === '' || pu === '') return '';
-  return (n1 * n2).toLocaleString(undefined, { maximumFractionDigits: 3 });
-}
-
 function makeCell(r, key, readonly, value, wide=false, colIndex=null){
   const td = document.createElement('td');
   if (!readonly) td.contentEditable = 'true';
@@ -271,42 +301,45 @@ function makeCell(r, key, readonly, value, wide=false, colIndex=null){
   td.textContent = value ?? '';
   td.dataset.r = String(r);
   td.dataset.key = key;
-  td.dataset.c = String(colIndex ?? 0);  // index de colonne
-  td.addEventListener('focusin', onCellFocus);
-  td.addEventListener('blur', onCellBlur);
-  td.addEventListener('keydown', onCellKeyDown);
-  td.addEventListener('input', onCellInput);
-  td.addEventListener('paste', onSheetPaste); // collage multi-cellules
+  td.dataset.c = String(colIndex ?? 0);  // index de colonne pour navigation
   return td;
 }
 
-function onCellFocus(e){
-  const td = e.currentTarget;
-  td.dataset.prev = td.textContent;
-}
-
-function onCellBlur(e){
-  const td = e.currentTarget;
-  const r = Number(td.dataset.r);
-  const key = td.dataset.key;
-  const prev = td.dataset.prev ?? '';
-  const now  = td.textContent;
-  if (prev !== now) {
-    pushUndo({ r, key, prev, next: now });
-    redoStack.length = 0;
-  }
-}
-
-function onCellInput(e){
-  const td = e.currentTarget;
-  const r = Number(td.dataset.r);
-  const key = td.dataset.key;
-  setRowValue(r, key, td.textContent.trim());
-  recalcRowAmounts(r);
+/* ===== Délégation d’événements (fiable sous tous navigateurs) ===== */
+let delegatesAttached = false;
+function attachSheetDelegates(){
+  if (delegatesAttached) return;
+  const body = qs('#sheet-body');
+  body.addEventListener('focusin', (e) => {
+    const td = e.target.closest('td[contenteditable], td');
+    if (!td) return;
+    td.dataset.prev = td.textContent;
+  });
+  body.addEventListener('blur', (e) => {
+    const td = e.target.closest('td[contenteditable], td');
+    if (!td) return;
+    const r = Number(td.dataset.r);
+    const key = td.dataset.key;
+    const prev = td.dataset.prev ?? '';
+    const now  = td.textContent;
+    if (prev !== now) { pushUndo({ r, key, prev, next: now }); redoStack.length = 0; }
+  }, true);
+  body.addEventListener('input', (e) => {
+    const td = e.target.closest('td[contenteditable], td');
+    if (!td) return;
+    const r = Number(td.dataset.r);
+    const key = td.dataset.key;
+    setRowValue(r, key, td.textContent.trim());
+    recalcRowAmounts(r);
+  });
+  body.addEventListener('keydown', onCellKeyDown, true);
+  body.addEventListener('paste', onSheetPaste, true);
+  delegatesAttached = true;
 }
 
 function onCellKeyDown(e){
-  const td = e.currentTarget;
+  const td = e.target.closest('td');
+  if (!td) return;
   const r  = Number(td.dataset.r);
   const ci = Number(td.dataset.c);
   const key = td.dataset.key;
@@ -339,32 +372,41 @@ function focusEditableByIndex(rowIndex, colIndex){
   while (rowIndex >= qsa('#sheet-body tr').length) addRow();
   const rowEl = qsa('#sheet-body tr')[rowIndex];
   let td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
+  // sauter les colonnes readonly
   let guard = 0;
   while (td && td.classList.contains('cell-readonly') && guard++ < 100) {
     colIndex += 1;
     td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
   }
-  if (td) { td.focus(); placeCaretEnd(td); }
+  if (td) {
+    td.focus();
+    const range = document.createRange();
+    range.selectNodeContents(td); range.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  }
 }
 
-function placeCaretEnd(el){
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  const sel = window.getSelection();
-  sel.removeAllRanges(); sel.addRange(range);
+/* ===== Collage multi-cellules ===== */
+function detectDelimiter(sample){
+  if (sample.includes('\t')) return '\t';
+  // heuristique FR CSV
+  const sc = (sample.split(';').length-1), cc = (sample.split(',').length-1);
+  if (sc > cc) return ';';
+  return ',';
 }
-
 function onSheetPaste(e){
+  const td = e.target.closest('td');
+  if (!td) return;
   e.preventDefault();
-  const td = e.currentTarget;
+
   const startR = Number(td.dataset.r);
   const startC = Number(td.dataset.c);
 
   const text = e.clipboardData.getData('text/plain') || '';
+  const delim = detectDelimiter(text);
   const lines = text.replace(/\r/g,'').split('\n').filter(l => l !== '');
   if (lines.length === 0) return;
-  const grid = lines.map(l => l.split('\t'));
+  const grid = lines.map(l => l.split(delim));
 
   const needRows = startR + grid.length;
   while (qsa('#sheet-body tr').length < needRows) addRow();
@@ -398,6 +440,7 @@ function onSheetPaste(e){
   }
 }
 
+/* ===== Recalcul montants ===== */
 function recalcRowAmounts(r){
   const tr = qsa('#sheet-body tr')[r];
   if (!tr) return;
@@ -443,9 +486,7 @@ function addRow(){
   sheetRows.push(blank);
   renderSheet();
   const lastIndex = sheetRows.length - 1;
-  const tr = qsa('#sheet-body tr')[lastIndex];
-  const firstEditable = qsa('td:not(.cell-readonly)', tr)[0];
-  if (firstEditable) firstEditable.focus();
+  focusEditableByIndex(lastIndex, 0);
 }
 
 async function saveGrid(){
@@ -478,7 +519,7 @@ async function saveGrid(){
   alert('Sauvegardé ✅');
 }
 
-/* ================== Bindings UI ================== */
+/* ================= Bindings UI ================= */
 function renderSheetBindings(){
   qs('#add-row').addEventListener('click', addRow);
 
@@ -513,7 +554,7 @@ function renderSheetBindings(){
   });
 }
 
-/* ================== INIT ================== */
+/* ================= INIT ================= */
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
 
 function bindUI(){
