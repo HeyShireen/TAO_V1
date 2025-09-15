@@ -135,6 +135,7 @@ function openPasteEditor(){
     rebuildPasteGrid();
     show('#paste-modal');
     // focus première cellule
+    document.body.classList.add('modal-open');
     const first = qs('#grid-body td[contenteditable]');
     if (first) first.focus();
   });
@@ -286,6 +287,9 @@ function bindPasteEditorUI(){
   // ouverture / fermeture
   qs('#open-paste').addEventListener('click', openPasteEditor);
   qs('#paste-close').addEventListener('click', () => hide('#paste-modal'));
+  hide('#paste-modal');
+  document.body.classList.remove('modal-open');
+
 
   // entreprises
   qs('#comp-add').addEventListener('click', () => {

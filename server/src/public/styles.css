@@ -46,8 +46,9 @@ thead{ background:var(--sticky); position:sticky; top:0; z-index:2 }
 .tabpanel{ margin:0 8px }
 
 /* Modal Paste */
-.modal{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:24px }
+.modal{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:24px; z-index: 10000; }
 .modal-card{ width:min(100%, 980px); background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px }
+body.modal-open { overflow: hidden; }
 #paste-area{ width:100%; height:180px; margin:8px 0 12px 0; border-radius:12px; border:1px solid var(--border); background:#0e1218; color:var(--fg); padding:10px }
 
 /* chips entreprises */
