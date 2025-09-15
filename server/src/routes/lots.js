@@ -3,9 +3,9 @@ import multer from 'multer';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware.auth.js';
 import { importLotFromExcel } from '../importers/excel.js';
+import { importLotFromClipboard } from '../importers/clipboard.js';
 
 const upload = multer();
-
 const router = express.Router();
 router.use(requireAuth);
 
@@ -37,7 +37,6 @@ router.get('/:id/table', async (req, res) => {
   const companies = compsRes.rows;
 
   const offersRes = await query('SELECT * FROM offers WHERE item_id = ANY($1::int[])', [itemIds]);
-  // offersByItem: Map<itemId, Map<companyId, offer>>
   const offersByItem = new Map();
   for (const o of offersRes.rows) {
     if (!offersByItem.has(o.item_id)) offersByItem.set(o.item_id, new Map());
@@ -56,7 +55,6 @@ router.get('/:id/table', async (req, res) => {
     };
     for (const c of companies) {
       const off = offersByItem.get(item.id)?.get(c.id) || {};
-      // compute deltas (%)
       const deltaQty = (moe.qty != null && off.qty != null && moe.qty != 0) ? (off.qty - moe.qty) / moe.qty * 100 : null;
       const deltaPu  = (moe.unit_price != null && off.unit_price != null && moe.unit_price != 0) ? (off.unit_price - moe.unit_price) / moe.unit_price * 100 : null;
       result.companies.push({
@@ -76,12 +74,28 @@ router.get('/:id/table', async (req, res) => {
   res.json({ companies, rows });
 });
 
-// Import Excel for a lot
+// Import Excel (fichier .xlsx)
 router.post('/:id/import-excel', upload.single('file'), async (req, res) => {
   const id = req.params.id;
   if (!req.file) return res.status(400).json({ error: 'Missing file' });
   try {
     const result = await importLotFromExcel({ lotId: id, buffer: req.file.buffer });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Import "copier/coller" depuis tableur (TSV/CSV parsé côté front)
+router.post('/:id/import-clipboard', async (req, res) => {
+  const id = req.params.id;
+  const { headers, rows } = req.body || {};
+  if (!Array.isArray(headers) || !Array.isArray(rows)) {
+    return res.status(400).json({ error: 'headers[] et rows[][] requis' });
+  }
+  try {
+    const result = await importLotFromClipboard({ lotId: id, headers, rows });
     res.json({ ok: true, ...result });
   } catch (e) {
     console.error(e);

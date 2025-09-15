@@ -3,114 +3,124 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Comparateur d'offres — Bureau</title>
+  <title>TAO — Comparateur d'offres</title>
   <link rel="stylesheet" href="./styles.css"/>
 </head>
 <body>
   <div id="app">
 
-    <!-- ====== LOGIN ====== -->
+    <!-- ===== LOGIN ===== -->
     <section id="login-view" class="card max-480">
       <h1>Connexion</h1>
-      <p class="muted">Entrez vos identifiants ou créez l’admin si c’est la première utilisation.</p>
-
-      <label class="field">
-        <span>Email</span>
-        <input id="email" type="email" placeholder="vous@exemple.fr" autocomplete="username" />
-      </label>
-
-      <label class="field">
-        <span>Mot de passe</span>
-        <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
-      </label>
-
+      <p class="muted">Crée l’admin à la première utilisation.</p>
+      <label class="field"><span>Email</span><input id="email" type="email" placeholder="vous@exemple.fr"/></label>
+      <label class="field"><span>Mot de passe</span><input id="password" type="password" placeholder="••••••••"/></label>
       <div class="row gap">
         <button id="login-btn" class="btn">Se connecter</button>
         <button id="bootstrap-admin" class="btn ghost">Créer admin</button>
       </div>
-
       <p id="login-msg" class="muted"></p>
     </section>
 
-    <!-- ====== DASHBOARD ====== -->
+    <!-- ===== APP ===== -->
     <section id="dashboard" class="hidden">
       <header class="header">
-        <h1>Projets</h1>
+        <h1>TAO</h1>
+        <div class="tabs">
+          <button data-tab="tab-projects" class="tab active">Projets</button>
+          <button data-tab="tab-project"  class="tab" disabled>Projet</button>
+          <button data-tab="tab-lot"      class="tab" disabled>Lot</button>
+        </div>
         <div class="spacer"></div>
         <button id="logout" class="btn ghost">Déconnexion</button>
       </header>
 
-      <!-- Nouveau projet -->
-      <section class="card">
-        <h2>Nouveau projet</h2>
-        <div class="grid grid-4 gap">
-          <input id="proj-name" placeholder="Nom du projet *" />
-          <input id="proj-ref" placeholder="Référence" />
-          <input id="proj-client" placeholder="Client" />
-          <input id="proj-location" placeholder="Localisation" />
-        </div>
-        <div class="row">
-          <button id="create-project" class="btn">Créer</button>
-        </div>
-      </section>
-
-      <!-- Liste des projets -->
-      <section class="card">
-        <h2>Liste des projets</h2>
-        <div class="table-wrapper">
-          <table id="projects-table">
-            <thead>
-              <tr>
-                <th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Vue projet -->
-      <section id="project-view" class="card hidden">
-        <h2 id="project-title">Projet</h2>
-
-        <div class="grid grid-3 gap">
-          <input id="lot-code" placeholder="Code lot (ex: GO)"/>
-          <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
-          <button id="add-lot" class="btn">Ajouter le lot</button>
+      <!-- Onglet Projets -->
+      <section id="tab-projects" class="tabpanel">
+        <div class="card">
+          <h2>Nouveau projet</h2>
+          <div class="grid grid-4 gap">
+            <input id="proj-name" placeholder="Nom du projet *" />
+            <input id="proj-ref" placeholder="Référence" />
+            <input id="proj-client" placeholder="Client" />
+            <input id="proj-location" placeholder="Localisation" />
+          </div>
+          <div class="row"><button id="create-project" class="btn">Créer</button></div>
         </div>
 
-        <div class="table-wrapper">
-          <table id="lots-table">
-            <thead>
-              <tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Vue lot / comparatif -->
-      <section id="lot-view" class="card hidden">
-        <div class="lot-header">
-          <h2 id="lot-title">Lot</h2>
-          <div class="row gap">
-            <label class="file">
-              <input id="excel-file" type="file" accept=".xlsx,.xls" />
-              <span>Importer Excel</span>
-            </label>
-            <button id="refresh-table" class="btn ghost">Rafraîchir</button>
+        <div class="card">
+          <h2>Liste des projets</h2>
+          <div class="table-wrapper">
+            <table id="projects-table">
+              <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
+      </section>
 
-        <div class="table-wrapper tall">
-          <table id="compare-table">
-            <thead id="compare-head"></thead>
-            <tbody id="compare-body"></tbody>
-          </table>
+      <!-- Onglet Projet -->
+      <section id="tab-project" class="tabpanel hidden">
+        <div class="card">
+          <h2 id="project-title">Projet</h2>
+          <div class="grid grid-3 gap">
+            <input id="lot-code" placeholder="Code lot (ex: GO)"/>
+            <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
+            <button id="add-lot" class="btn">Ajouter le lot</button>
+          </div>
+          <div class="table-wrapper">
+            <table id="lots-table">
+              <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Onglet Lot -->
+      <section id="tab-lot" class="tabpanel hidden">
+        <div class="card">
+          <div class="lot-header">
+            <h2 id="lot-title">Lot</h2>
+            <div class="row gap">
+              <label class="file">
+                <input id="excel-file" type="file" accept=".xlsx,.xls" />
+                <span>Importer Excel</span>
+              </label>
+              <button id="open-paste" class="btn ghost">Copier/Coller</button>
+              <button id="refresh-table" class="btn ghost">Rafraîchir</button>
+            </div>
+          </div>
+          <div class="table-wrapper tall">
+            <table id="compare-table">
+              <thead id="compare-head"></thead>
+              <tbody id="compare-body"></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </section>
+  </div>
 
+  <!-- ===== MODAL PASTE ===== -->
+  <div id="paste-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Importer par copier/coller</h3>
+      <p class="muted">
+        Colle ici les cellules depuis Excel/LibreOffice (la 1ère ligne = en-têtes).
+        Pour les entreprises, nomme les colonnes <em>Entreprise Quantité</em>, <em>Entreprise PU</em>, <em>Entreprise Montant</em>, <em>Entreprise U</em>.
+      </p>
+      <textarea id="paste-area" placeholder="Collez vos données ici (Ctrl+V)"></textarea>
+      <div class="row gap">
+        <button id="paste-preview" class="btn">Prévisualiser</button>
+        <button id="paste-import"  class="btn ghost" disabled>Importer</button>
+        <div class="spacer"></div>
+        <button id="paste-close"   class="btn ghost">Fermer</button>
+      </div>
+      <div id="paste-preview-wrap" class="table-wrapper hidden">
+        <table><thead id="paste-head"></thead><tbody id="paste-body"></tbody></table>
+      </div>
+    </div>
   </div>
 
   <script src="./app.js"></script>
