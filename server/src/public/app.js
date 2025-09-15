@@ -1,4 +1,5 @@
-// same-origin
+// server/src/public/app.js
+// App monolithique (same-origin) : front + API sur le même domaine
 const API_ROOT = window.location.origin;
 const API_BASE = API_ROOT + '/api';
 
@@ -30,7 +31,7 @@ async function api(path, opts = {}) {
   return data;
 }
 
-/* ===== Tabs ===== */
+/* ================== Onglets ================== */
 function activateTab(id){
   qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   qsa('.tabpanel').forEach(p => p.id === id ? show('#'+id) : hide('#'+p.id));
@@ -40,7 +41,7 @@ function enableTab(id, enabled=true){
   if (btn){ btn.disabled = !enabled; }
 }
 
-/* ===== AUTH ===== */
+/* ================== Auth ================== */
 async function login(email, password){
   const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
@@ -52,7 +53,7 @@ async function registerFirst(email, password){
   token = j.token; localStorage.setItem('token', token); return j.user;
 }
 
-/* ===== PROJETS / LOTS (navigation) ===== */
+/* ================== Projets / Lots ================== */
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   for (const p of list){
@@ -63,6 +64,7 @@ function renderProjects(list){
   }
 }
 async function refreshProjects(){ const list = await api('/projects'); renderProjects(list); }
+
 async function openProject(id){
   const { project, lots } = await api('/projects/'+id);
   currentProject = project;
@@ -77,31 +79,31 @@ async function openProject(id){
     tbody.appendChild(tr);
   }
 }
+
 async function openLot(id, lotMeta){
   currentLot = { id, ...lotMeta };
   enableTab('tab-lot', true);
   activateTab('tab-lot');
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
 
-  // Entreprises
+  // Entreprises du lot
   lotCompanies = await api(`/lots/${id}/companies`);
   renderLotCompanies();
 
-  // Construire le modèle pour le tableur
-  const raw = await api(`/lots/${id}`);
+  // Modèle d’édition
+  const raw = await api(`/lots/${id}`); // {items, moe, companies, offers}
   buildSheetModel(raw);
 
-  // Afficher le comparatif par défaut
+  // Comparatif par défaut
   await refreshCompare();
-
-  // Par défaut: mode comparatif actif
   hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
   qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
 }
 
-/* ===== COMPARATIF (lecture) ===== */
+/* ================== Comparatif (lecture) ================== */
 function fmtPct(p){ if (p==null || isNaN(p)) return ''; const cls = p>0?'delta-neg':(p<0?'delta-pos':''); const s=(p>0?'+':'')+p.toFixed(1)+'%'; return `<span class="${cls}">${s}</span>`; }
 function fmtNum(v){ if (v==null || v==='') return ''; const n=Number(v); return isNaN(n)?String(v):n.toLocaleString(undefined,{maximumFractionDigits:3}); }
+
 async function refreshCompare(){
   if (!currentLot) return;
   const data = await api('/lots/'+currentLot.id+'/table');
@@ -117,7 +119,7 @@ async function refreshCompare(){
   }
 }
 
-/* ===== TABLEUR (édition) ===== */
+/* ================== Tableur (édition) ================== */
 function buildSheetModel(raw){
   const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
   const offersByItem = new Map();
@@ -143,8 +145,8 @@ function buildSheetModel(raw){
     return row;
   });
 
-  // au moins une ligne vide
-  if (sheetRows.length === 0) sheetRows.push({ item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
+  if (sheetRows.length === 0)
+    sheetRows.push({ item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
 
   renderSheet();
 }
@@ -159,7 +161,6 @@ function renderLotCompanies(){
     chip.querySelector('button').addEventListener('click', async () => {
       await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
       lotCompanies = lotCompanies.filter(x => x.id !== c.id);
-      // retirer colonnes dans le modèle
       for (const r of sheetRows) delete r.offers[c.id];
       renderLotCompanies();
       renderSheet();
@@ -170,7 +171,6 @@ function renderLotCompanies(){
 }
 
 function headerStructure(){
-  // base: 6 colonnes
   const base = [
     { key:'num', label:'Num', readonly:false },
     { key:'designation', label:'Désignation', readonly:false, wide:true },
@@ -210,19 +210,18 @@ function renderSheet(){
   // body
   sheetRows.forEach((row, rIndex) => {
     const tr = document.createElement('tr');
-
+    let colIndex = 0;
     // base cells
     for (const b of base){
-      tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide));
+      tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide, colIndex++));
     }
     // company cells
     for (const g of comps){
       for (const c of g.cols){
-        tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key)));
+        tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key), false, colIndex++));
       }
     }
     body.appendChild(tr);
-    // calc mt initial
     recalcRowAmounts(rIndex);
   });
 }
@@ -272,15 +271,14 @@ function makeCell(r, key, readonly, value, wide=false, colIndex=null){
   td.textContent = value ?? '';
   td.dataset.r = String(r);
   td.dataset.key = key;
-  td.dataset.c = String(colIndex ?? 0);  // <-- index de colonne
+  td.dataset.c = String(colIndex ?? 0);  // index de colonne
   td.addEventListener('focusin', onCellFocus);
   td.addEventListener('blur', onCellBlur);
   td.addEventListener('keydown', onCellKeyDown);
   td.addEventListener('input', onCellInput);
-  td.addEventListener('paste', onSheetPaste); // <-- collage multi-cellules
+  td.addEventListener('paste', onSheetPaste); // collage multi-cellules
   return td;
 }
-
 
 function onCellFocus(e){
   const td = e.currentTarget;
@@ -300,7 +298,6 @@ function onCellBlur(e){
 }
 
 function onCellInput(e){
-  // mise à jour modèle + recalcul auto des montants
   const td = e.currentTarget;
   const r = Number(td.dataset.r);
   const key = td.dataset.key;
@@ -339,43 +336,13 @@ function onCellKeyDown(e){
 }
 
 function focusEditableByIndex(rowIndex, colIndex){
-  // ajoute une ligne si on descend en-dessous de la dernière
   while (rowIndex >= qsa('#sheet-body tr').length) addRow();
-
   const rowEl = qsa('#sheet-body tr')[rowIndex];
-  // cherche la cellule avec le même index de colonne
   let td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
-  // si la cellule est en lecture seule, avance jusqu’à la prochaine éditable
   let guard = 0;
   while (td && td.classList.contains('cell-readonly') && guard++ < 100) {
     colIndex += 1;
     td = qsa('td', rowEl).find(x => Number(x.dataset.c) === colIndex);
-  }
-  if (td) { td.focus(); placeCaretEnd(td); }
-}
-
-
-function cellIndex(td){
-  const tr = td.parentElement;
-  const cells = qsa('td', tr);
-  const all = qsa('#sheet-body tr');
-  const ci = cells.indexOf(td);
-  return { ci, maxCols: qsa('td', all[0] || tr).length };
-}
-
-function focusEditable(row, col){
-  const rows = qsa('#sheet-body tr');
-  if (row < 0) row = 0;
-  if (row >= rows.length) {
-    // ajoute une ligne si on descend à la fin
-    addRow();
-  }
-  const rEl = qsa('#sheet-body tr')[row] || qsa('#sheet-body tr')[qsa('#sheet-body tr').length-1];
-  let td = qsa('td', rEl)[col];
-  // sauter les readonly
-  let guard = 0;
-  while (td && td.classList.contains('cell-readonly') && guard++ < 100) {
-    col += 1; td = qsa('td', rEl)[col];
   }
   if (td) { td.focus(); placeCaretEnd(td); }
 }
@@ -389,7 +356,6 @@ function placeCaretEnd(el){
 }
 
 function onSheetPaste(e){
-  // collage multi-cellules: répartir sur lignes/colonnes à partir de la cellule courante
   e.preventDefault();
   const td = e.currentTarget;
   const startR = Number(td.dataset.r);
@@ -400,7 +366,6 @@ function onSheetPaste(e){
   if (lines.length === 0) return;
   const grid = lines.map(l => l.split('\t'));
 
-  // étendre le nombre de lignes si nécessaire
   const needRows = startR + grid.length;
   while (qsa('#sheet-body tr').length < needRows) addRow();
 
@@ -423,16 +388,12 @@ function onSheetPaste(e){
       const key = cell.dataset.key;
       const prev = cell.textContent;
 
-      // maj DOM + modèle
       cell.textContent = val;
       setRowValue(r, key, val);
-
-      // pile undo
       if (prev !== val) { pushUndo({ r, key, prev, next: val }); redoStack.length = 0; }
 
       targetCol += 1;
     }
-    // recalcul des montants pour la ligne
     recalcRowAmounts(startR + i);
   }
 }
@@ -441,15 +402,11 @@ function recalcRowAmounts(r){
   const tr = qsa('#sheet-body tr')[r];
   if (!tr) return;
 
-  // MOE
   const moeQtyCell = tr.querySelector('td[data-key="moe.qty"]');
   const moePuCell  = tr.querySelector('td[data-key="moe.pu"]');
   const moeMtCell  = tr.querySelector('td[data-key="moe.mt"]');
-  if (moeMtCell) {
-    moeMtCell.textContent = amountOf(moeQtyCell?.textContent.trim(), moePuCell?.textContent.trim());
-  }
+  if (moeMtCell) moeMtCell.textContent = amountOf(moeQtyCell?.textContent.trim(), moePuCell?.textContent.trim());
 
-  // Companies
   for (const c of lotCompanies) {
     const qty = tr.querySelector(`td[data-key="c.${c.id}.qty"]`)?.textContent.trim();
     const pu  = tr.querySelector(`td[data-key="c.${c.id}.pu"]`)?.textContent.trim();
@@ -458,7 +415,7 @@ function recalcRowAmounts(r){
   }
 }
 
-/* Undo/Redo */
+/* ===== Undo / Redo ===== */
 function pushUndo(change){ undoStack.push(change); }
 function undo(){
   const ch = undoStack.pop(); if (!ch) return;
@@ -471,23 +428,20 @@ function redo(){
   applyChange(ch.r, ch.key, ch.next);
 }
 function applyChange(r, key, val){
-  // DOM
   const tr = qsa('#sheet-body tr')[r]; if (!tr) return;
   const td = tr.querySelector(`td[data-key="${CSS.escape(key)}"]`); if (!td) return;
   td.textContent = val ?? '';
-  // modèle
   setRowValue(r, key, val ?? '');
   recalcRowAmounts(r);
   td.dataset.prev = td.textContent;
 }
 
-/* Actions édition */
+/* ===== Actions édition ===== */
 function addRow(){
   const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
   for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
   sheetRows.push(blank);
   renderSheet();
-  // focus première cellule de la nouvelle ligne
   const lastIndex = sheetRows.length - 1;
   const tr = qsa('#sheet-body tr')[lastIndex];
   const firstEditable = qsa('td:not(.cell-readonly)', tr)[0];
@@ -495,7 +449,6 @@ function addRow(){
 }
 
 async function saveGrid(){
-  // construit payload depuis DOM (plus fidèle que le modèle si l'utilisateur n'a pas défocalisé)
   const rows = [];
   const trs = qsa('#sheet-body tr');
   for (let r=0; r<trs.length; r++){
@@ -513,62 +466,54 @@ async function saveGrid(){
       offers: {}
     };
     for (const c of lotCompanies) {
-      row.offers[c.id] = {
-        u:  get(`c.${c.id}.u`),
-        qty:get(`c.${c.id}.qty`),
-        pu: get(`c.${c.id}.pu`)
-      };
+      row.offers[c.id] = { u: get(`c.${c.id}.u`), qty: get(`c.${c.id}.qty`), pu: get(`c.${c.id}.pu`) };
     }
     rows.push(row);
   }
 
   await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
-  // recharger proprement
   const raw = await api(`/lots/${currentLot.id}`);
   buildSheetModel(raw);
   await refreshCompare();
   alert('Sauvegardé ✅');
 }
 
-/* UI bindings */
-function renderSheet(){
-  const { base, comps } = headerStructure();
-  const head = qs('#sheet-head'); const body = qs('#sheet-body');
-  head.innerHTML = ''; body.innerHTML = '';
+/* ================== Bindings UI ================== */
+function renderSheetBindings(){
+  qs('#add-row').addEventListener('click', addRow);
 
-  // header top
-  const tr1 = document.createElement('tr');
-  for (const b of base){ const th = document.createElement('th'); th.textContent = b.label; th.rowSpan = 2; if (b.cls) th.classList.add(b.cls); tr1.appendChild(th); }
-  for (const g of comps){ const th = document.createElement('th'); th.textContent = g.name; th.colSpan = 4; th.classList.add('company-col'); tr1.appendChild(th); }
-  head.appendChild(tr1);
-  // header bottom
-  const tr2 = document.createElement('tr');
-  for (const g of comps){ for (const c of g.cols){ const th = document.createElement('th'); th.textContent = c.label; tr2.appendChild(th); } }
-  head.appendChild(tr2);
+  qs('#add-company').addEventListener('click', async () => {
+    const name = qs('#company-input').value.trim();
+    if (!name) return;
+    const created = await api(`/lots/${currentLot.id}/companies`, { method:'POST', body:{ name }});
+    if (!lotCompanies.find(c => c.id === created.id)) lotCompanies.push(created);
+    for (const r of sheetRows) r.offers[created.id] = r.offers[created.id] || { u:'', qty:'', pu:'' };
+    qs('#company-input').value = '';
+    renderLotCompanies();
+    renderSheet();
+  });
 
-  // body
-  const totalCols = base.length + comps.length * 4;
-  sheetRows.forEach((row, rIndex) => {
-    const tr = document.createElement('tr');
-    let colIndex = 0;
+  qs('#save-grid').addEventListener('click', saveGrid);
+  qs('#undo').addEventListener('click', undo);
+  qs('#redo').addEventListener('click', redo);
 
-    // base cells
-    for (const b of base){
-      tr.appendChild(makeCell(rIndex, b.key, b.readonly, rowValue(row, b.key), b.wide, colIndex++));
+  qs('#mode-compare').addEventListener('click', () => {
+    hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
+    qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
+  });
+  qs('#mode-edit').addEventListener('click', () => {
+    show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
+    qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault(); saveGrid();
     }
-    // company cells
-    for (const g of comps){
-      for (const c of g.cols){
-        tr.appendChild(makeCell(rIndex, c.key, c.readonly, rowValue(row, c.key), false, colIndex++));
-      }
-    }
-    body.appendChild(tr);
-    recalcRowAmounts(rIndex);
   });
 }
 
-
-/* ===== INIT ===== */
+/* ================== INIT ================== */
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
 
 function bindUI(){
