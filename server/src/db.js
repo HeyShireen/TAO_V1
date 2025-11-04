@@ -24,6 +24,23 @@ export async function ensureSchema() {
   }
   await pool.query(sql)
   console.log('Schema OK')
+  
+  // Créer un utilisateur admin par défaut si aucun utilisateur n'existe
+  const usersCount = await query('SELECT COUNT(*) FROM users')
+  if (Number(usersCount.rows[0].count) === 0) {
+    console.log('Création utilisateur admin par défaut...')
+    const defaultAdmin = {
+      email: process.env.ADMIN_EMAIL || 'admin@example.com',
+      // Le hash correspond au mot de passe 'admin123' - À CHANGER en production !
+      password_hash: '$2b$10$s6pQh34La0P/YhQBQrbvtObSWqIGqN4Q4RHXcQh.2oL1jB8YbE.K6',
+      role: 'admin'
+    }
+    await query(
+      'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
+      [defaultAdmin.email, defaultAdmin.password_hash, defaultAdmin.role]
+    )
+    console.log('Utilisateur admin créé :', defaultAdmin.email)
+  }
 }
 
 function defaultSchemaSQL() {
@@ -43,9 +60,11 @@ function defaultSchemaSQL() {
     reference TEXT,
     client TEXT,
     location TEXT,
+    created_by BIGINT REFERENCES public.users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
+  ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
 
   CREATE TABLE IF NOT EXISTS public.lots (
     id BIGSERIAL PRIMARY KEY,
@@ -76,6 +95,14 @@ function defaultSchemaSQL() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  CREATE TABLE IF NOT EXISTS public.moe_items (
+    item_id BIGINT NOT NULL PRIMARY KEY REFERENCES public.items(id) ON DELETE CASCADE,
+    qty NUMERIC,
+    unit_price NUMERIC,
+    amount NUMERIC
+  );
+
+  -- Table legacy conservée pour compatibilité
   CREATE TABLE IF NOT EXISTS public.moe (
     id BIGSERIAL PRIMARY KEY,
     item_id BIGINT NOT NULL UNIQUE REFERENCES public.items(id) ON DELETE CASCADE,
@@ -90,14 +117,18 @@ function defaultSchemaSQL() {
     unit TEXT,
     qty NUMERIC,
     unit_price NUMERIC,
+    amount NUMERIC,
     UNIQUE (item_id, company_id)
   );
 
+  -- Ajout position pour l'ordre des items
+  ALTER TABLE public.items ADD COLUMN IF NOT EXISTS position INTEGER;
+
+  -- Indexes pour les performances
   CREATE INDEX IF NOT EXISTS idx_lots_project_id ON public.lots(project_id);
   CREATE INDEX IF NOT EXISTS idx_items_lot_id     ON public.items(lot_id);
   CREATE INDEX IF NOT EXISTS idx_offers_item      ON public.offers(item_id);
   CREATE INDEX IF NOT EXISTS idx_offers_company   ON public.offers(company_id);
-  ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
   ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
   `
 }
