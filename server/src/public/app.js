@@ -3,6 +3,26 @@
 const API_ROOT = window.location.origin;
 const API_BASE = API_ROOT + '/api';
 
+/* ====== Auth ================= */
+async function login(email, password){
+  const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
+  token = j.token; localStorage.setItem('token', token); return j.user;
+}
+
+async function registerFirst(email, password){
+  const r = await fetch(API_BASE + '/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password, role:'admin' })});
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Création admin impossible');
+  token = j.token; localStorage.setItem('token', token); return j.user;
+}
+
+async function resetAdminPassword(){
+  const r = await fetch(API_BASE + '/auth/reset-admin', { method:'POST' });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'Réinitialisation impossible');
+  return j;
+}
+
 let token = localStorage.getItem('token') || null;
 let currentProject = null;
 let currentLot = null;
@@ -640,6 +660,17 @@ function bindUI(){
   // auth
   qs('#login-btn').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await login(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
   qs('#bootstrap-admin').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await registerFirst(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
+  qs('#reset-admin').addEventListener('click', async ()=>{ 
+    setText('#login-msg',''); 
+    try{ 
+      const result = await resetAdminPassword();
+      setText('#login-msg', `✅ Nouveau mot de passe pour ${result.email}: ${result.newPassword}`);
+      qs('#email').value = result.email;
+      qs('#password').value = result.newPassword;
+    } catch(e){ 
+      setText('#login-msg', '❌ ' + e.message);
+    }
+  });
   qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
 
   // tabs
