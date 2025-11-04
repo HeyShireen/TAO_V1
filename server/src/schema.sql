@@ -46,11 +46,12 @@ CREATE TABLE IF NOT EXISTS public.items (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.moe (
-  id BIGSERIAL PRIMARY KEY,
-  item_id BIGINT NOT NULL UNIQUE REFERENCES public.items(id) ON DELETE CASCADE,
+-- MOE (Main d'oeuvre estimée) stockée par item dans une table nommée "moe_items"
+CREATE TABLE IF NOT EXISTS public.moe_items (
+  item_id BIGINT NOT NULL PRIMARY KEY REFERENCES public.items(id) ON DELETE CASCADE,
   qty NUMERIC,
-  unit_price NUMERIC
+  unit_price NUMERIC,
+  amount NUMERIC
 );
 
 CREATE TABLE IF NOT EXISTS public.offers (
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS public.offers (
   unit TEXT,
   qty NUMERIC,
   unit_price NUMERIC,
+  amount NUMERIC,
   UNIQUE (item_id, company_id)
 );
 
@@ -67,5 +69,22 @@ CREATE INDEX IF NOT EXISTS idx_lots_project_id ON public.lots(project_id);
 CREATE INDEX IF NOT EXISTS idx_items_lot_id     ON public.items(lot_id);
 CREATE INDEX IF NOT EXISTS idx_offers_item      ON public.offers(item_id);
 CREATE INDEX IF NOT EXISTS idx_offers_company   ON public.offers(company_id);
+
+-- Colonnes supplémentaires attendues par le code
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS created_by BIGINT;
+
+-- Position dans items (ordre dans le tableur)
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS position INTEGER;
+
+-- Amount calculé sur offers (compatibilité)
+ALTER TABLE public.offers ADD COLUMN IF NOT EXISTS amount NUMERIC;
+
+-- Si une table 'moe' existait auparavant, on la laisse pour compatibilité mais on privilégie 'moe_items'
+CREATE TABLE IF NOT EXISTS public.moe (
+  id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT NOT NULL UNIQUE REFERENCES public.items(id) ON DELETE CASCADE,
+  qty NUMERIC,
+  unit_price NUMERIC
+);
