@@ -1,13 +1,20 @@
-import { Pool } from 'pg';
+// src/db.js
+import pg from 'pg'
+const { Pool } = pg
 
-const connectionString = process.env.DATABASE_URL;
-export const pool = new Pool({ connectionString });
+try {
+  console.log('PG host ->', new URL(process.env.DATABASE_URL).host)
+} catch {}
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+})
+
+pool.on('error', err => {
+  console.error('PG pool error:', err)
+})
 
 export async function query(text, params) {
-  const start = Date.now();
-  const res = await pool.query(text, params);
-  const duration = Date.now() - start;
-  // Simple log; in production prefer a proper logger
-  // console.log('executed query', { text, duration, rows: res.rowCount });
-  return res;
+  return pool.query(text, params)
 }
