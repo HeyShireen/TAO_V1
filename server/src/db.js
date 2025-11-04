@@ -97,5 +97,7 @@ function defaultSchemaSQL() {
   CREATE INDEX IF NOT EXISTS idx_items_lot_id     ON public.items(lot_id);
   CREATE INDEX IF NOT EXISTS idx_offers_item      ON public.offers(item_id);
   CREATE INDEX IF NOT EXISTS idx_offers_company   ON public.offers(company_id);
+  ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
+  ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
   `
 }
