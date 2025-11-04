@@ -1,79 +1,69 @@
--- Users
-CREATE TABLE IF NOT EXISTS users (
-  id SERIAL PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
+CREATE TABLE IF NOT EXISTS public.users (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'user', -- 'admin' or 'user'
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  role TEXT NOT NULL DEFAULT 'user',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON public.users (lower(email));
 
--- Projects
-CREATE TABLE IF NOT EXISTS projects (
-  id SERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS public.projects (
+  id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   reference TEXT,
   client TEXT,
   location TEXT,
-  study_phase TEXT,
-  study_date DATE,
-  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
 
--- Lots
-CREATE TABLE IF NOT EXISTS lots (
-  id SERIAL PRIMARY KEY,
-  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS public.lots (
+  id BIGSERIAL PRIMARY KEY,
+  project_id BIGINT NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
   code TEXT,
   name TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Companies
-CREATE TABLE IF NOT EXISTS companies (
-  id SERIAL PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  siret TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS public.companies (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Relation: companies participating in a lot
-CREATE TABLE IF NOT EXISTS lot_companies (
-  id SERIAL PRIMARY KEY,
-  lot_id INTEGER NOT NULL REFERENCES lots(id) ON DELETE CASCADE,
-  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  UNIQUE(lot_id, company_id)
+CREATE TABLE IF NOT EXISTS public.lot_companies (
+  lot_id BIGINT NOT NULL REFERENCES public.lots(id) ON DELETE CASCADE,
+  company_id BIGINT NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+  PRIMARY KEY (lot_id, company_id)
 );
 
--- Items (line items within a lot)
-CREATE TABLE IF NOT EXISTS items (
-  id SERIAL PRIMARY KEY,
-  lot_id INTEGER NOT NULL REFERENCES lots(id) ON DELETE CASCADE,
-  num TEXT, -- 'Num' from your sheet
+CREATE TABLE IF NOT EXISTS public.items (
+  id BIGSERIAL PRIMARY KEY,
+  lot_id BIGINT NOT NULL REFERENCES public.lots(id) ON DELETE CASCADE,
+  num TEXT,
   designation TEXT NOT NULL,
   unit TEXT,
-  position INTEGER, -- ordering
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- MOE estimate per item
-CREATE TABLE IF NOT EXISTS moe_items (
-  id SERIAL PRIMARY KEY,
-  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS public.moe (
+  id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT NOT NULL UNIQUE REFERENCES public.items(id) ON DELETE CASCADE,
   qty NUMERIC,
-  unit_price NUMERIC,
-  amount NUMERIC
+  unit_price NUMERIC
 );
 
--- Offers per company per item
-CREATE TABLE IF NOT EXISTS offers (
-  id SERIAL PRIMARY KEY,
-  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS public.offers (
+  id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
+  company_id BIGINT NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
   unit TEXT,
   qty NUMERIC,
   unit_price NUMERIC,
-  amount NUMERIC,
-  comment TEXT,
-  UNIQUE(item_id, company_id)
+  UNIQUE (item_id, company_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_lots_project_id ON public.lots(project_id);
+CREATE INDEX IF NOT EXISTS idx_items_lot_id     ON public.items(lot_id);
+CREATE INDEX IF NOT EXISTS idx_offers_item      ON public.offers(item_id);
+CREATE INDEX IF NOT EXISTS idx_offers_company   ON public.offers(company_id);

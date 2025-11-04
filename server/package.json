@@ -1,7 +1,7 @@
 {
   "name": "offer-compare-server",
   "version": "0.1.0",
-  "private": true,
+  "private": true,  
   "type": "module",
   "scripts": {
     "dev": "node src/server.js",
