@@ -113,21 +113,64 @@ router.get('/:id/companies', async (req, res) => {
 });
 
 router.post('/:id/companies', async (req, res) => {
-  const id = Number(req.params.id);
+  const lotId = Number(req.params.id);
   const { name } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Nom requis' });
+  if (!name?.trim()) return res.status(400).json({ error: 'Nom requis' });
 
-  const clean = name.trim();
-  const up = await query(
-    'INSERT INTO companies (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name RETURNING id, name',
-    [clean]
-  );
-  const company = up.rows[0];
-  await query(
-    'INSERT INTO lot_companies (lot_id, company_id) VALUES ($1,$2) ON CONFLICT (lot_id, company_id) DO NOTHING',
-    [id, company.id]
-  );
-  res.json(company);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // 1. Vérifier si le lot existe
+    const lotCheck = await client.query('SELECT id FROM lots WHERE id = $1', [lotId]);
+    if (lotCheck.rowCount === 0) {
+      throw new Error('Lot introuvable');
+    }
+
+    // 2. Chercher ou créer l'entreprise
+    const cleanName = name.trim();
+    let company;
+    
+    // D'abord chercher si elle existe
+    const existing = await client.query(
+      'SELECT id, name FROM companies WHERE lower(name) = lower($1)',
+      [cleanName]
+    );
+    
+    if (existing.rowCount > 0) {
+      company = existing.rows[0];
+    } else {
+      // Si elle n'existe pas, la créer
+      const inserted = await client.query(
+        'INSERT INTO companies (name) VALUES ($1) RETURNING id, name',
+        [cleanName]
+      );
+      company = inserted.rows[0];
+    }
+
+    // 3. Ajouter l'association lot-entreprise si elle n'existe pas déjà
+    await client.query(
+      'INSERT INTO lot_companies (lot_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [lotId, company.id]
+    );
+
+    await client.query('COMMIT');
+    res.json(company);
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erreur ajout entreprise:', err);
+    
+    if (err.message === 'Lot introuvable') {
+      res.status(404).json({ error: err.message });
+    } else if (err.code === '23505') { // violation de contrainte unique
+      res.status(409).json({ error: 'Cette entreprise existe déjà' });
+    } else {
+      res.status(500).json({ error: 'Erreur lors de l\'ajout de l\'entreprise' });
+    }
+  } finally {
+    client.release();
+  }
 });
 
 router.delete('/:id/companies/:companyId', async (req, res) => {

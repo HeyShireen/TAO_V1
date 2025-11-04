@@ -74,11 +74,14 @@ function defaultSchemaSQL() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  -- Table des entreprises avec contrainte d'unicité sur le nom (insensible à la casse)
   CREATE TABLE IF NOT EXISTS public.companies (
     id BIGSERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+  CREATE UNIQUE INDEX IF NOT EXISTS companies_name_lower_idx ON public.companies (lower(name));
+  
 
   CREATE TABLE IF NOT EXISTS public.lot_companies (
     lot_id BIGINT NOT NULL REFERENCES public.lots(id) ON DELETE CASCADE,
