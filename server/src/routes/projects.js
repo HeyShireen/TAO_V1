@@ -14,14 +14,22 @@ router.post('/', async (req, res) => {
     
     validateRequired(name, 'Le nom du projet');
     validateMaxLength(name, 200, 'Le nom du projet');
-    validateMaxLength(reference, 100, 'La référence');
-    validateMaxLength(client, 200, 'Le nom du client');
-    validateMaxLength(location, 200, 'La localisation');
+    if (reference) validateMaxLength(reference, 100, 'La référence');
+    if (client) validateMaxLength(client, 200, 'Le nom du client');
+    if (location) validateMaxLength(location, 200, 'La localisation');
     
     const r = await query(
       `INSERT INTO projects (name, reference, client, location, study_phase, study_date, created_by) 
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [name.trim(), reference, client, location, study_phase, study_date, req.user.id]
+      [
+        name.trim(), 
+        reference ? reference.trim() : null, 
+        client ? client.trim() : null, 
+        location ? location.trim() : null, 
+        study_phase, 
+        study_date, 
+        req.user.id
+      ]
     );
     res.json(r.rows[0]);
   } catch (err) {
@@ -54,7 +62,7 @@ router.post('/:id/lots', async (req, res) => {
     
     validateRequired(name, 'Le nom du lot');
     validateMaxLength(name, 200, 'Le nom du lot');
-    validateMaxLength(code, 50, 'Le code du lot');
+    if (code) validateMaxLength(code, 50, 'Le code du lot');
     
     // Vérifier que le projet existe
     const projectExists = await query('SELECT id FROM projects WHERE id=$1', [id]);
@@ -64,7 +72,7 @@ router.post('/:id/lots', async (req, res) => {
     
     const r = await query(
       'INSERT INTO lots (project_id, code, name) VALUES ($1,$2,$3) RETURNING *',
-      [id, code, name.trim()]
+      [id, code ? code.trim() : null, name.trim()]
     );
     res.json(r.rows[0]);
   } catch (err) {
