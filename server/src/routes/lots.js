@@ -14,32 +14,105 @@ router.use(requireAuth);
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
 
-  const lot = await query('SELECT * FROM lots WHERE id=$1', [id]);
-  if (lot.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+  try {
+    // Une seule requête optimisée avec JOINs
+    const result = await query(`
+      SELECT 
+        l.id as lot_id, l.code, l.name as lot_name, l.project_id,
+        i.id as item_id, i.num, i.designation, i.unit, i.position,
+        m.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,
+        json_agg(DISTINCT jsonb_build_object(
+          'id', c.id, 
+          'name', c.name
+        )) FILTER (WHERE c.id IS NOT NULL) as companies,
+        json_agg(DISTINCT jsonb_build_object(
+          'item_id', o.item_id,
+          'company_id', o.company_id,
+          'unit', o.unit,
+          'qty', o.qty,
+          'unit_price', o.unit_price,
+          'amount', o.amount
+        )) FILTER (WHERE o.id IS NOT NULL) as offers
+      FROM lots l
+      LEFT JOIN items i ON i.lot_id = l.id
+      LEFT JOIN moe_items m ON m.item_id = i.id
+      LEFT JOIN lot_companies lc ON lc.lot_id = l.id
+      LEFT JOIN companies c ON c.id = lc.company_id
+      LEFT JOIN offers o ON o.item_id = i.id
+      WHERE l.id = $1
+      GROUP BY l.id, i.id, m.item_id
+      ORDER BY i.position NULLS LAST, i.id
+    `, [id]);
 
-  const items = await query('SELECT * FROM items WHERE lot_id=$1 ORDER BY position NULLS LAST, id', [id]);
-  const itemIds = items.rows.map(r => r.id);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Lot introuvable' });
+    }
 
-  const moe = itemIds.length
-    ? await query('SELECT * FROM moe_items WHERE item_id = ANY($1::int[])', [itemIds])
-    : { rows: [] };
+    // Restructurer les données
+    const firstRow = result.rows[0];
+    const lot = {
+      id: firstRow.lot_id,
+      code: firstRow.code,
+      name: firstRow.lot_name,
+      project_id: firstRow.project_id
+    };
 
-  const companies = await query(
-    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY c.name',
-    [id]
-  );
+    // Extraire les entreprises uniques
+    const companiesSet = new Map();
+    result.rows.forEach(row => {
+      if (row.companies) {
+        row.companies.forEach(c => companiesSet.set(c.id, c));
+      }
+    });
+    const companies = Array.from(companiesSet.values()).sort((a, b) => a.name.localeCompare(b.name));
 
-  const offers = itemIds.length
-    ? await query('SELECT * FROM offers WHERE item_id = ANY($1::int[])', [itemIds])
-    : { rows: [] };
+    // Extraire items avec leurs données MOE
+    const itemsMap = new Map();
+    const moeList = [];
+    const offersList = [];
 
-  res.json({
-    lot: lot.rows[0],
-    items: items.rows,
-    moe: moe.rows,
-    companies: companies.rows,
-    offers: offers.rows
-  });
+    result.rows.forEach(row => {
+      if (row.item_id && !itemsMap.has(row.item_id)) {
+        itemsMap.set(row.item_id, {
+          id: row.item_id,
+          lot_id: row.lot_id,
+          num: row.num,
+          designation: row.designation,
+          unit: row.unit,
+          position: row.position
+        });
+
+        if (row.moe_qty !== null || row.moe_unit_price !== null) {
+          moeList.push({
+            item_id: row.item_id,
+            qty: row.moe_qty,
+            unit_price: row.moe_unit_price,
+            amount: row.moe_amount
+          });
+        }
+      }
+
+      if (row.offers) {
+        row.offers.forEach(offer => {
+          if (offer.item_id && !offersList.find(o => o.item_id === offer.item_id && o.company_id === offer.company_id)) {
+            offersList.push(offer);
+          }
+        });
+      }
+    });
+
+    res.json({
+      lot,
+      items: Array.from(itemsMap.values()),
+      moe: moeList,
+      companies,
+      offers: offersList
+    });
+
+  } catch (err) {
+    console.error('Erreur GET lot:', err);
+    res.status(500).json({ error: 'Erreur lors du chargement du lot' });
+  }
 });
 
 /* ---------- TABLE COMPARATIVE (lecture) ---------- */
@@ -191,42 +264,36 @@ router.post('/:id/save-grid', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    const itemsToUpdate = [];
+    const itemsToInsert = [];
+    const moeData = [];
+    const offersData = [];
+    
     let pos = 0;
+    
+    // 1. Séparer items existants vs nouveaux
     for (const r of rows) {
       const designation = (r.designation ?? '').trim();
-      if (!designation) continue; // ignore lignes vides
+      if (!designation) continue;
       pos += 1;
 
       const num = r.num ?? null;
       const unit = r.unit ?? null;
+      const itemId = r.item_id ? Number(r.item_id) : null;
 
-      // upsert item
-      let itemId = r.item_id ? Number(r.item_id) : null;
-      if (!itemId) {
-        const ins = await client.query(
-          'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-          [lotId, num, designation, unit, pos]
-        );
-        itemId = ins.rows[0].id;
+      if (itemId) {
+        itemsToUpdate.push({ id: itemId, num, designation, unit, pos });
       } else {
-        await client.query(
-          'UPDATE items SET num=$2, designation=$3, unit=$4, position=$5 WHERE id=$1',
-          [itemId, num, designation, unit, pos]
-        );
+        itemsToInsert.push({ num, designation, unit, pos, rowIndex: rows.indexOf(r) });
       }
 
-      // upsert MOE
+      // Préparer MOE
       const q  = r.moe?.qty != null && r.moe.qty !== '' ? Number(r.moe.qty) : null;
       const pu = r.moe?.pu  != null && r.moe.pu  !== '' ? Number(r.moe.pu)  : null;
       const mt = (q != null && pu != null) ? q * pu : null;
-      await client.query(`
-        INSERT INTO moe_items (item_id, qty, unit_price, amount)
-        VALUES ($1,$2,$3,$4)
-        ON CONFLICT (item_id) DO UPDATE
-        SET qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
-      `, [itemId, q, pu, mt]);
+      moeData.push({ itemId, q, pu, mt, rowIndex: rows.indexOf(r) });
 
-      // upsert OFFERS
+      // Préparer OFFERS
       if (r.offers && typeof r.offers === 'object') {
         for (const [cid, val] of Object.entries(r.offers)) {
           const companyId = Number(cid);
@@ -234,23 +301,79 @@ router.post('/:id/save-grid', async (req, res) => {
           const oq = val?.qty != null && val.qty !== '' ? Number(val.qty) : null;
           const op = val?.pu  != null && val.pu  !== '' ? Number(val.pu)  : null;
           const om = (oq != null && op != null) ? oq * op : null;
-
-          await client.query(`
-            INSERT INTO offers (item_id, company_id, unit, qty, unit_price, amount)
-            VALUES ($1,$2,$3,$4,$5,$6)
-            ON CONFLICT (item_id, company_id) DO UPDATE
-            SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
-          `, [itemId, companyId, u, oq, op, om]);
+          offersData.push({ itemId, companyId, u, oq, op, om, rowIndex: rows.indexOf(r) });
         }
       }
     }
 
+    // 2. Batch UPDATE items existants
+    if (itemsToUpdate.length > 0) {
+      for (const item of itemsToUpdate) {
+        await client.query(
+          'UPDATE items SET num=$2, designation=$3, unit=$4, position=$5 WHERE id=$1',
+          [item.id, item.num, item.designation, item.unit, item.pos]
+        );
+      }
+    }
+
+    // 3. Batch INSERT nouveaux items (on doit le faire en séquentiel pour récupérer les IDs)
+    const newItemIds = [];
+    if (itemsToInsert.length > 0) {
+      for (const item of itemsToInsert) {
+        const ins = await client.query(
+          'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+          [lotId, item.num, item.designation, item.unit, item.pos]
+        );
+        newItemIds.push({ rowIndex: item.rowIndex, id: ins.rows[0].id });
+      }
+    }
+
+    // 4. Mettre à jour les itemIds dans moeData et offersData
+    for (const newItem of newItemIds) {
+      for (const moe of moeData) {
+        if (moe.rowIndex === newItem.rowIndex && !moe.itemId) {
+          moe.itemId = newItem.id;
+        }
+      }
+      for (const offer of offersData) {
+        if (offer.rowIndex === newItem.rowIndex && !offer.itemId) {
+          offer.itemId = newItem.id;
+        }
+      }
+    }
+
+    // 5. Batch upsert MOE
+    if (moeData.length > 0) {
+      for (const moe of moeData) {
+        if (!moe.itemId) continue;
+        await client.query(`
+          INSERT INTO moe_items (item_id, qty, unit_price, amount)
+          VALUES ($1,$2,$3,$4)
+          ON CONFLICT (item_id) DO UPDATE
+          SET qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
+        `, [moe.itemId, moe.q, moe.pu, moe.mt]);
+      }
+    }
+
+    // 6. Batch upsert OFFERS
+    if (offersData.length > 0) {
+      for (const offer of offersData) {
+        if (!offer.itemId) continue;
+        await client.query(`
+          INSERT INTO offers (item_id, company_id, unit, qty, unit_price, amount)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (item_id, company_id) DO UPDATE
+          SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
+        `, [offer.itemId, offer.companyId, offer.u, offer.oq, offer.op, offer.om]);
+      }
+    }
+
     await client.query('COMMIT');
-    res.json({ ok: true, saved: rows.length });
+    res.json({ ok: true, saved: pos });
   } catch (e) {
     await client.query('ROLLBACK');
-    console.error(e);
-    res.status(400).json({ error: e.message });
+    console.error('Erreur save-grid:', e);
+    res.status(500).json({ error: 'Erreur lors de la sauvegarde' });
   } finally {
     client.release();
   }

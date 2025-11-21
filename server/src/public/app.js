@@ -4,25 +4,6 @@ const API_ROOT = window.location.origin;
 const API_BASE = API_ROOT + '/api';
 
 /* ====== Auth ================= */
-async function login(email, password){
-  const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
-  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
-  token = j.token; localStorage.setItem('token', token); return j.user;
-}
-
-async function registerFirst(email, password){
-  const r = await fetch(API_BASE + '/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password, role:'admin' })});
-  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Création admin impossible');
-  token = j.token; localStorage.setItem('token', token); return j.user;
-}
-
-async function resetAdminPassword(){
-  const r = await fetch(API_BASE + '/auth/reset-admin', { method:'POST' });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error || 'Réinitialisation impossible');
-  return j;
-}
-
 let token = localStorage.getItem('token') || null;
 let currentProject = null;
 let currentLot = null;
@@ -75,6 +56,10 @@ function amountOf(q, pu){
   return formatNum(n1 * n2);
 }
 
+/* ====== Loading Spinner ====== */
+function showLoader() { qs('#global-loader')?.classList.remove('hidden'); }
+function hideLoader() { qs('#global-loader')?.classList.add('hidden'); }
+
 /* ====== API ====== */
 async function api(path, opts = {}) {
   const url = API_BASE + path;
@@ -82,11 +67,20 @@ async function api(path, opts = {}) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   let body = opts.body;
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
-  const res = await fetch(url, { ...opts, headers, body });
-  const isJson = res.headers.get('content-type')?.includes('application/json');
-  const data = isJson ? await res.json().catch(()=> ({})) : await res.text();
-  if (!res.ok) throw new Error((isJson && data?.error) ? data.error : (data || res.statusText));
-  return data;
+  
+  // Afficher le loader sauf si désactivé explicitement
+  const showLoading = opts.showLoader !== false;
+  if (showLoading) showLoader();
+  
+  try {
+    const res = await fetch(url, { ...opts, headers, body });
+    const isJson = res.headers.get('content-type')?.includes('application/json');
+    const data = isJson ? await res.json().catch(()=> ({})) : await res.text();
+    if (!res.ok) throw new Error((isJson && data?.error) ? data.error : (data || res.statusText));
+    return data;
+  } finally {
+    if (showLoading) hideLoader();
+  }
 }
 
 /* ================= Onglets ================= */
@@ -518,14 +512,46 @@ function detectDelimiter(sample){
   return sc >= cc ? ';' : ',';
 }
 
+/* ====== Auto-save ====== */
+let autoSaveTimeout = null;
+let hasUnsavedChanges = false;
+
+function scheduleAutoSave() {
+  hasUnsavedChanges = true;
+  updateSaveButton();
+  
+  clearTimeout(autoSaveTimeout);
+  autoSaveTimeout = setTimeout(() => {
+    if (hasUnsavedChanges && currentLot) {
+      saveGrid(true); // true = auto-save silencieux
+    }
+  }, 2000); // 2 secondes d'inactivité
+}
+
+function updateSaveButton() {
+  const btn = qs('#save-grid');
+  if (!btn) return;
+  if (hasUnsavedChanges) {
+    btn.textContent = '● Sauvegarder';
+    btn.classList.add('btn-unsaved');
+  } else {
+    btn.textContent = '✓ Sauvegardé';
+    btn.classList.remove('btn-unsaved');
+  }
+}
+
 /* ====== Undo/Redo ====== */
-function pushUndo(ch){ undoStack.push(ch); }
+function pushUndo(ch){ 
+  undoStack.push(ch); 
+  scheduleAutoSave(); // Déclencher auto-save
+}
 function undo(){
   const ch = undoStack.pop(); if (!ch) return;
   redoStack.push(ch);
   setCell(ch.r, ch.c, ch.prev);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
   recalcRowAmountsRow(ch.r);
+  scheduleAutoSave();
 }
 function redo(){
   const ch = redoStack.pop(); if (!ch) return;
@@ -533,6 +559,7 @@ function redo(){
   setCell(ch.r, ch.c, ch.next);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
   recalcRowAmountsRow(ch.r);
+  scheduleAutoSave();
 }
 
 /* ====== Actions édition ====== */
@@ -544,14 +571,23 @@ function renderLotCompanies(){
     chip.className = 'chip';
     chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
     chip.querySelector('button').addEventListener('click', async () => {
-      await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
-      lotCompanies = lotCompanies.filter(x => x.id !== c.id);
+      // Confirmation avant suppression
+      if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres de cette entreprise seront également supprimées.`)) {
+        return;
+      }
+      
+      try {
+        await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
+        lotCompanies = lotCompanies.filter(x => x.id !== c.id);
 
-      // MAJ modèle de colonnes + sheetRows (supprimer les offres de cette entreprise)
-      for (const r of sheetRows) delete r.offers[c.id];
-      buildColModel();
-      renderSheetInitial();  // (on rerend la structure car nombre de colonnes change)
-      refreshCompare();
+        // MAJ modèle de colonnes + sheetRows (supprimer les offres de cette entreprise)
+        for (const r of sheetRows) delete r.offers[c.id];
+        buildColModel();
+        renderSheetInitial();  // (on rerend la structure car nombre de colonnes change)
+        refreshCompare();
+      } catch (err) {
+        alert('❌ Erreur lors de la suppression: ' + err.message);
+      }
     });
     wrap.appendChild(chip);
   }
@@ -565,7 +601,7 @@ function addRow(){
   if (firstEditable >= 0) focusCell(r, firstEditable);
 }
 
-async function saveGrid(){
+async function saveGrid(isAutoSave = false){
   // Reconstituer les rows depuis le DOM + colModel
   const rows = [];
   const totalRows = qsa('#sheet-body tr').length;
@@ -603,13 +639,26 @@ async function saveGrid(){
     rows.push(row);
   }
 
-  await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
+  try {
+    await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
 
-  // recharger pour récupérer item_id & offres mis à jour proprement
-  const raw = await api(`/lots/${currentLot.id}`);
-  buildSheetModel(raw);
-  await refreshCompare();
-  alert('Sauvegardé ✅');
+    // recharger pour récupérer item_id & offres mis à jour proprement
+    const raw = await api(`/lots/${currentLot.id}`, { showLoader: false });
+    buildSheetModel(raw);
+    await refreshCompare();
+    
+    hasUnsavedChanges = false;
+    updateSaveButton();
+    
+    if (!isAutoSave) {
+      alert('Sauvegardé ✅');
+    }
+  } catch (err) {
+    console.error('Erreur sauvegarde:', err);
+    if (!isAutoSave) {
+      alert('❌ Erreur lors de la sauvegarde: ' + err.message);
+    }
+  }
 }
 
 /* ================= Bindings UI ================= */

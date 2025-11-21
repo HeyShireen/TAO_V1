@@ -11,10 +11,38 @@ import authRoutes from './routes/auth.js'
 import projectRoutes from './routes/projects.js'
 import lotRoutes from './routes/lots.js'
 
+// Validation des variables d'environnement critiques
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me' || process.env.JWT_SECRET.length < 32) {
+  console.error('❌ ERREUR: JWT_SECRET doit être défini et sécurisé (min 32 caractères)');
+  console.error('   Ajoutez dans votre .env: JWT_SECRET=votre-secret-très-long-et-sécurisé');
+  process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+  console.error('❌ ERREUR: DATABASE_URL doit être défini');
+  console.error('   Ajoutez dans votre .env: DATABASE_URL=postgresql://...');
+  process.exit(1);
+}
+
 const app = express()
 
-// CORS ok pour démarrer. Restreins origin ensuite.
-app.use(cors({ origin: true, credentials: true }))
+// CORS restreint aux origines autorisées
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:3000', 'http://localhost:4000'];
+
+app.use(cors({ 
+  origin: (origin, callback) => {
+    // Autoriser les requêtes sans origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true 
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(morgan('dev'))
 app.disable('x-powered-by')
@@ -40,11 +68,19 @@ const __dirname = path.dirname(__filename)
 const publicDir = path.resolve(__dirname, './public') // server/src/public
 app.use(express.static(publicDir))
 app.get('*', (req, res) => {
-  if (req.path.startsWith('/api')) return res.status(404).end()
+  if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Route API introuvable' })
   res.sendFile(path.join(publicDir, 'index.html'))
 })
+
+// Middleware global de gestion d'erreurs (doit être après toutes les routes)
+import { errorHandler } from './middleware.errors.js'
+app.use(errorHandler)
 
 // Init BDD puis lancement
 await ensureSchema()
 const port = process.env.PORT || 4000
-app.listen(port, '0.0.0.0', () => console.log(`Server running on :${port}`))
+app.listen(port, '0.0.0.0', () => {
+  console.log(`✅ Serveur démarré sur le port ${port}`)
+  console.log(`   - API: http://localhost:${port}/api`)
+  console.log(`   - Interface: http://localhost:${port}`)
+})

@@ -5,9 +5,16 @@ import { fileURLToPath } from 'node:url'
 
 const { Pool } = pg
 
+// Configuration SSL sécurisée
+const sslConfig = process.env.NODE_ENV === 'production'
+  ? { rejectUnauthorized: true }  // Production: vérification stricte
+  : process.env.DB_SSL === 'true' 
+    ? { rejectUnauthorized: false } // Dev avec SSL: accepter certificats auto-signés
+    : false; // Dev local: pas de SSL
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: sslConfig
 })
 
 export const query = (t, p) => pool.query(t, p)
@@ -25,21 +32,26 @@ export async function ensureSchema() {
   await pool.query(sql)
   console.log('Schema OK')
   
-  // Créer un utilisateur admin par défaut si aucun utilisateur n'existe
+  // Vérifier si un utilisateur admin existe
   const usersCount = await query('SELECT COUNT(*) FROM users')
   if (Number(usersCount.rows[0].count) === 0) {
-    console.log('Création utilisateur admin par défaut...')
-    const defaultAdmin = {
-      email: process.env.ADMIN_EMAIL || 'admin@example.com',
-      // Le hash correspond au mot de passe 'admin123' - À CHANGER en production !
-      password_hash: '$2b$10$s6pQh34La0P/YhQBQrbvtObSWqIGqN4Q4RHXcQh.2oL1jB8YbE.K6',
-      role: 'admin'
+    console.log('\n⚠️  AUCUN UTILISATEUR - Utilisez l\'une de ces méthodes pour créer un admin:')
+    console.log('   1. Via l\'interface: Cliquez sur "Créer admin" au premier lancement')
+    console.log('   2. Via variables d\'environnement (.env):')
+    console.log('      ADMIN_EMAIL=admin@example.com')
+    console.log('      ADMIN_PASSWORD=VotreMotDePasseSécurisé123!\n')
+    
+    // Si les variables d'environnement sont définies, créer l'admin
+    if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+      console.log('Création de l\'utilisateur admin depuis .env...')
+      const bcrypt = await import('bcrypt')
+      const password_hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10)
+      await query(
+        'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
+        [process.env.ADMIN_EMAIL, password_hash, 'admin']
+      )
+      console.log('✅ Utilisateur admin créé:', process.env.ADMIN_EMAIL)
     }
-    await query(
-      'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
-      [defaultAdmin.email, defaultAdmin.password_hash, defaultAdmin.role]
-    )
-    console.log('Utilisateur admin créé :', defaultAdmin.email)
   }
 }
 
@@ -130,8 +142,13 @@ function defaultSchemaSQL() {
   -- Indexes pour les performances
   CREATE INDEX IF NOT EXISTS idx_lots_project_id ON public.lots(project_id);
   CREATE INDEX IF NOT EXISTS idx_items_lot_id     ON public.items(lot_id);
+  CREATE INDEX IF NOT EXISTS idx_items_lot_position ON public.items(lot_id, position);
   CREATE INDEX IF NOT EXISTS idx_offers_item      ON public.offers(item_id);
   CREATE INDEX IF NOT EXISTS idx_offers_company   ON public.offers(company_id);
+  CREATE INDEX IF NOT EXISTS idx_offers_item_company ON public.offers(item_id, company_id);
+  CREATE INDEX IF NOT EXISTS idx_moe_items_item   ON public.moe_items(item_id);
+  CREATE INDEX IF NOT EXISTS idx_lot_companies_lot ON public.lot_companies(lot_id);
+  CREATE INDEX IF NOT EXISTS idx_lot_companies_company ON public.lot_companies(company_id);
   ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
   `
 }
