@@ -8,8 +8,12 @@ const { Pool } = pg
 // Configuration SSL
 // Problème rencontré: "SSL/TLS required" sur Render lorsque NODE_ENV=development et DB_SSL non défini.
 // Solution: activer SSL si l'URL pointe vers un hôte Render ou si DB_SSL=true.
-const connectionString = process.env.DATABASE_URL
+let connectionString = process.env.DATABASE_URL
 const isRenderHost = /render\.com/.test(connectionString || '')
+// Ajouter sslmode=require si hébergeur Render et absent
+if (isRenderHost && connectionString && !/sslmode=/.test(connectionString)) {
+  connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=require'
+}
 let sslConfig
 if (process.env.DB_SSL === 'true' || isRenderHost) {
   // Render impose SSL; on assouplit la vérification du certificat (managed cert)
@@ -23,7 +27,7 @@ if (process.env.DB_SSL === 'true' || isRenderHost) {
 }
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
   ssl: sslConfig
 })
 
@@ -113,7 +117,7 @@ export async function ensureSchema() {
     
     // Si les variables d'environnement sont définies, créer l'admin
     if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-      console.log('Création de l\'utilisateur admin depuis .env...')
+      console.log('Création de l\'utilisateur admin depuis .env (base vide)...')
       const bcrypt = await import('bcrypt')
       const password_hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10)
       await query(
@@ -122,6 +126,28 @@ export async function ensureSchema() {
       )
       console.log('✅ Utilisateur admin créé:', process.env.ADMIN_EMAIL)
     }
+  }
+
+  // Garantir l'existence / rôle admin même si la base n'est pas vide
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    const adminRes = await query('SELECT id, role FROM users WHERE lower(email)=lower($1)', [process.env.ADMIN_EMAIL])
+    if (adminRes.rowCount === 0) {
+      console.log('Création admin manquante (base non vide) - ajout...')
+      const bcrypt = await import('bcrypt')
+      const password_hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10)
+      await query(
+        'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
+        [process.env.ADMIN_EMAIL, password_hash, 'admin']
+      )
+      console.log('✅ Admin ajouté:', process.env.ADMIN_EMAIL)
+    } else if (adminRes.rows[0].role !== 'admin') {
+      await query('UPDATE users SET role=$2 WHERE id=$1', [adminRes.rows[0].id, 'admin'])
+      console.log('⚠️ Utilisateur existant promu admin:', process.env.ADMIN_EMAIL)
+    } else {
+      console.log('ℹ️ Admin déjà présent:', process.env.ADMIN_EMAIL)
+    }
+  } else {
+    console.log('ℹ️ ADMIN_EMAIL / ADMIN_PASSWORD non définis - bypass impossible')
   }
 }
 
