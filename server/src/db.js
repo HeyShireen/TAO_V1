@@ -5,12 +5,22 @@ import { fileURLToPath } from 'node:url'
 
 const { Pool } = pg
 
-// Configuration SSL sécurisée
-const sslConfig = process.env.NODE_ENV === 'production'
-  ? { rejectUnauthorized: true }  // Production: vérification stricte
-  : process.env.DB_SSL === 'true' 
-    ? { rejectUnauthorized: false } // Dev avec SSL: accepter certificats auto-signés
-    : false; // Dev local: pas de SSL
+// Configuration SSL
+// Problème rencontré: "SSL/TLS required" sur Render lorsque NODE_ENV=development et DB_SSL non défini.
+// Solution: activer SSL si l'URL pointe vers un hôte Render ou si DB_SSL=true.
+const connectionString = process.env.DATABASE_URL
+const isRenderHost = /render\.com/.test(connectionString || '')
+let sslConfig
+if (process.env.DB_SSL === 'true' || isRenderHost) {
+  // Render impose SSL; on assouplit la vérification du certificat (managed cert)
+  sslConfig = { rejectUnauthorized: false }
+} else if (process.env.NODE_ENV === 'production') {
+  // Autres environnements production: vérification stricte
+  sslConfig = { rejectUnauthorized: true }
+} else {
+  // Développement local sans SSL
+  sslConfig = false
+}
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
