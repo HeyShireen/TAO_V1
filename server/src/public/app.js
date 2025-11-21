@@ -708,6 +708,15 @@ function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('
 function bindUI(){
   // auth
   qs('#login-btn').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await login(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
+  qs('#dev-bypass').addEventListener('click', async ()=>{ 
+    setText('#login-msg','🚧 Mode développement : connexion automatique...'); 
+    try{ 
+      await login('admin@example.com', 'Admin123!'); 
+      showDashboard(); 
+    } catch(e){ 
+      setText('#login-msg', '❌ Erreur bypass: ' + e.message); 
+    }
+  });
   qs('#bootstrap-admin').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await registerFirst(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
   qs('#reset-admin').addEventListener('click', async ()=>{ 
     setText('#login-msg',''); 
