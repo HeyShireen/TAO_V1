@@ -19,6 +19,63 @@ export const pool = new Pool({
 
 export const query = (t, p) => pool.query(t, p)
 
+async function runMigrations() {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const migrationsDir = path.join(__dirname, 'migrations')
+  
+  // Créer la table de suivi des migrations si elle n'existe pas
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS migrations (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      executed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  
+  try {
+    // Lire tous les fichiers de migration
+    const files = await fs.readdir(migrationsDir)
+    const sqlFiles = files.filter(f => f.endsWith('.sql')).sort()
+    
+    for (const file of sqlFiles) {
+      // Vérifier si la migration a déjà été exécutée
+      const exists = await pool.query(
+        'SELECT id FROM migrations WHERE name = $1',
+        [file]
+      )
+      
+      if (exists.rowCount === 0) {
+        console.log(`Exécution de la migration: ${file}`)
+        const migrationPath = path.join(migrationsDir, file)
+        const migrationSQL = await fs.readFile(migrationPath, 'utf8')
+        
+        // Exécuter la migration dans une transaction
+        await pool.query('BEGIN')
+        try {
+          await pool.query(migrationSQL)
+          await pool.query(
+            'INSERT INTO migrations (name) VALUES ($1)',
+            [file]
+          )
+          await pool.query('COMMIT')
+          console.log(`✅ Migration ${file} exécutée avec succès`)
+        } catch (err) {
+          await pool.query('ROLLBACK')
+          console.error(`❌ Erreur lors de la migration ${file}:`, err.message)
+          throw err
+        }
+      }
+    }
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.log('Aucun dossier migrations trouvé, création...')
+      await fs.mkdir(migrationsDir, { recursive: true })
+    } else {
+      throw err
+    }
+  }
+}
+
 export async function ensureSchema() {
   const __dirname = path.dirname(fileURLToPath(import.meta.url))
   const schemaPath = path.join(__dirname, 'schema.sql')
@@ -31,6 +88,9 @@ export async function ensureSchema() {
   }
   await pool.query(sql)
   console.log('Schema OK')
+  
+  // Exécuter les migrations
+  await runMigrations()
   
   // Vérifier si un utilisateur admin existe
   const usersCount = await query('SELECT COUNT(*) FROM users')

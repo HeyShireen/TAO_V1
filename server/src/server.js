@@ -10,6 +10,8 @@ import { query, ensureSchema } from './db.js'
 import authRoutes from './routes/auth.js'
 import projectRoutes from './routes/projects.js'
 import lotRoutes from './routes/lots.js'
+import roundRoutes from './routes/rounds.js'
+import questionRoutes from './routes/questions.js'
 
 // Validation des variables d'environnement critiques
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me' || process.env.JWT_SECRET.length < 32) {
@@ -61,6 +63,8 @@ app.get('/api/healthz', async (_req, res) => {
 app.use('/api/auth', authRoutes)
 app.use('/api/projects', projectRoutes)
 app.use('/api/lots', lotRoutes)
+app.use('/api/rounds', roundRoutes)
+app.use('/api/questions', questionRoutes)
 
 // Front same-origin
 const __filename = fileURLToPath(import.meta.url)
