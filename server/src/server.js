@@ -31,15 +31,22 @@ const app = express()
 // CORS restreint aux origines autorisées
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'http://localhost:4000'];
+  : [];
 
 app.use(cors({ 
   origin: (origin, callback) => {
-    // Autoriser les requêtes sans origin (mobile apps, curl, etc.)
+    // Autoriser les requêtes same-origin (pas d'origin = frontend servi par Express)
     if (!origin) return callback(null, true);
+    
+    // Si aucune origine configurée, accepter tout en développement
+    if (allowedOrigins.length === 0 && process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn(`⚠️ Origine bloquée par CORS: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
