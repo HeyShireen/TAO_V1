@@ -172,17 +172,32 @@ router.get('/:roundId/stats', async (req, res) => {
   try {
     const { roundId } = req.params;
     
-    // Requêtes séparées pour éviter les erreurs si certaines tables n'existent pas
+    // Récupérer le tour pour avoir le project_id
+    const roundResult = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
+    if (roundResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Tour introuvable' });
+    }
+    const projectId = roundResult.rows[0].project_id;
+    
+    // Items et MOE sont partagés au niveau projet (via les lots)
     const itemsCount = await query(
-      'SELECT COUNT(*) as count FROM items WHERE round_id = $1',
-      [roundId]
+      `SELECT COUNT(DISTINCT i.id) as count 
+       FROM items i 
+       JOIN lots l ON l.id = i.lot_id 
+       WHERE l.project_id = $1`,
+      [projectId]
     );
     
     const moeCount = await query(
-      'SELECT COUNT(*) as count FROM moe_items WHERE round_id = $1',
-      [roundId]
+      `SELECT COUNT(DISTINCT m.id) as count 
+       FROM moe_items m 
+       JOIN items i ON i.id = m.item_id
+       JOIN lots l ON l.id = i.lot_id 
+       WHERE l.project_id = $1`,
+      [projectId]
     );
     
+    // Offres sont spécifiques au tour
     const offersStats = await query(
       'SELECT COUNT(*) as count, COUNT(DISTINCT company_id) as companies FROM offers WHERE round_id = $1',
       [roundId]
