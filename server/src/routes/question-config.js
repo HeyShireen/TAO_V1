@@ -336,4 +336,123 @@ router.delete('/question/:id', async (req, res) => {
   }
 });
 
+// Export Excel des fiches questions
+router.get('/lot/:lotId/export-excel', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const { status, company_id } = req.query;
+    
+    // Import dynamique de xlsx
+    const xlsx = await import('xlsx');
+    
+    // Récupérer les données
+    let sql = `
+      SELECT gq.*, 
+        i.num, i.designation, i.unit,
+        c.name as company_name,
+        l.name as lot_name,
+        p.name as project_name
+      FROM generated_questions gq
+      JOIN items i ON i.id = gq.item_id
+      JOIN companies c ON c.id = gq.company_id
+      JOIN lots l ON l.id = gq.lot_id
+      JOIN projects p ON p.id = l.project_id
+      WHERE gq.lot_id = $1
+    `;
+    
+    const params = [lotId];
+    
+    if (status) {
+      sql += ` AND gq.status = $${params.length + 1}`;
+      params.push(status);
+    }
+    
+    if (company_id) {
+      sql += ` AND gq.company_id = $${params.length + 1}`;
+      params.push(company_id);
+    }
+    
+    sql += ` ORDER BY c.name, i.num, gq.question_type`;
+    
+    const result = await query(sql, params);
+    const questions = result.rows;
+    
+    if (questions.length === 0) {
+      return res.status(404).json({ error: 'Aucune fiche question à exporter' });
+    }
+    
+    // Préparer les données pour Excel
+    const excelData = questions.map(q => {
+      const typeLabel = {
+        'qty_low': 'Quantité Basse',
+        'qty_high': 'Quantité Haute',
+        'price_low': 'Prix Bas',
+        'price_high': 'Prix Haut'
+      }[q.question_type] || q.question_type;
+      
+      const statusLabel = {
+        'pending': 'En attente',
+        'answered': 'Répondue',
+        'dismissed': 'Ignorée'
+      }[q.status] || q.status;
+      
+      return {
+        'Projet': q.project_name,
+        'Lot': q.lot_name,
+        'Entreprise': q.company_name,
+        'Article N°': q.num || '',
+        'Désignation': q.designation || '',
+        'Unité': q.unit || '',
+        'Type': typeLabel,
+        'Question': q.question_text,
+        'Écart (%)': q.deviation_pct ? Number(q.deviation_pct).toFixed(2) : '',
+        'Valeur MOE': q.moe_value || '',
+        'Valeur Offre': q.offer_value || '',
+        'Réponse': q.answer || '',
+        'Statut': statusLabel,
+        'Créée le': q.created_at ? new Date(q.created_at).toLocaleString('fr-FR') : '',
+        'Répondue le': q.answered_at ? new Date(q.answered_at).toLocaleString('fr-FR') : ''
+      };
+    });
+    
+    // Créer le workbook
+    const ws = xlsx.utils.json_to_sheet(excelData);
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Fiches Questions');
+    
+    // Ajuster la largeur des colonnes
+    const colWidths = [
+      { wch: 20 }, // Projet
+      { wch: 15 }, // Lot
+      { wch: 20 }, // Entreprise
+      { wch: 10 }, // Article N°
+      { wch: 40 }, // Désignation
+      { wch: 10 }, // Unité
+      { wch: 15 }, // Type
+      { wch: 50 }, // Question
+      { wch: 12 }, // Écart
+      { wch: 12 }, // Valeur MOE
+      { wch: 12 }, // Valeur Offre
+      { wch: 40 }, // Réponse
+      { wch: 12 }, // Statut
+      { wch: 18 }, // Créée le
+      { wch: 18 }  // Répondue le
+    ];
+    ws['!cols'] = colWidths;
+    
+    // Générer le buffer Excel
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    
+    // Envoyer le fichier
+    const filename = `Fiches_Questions_Lot_${lotId}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+    
+  } catch (err) {
+    console.error('Erreur export Excel:', err);
+    res.status(500).json({ error: 'Impossible d\'exporter les fiches questions' });
+  }
+});
+
 export default router;

@@ -263,6 +263,23 @@ function populateCompanyFilter(){
   }
 }
 
+async function exportQuestionsExcel(){
+  if (!currentLot) return;
+  try {
+    const companyId = qs('#filter-company').value;
+    const status = qs('#filter-status').value;
+    
+    let url = `/question-config/lot/${currentLot.id}/export-excel?`;
+    if (companyId) url += `company_id=${companyId}&`;
+    if (status) url += `status=${status}`;
+    
+    // Télécharger directement en ouvrant l'URL
+    window.location.href = API_BASE + url;
+  } catch (err) {
+    alert('❌ Erreur: ' + err.message);
+  }
+}
+
 async function refreshQuestions(){
   if (!currentLot) return;
   try {
@@ -1059,6 +1076,7 @@ function bindUI(){
   qs('#save-thresholds').addEventListener('click', saveLotThresholds);
   qs('#generate-questions').addEventListener('click', generateQuestions);
   qs('#refresh-questions').addEventListener('click', refreshQuestions);
+  qs('#export-questions-excel').addEventListener('click', exportQuestionsExcel);
   qs('#filter-company').addEventListener('change', refreshQuestions);
   qs('#filter-status').addEventListener('change', refreshQuestions);
 
