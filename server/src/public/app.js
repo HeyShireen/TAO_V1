@@ -120,6 +120,13 @@ function enableTab(id, enabled=true){
 function activateTourTab(id){
   qsa('.tour-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tourTab === id));
   qsa('.tour-tabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+  
+  // Charger les données selon l'onglet
+  if (id === 'tour-summary') {
+    loadRoundSummary();
+  } else if (id === 'tour-lots') {
+    loadLotsForRound();
+  }
 }
 
 /* ================= Auth ================= */
@@ -175,7 +182,13 @@ async function loadRounds(){
     tabsContainer.innerHTML = '';
     
     for (const round of rounds){
-      const stats = await api(`/rounds/${round.id}/stats`);
+      // Charger les stats avec gestion d'erreur
+      let stats = { total_items: 0, companies_count: 0, pending_questions: 0 };
+      try {
+        stats = await api(`/rounds/${round.id}/stats`);
+      } catch (statsErr) {
+        console.error('Erreur chargement stats pour tour', round.id, ':', statsErr);
+      }
       
       // Créer la carte pour la liste des tours
       const card = document.createElement('div');
@@ -306,11 +319,11 @@ async function selectRoundFromTab(round){
   
   // Afficher le contenu
   activateTab('round-content');
-  activateTourTab('tour-lots');
+  activateTourTab('tour-summary');
   setText('#current-round-name', `${round.name}`);
   
-  // Charger les lots
-  await loadLotsForRound();
+  // Charger le récapitulatif par défaut
+  await loadRoundSummary();
 }
 
 async function loadLotsForRound(){
@@ -325,6 +338,104 @@ async function loadLotsForRound(){
     tr.innerHTML = `<td>${l.id}</td><td>${l.code||''}</td><td>${l.name}</td><td><button class="btn">Ouvrir</button></td>`;
     tr.querySelector('button').addEventListener('click', () => openLot(l.id, l));
     tbody.appendChild(tr);
+  }
+}
+
+async function loadRoundSummary(){
+  if (!currentRound) return;
+  
+  try {
+    const data = await api(`/rounds/${currentRound.id}/summary`);
+    const { lots, companies } = data;
+    
+    const table = qs('#summary-table');
+    const thead = table.querySelector('thead tr');
+    const tbody = table.querySelector('tbody');
+    const tfoot = table.querySelector('tfoot tr');
+    
+    // Construire les en-têtes avec les entreprises
+    thead.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
+    for (const company of companies) {
+      const th = document.createElement('th');
+      th.className = 'amount company-header';
+      th.textContent = company.name;
+      thead.appendChild(th);
+    }
+    
+    // Construire les lignes de lots
+    tbody.innerHTML = '';
+    let totalMoe = 0;
+    const totalsByCompany = {};
+    companies.forEach(c => totalsByCompany[c.id] = 0);
+    
+    for (const lot of lots) {
+      const tr = document.createElement('tr');
+      
+      // Colonne lot
+      const lotCell = document.createElement('td');
+      lotCell.innerHTML = lot.lot_code 
+        ? `<span class="lot-code">${lot.lot_code}</span>${lot.lot_name}` 
+        : lot.lot_name;
+      tr.appendChild(lotCell);
+      
+      // Colonne MOE
+      const moeCell = document.createElement('td');
+      moeCell.className = 'amount';
+      moeCell.textContent = fmtEuro(lot.moe_total);
+      tr.appendChild(moeCell);
+      totalMoe += lot.moe_total;
+      
+      // Colonnes entreprises
+      for (const company of companies) {
+        const companyTotal = lot.company_totals[company.id] || 0;
+        const cell = document.createElement('td');
+        cell.className = 'amount';
+        
+        // Calcul de l'écart
+        let deviationHtml = '';
+        if (lot.moe_total > 0) {
+          const deviation = ((companyTotal - lot.moe_total) / lot.moe_total) * 100;
+          const deviationClass = deviation > 0 ? 'positive' : 'negative';
+          const deviationSign = deviation > 0 ? '+' : '';
+          deviationHtml = `<span class="deviation ${deviationClass}">${deviationSign}${deviation.toFixed(1)}%</span>`;
+        }
+        
+        cell.innerHTML = fmtEuro(companyTotal) + deviationHtml;
+        tr.appendChild(cell);
+        
+        totalsByCompany[company.id] += companyTotal;
+      }
+      
+      tbody.appendChild(tr);
+    }
+    
+    // Construire la ligne de totaux
+    tfoot.innerHTML = '<th>TOTAL</th>';
+    const totalMoeCell = document.createElement('th');
+    totalMoeCell.className = 'amount';
+    totalMoeCell.textContent = fmtEuro(totalMoe);
+    tfoot.appendChild(totalMoeCell);
+    
+    for (const company of companies) {
+      const totalCell = document.createElement('th');
+      totalCell.className = 'amount';
+      
+      const companyTotal = totalsByCompany[company.id];
+      let deviationHtml = '';
+      if (totalMoe > 0) {
+        const deviation = ((companyTotal - totalMoe) / totalMoe) * 100;
+        const deviationClass = deviation > 0 ? 'positive' : 'negative';
+        const deviationSign = deviation > 0 ? '+' : '';
+        deviationHtml = `<span class="deviation ${deviationClass}">${deviationSign}${deviation.toFixed(1)}%</span>`;
+      }
+      
+      totalCell.innerHTML = fmtEuro(companyTotal) + deviationHtml;
+      tfoot.appendChild(totalCell);
+    }
+    
+  } catch (err) {
+    console.error('Erreur chargement récapitulatif:', err);
+    alert('Erreur lors du chargement du récapitulatif: ' + err.message);
   }
 }
 

@@ -180,28 +180,50 @@ router.get('/:roundId/stats', async (req, res) => {
     const projectId = roundResult.rows[0].project_id;
     
     // Items et MOE sont partagés au niveau projet (via les lots)
-    const itemsCount = await query(
-      `SELECT COUNT(DISTINCT i.id) as count 
-       FROM items i 
-       JOIN lots l ON l.id = i.lot_id 
-       WHERE l.project_id = $1`,
-      [projectId]
-    );
+    let itemsCount = 0;
+    let moeCount = 0;
     
-    const moeCount = await query(
-      `SELECT COUNT(DISTINCT m.id) as count 
-       FROM moe_items m 
-       JOIN items i ON i.id = m.item_id
-       JOIN lots l ON l.id = i.lot_id 
-       WHERE l.project_id = $1`,
-      [projectId]
-    );
+    try {
+      const itemsResult = await query(
+        `SELECT COUNT(DISTINCT i.id) as count 
+         FROM items i 
+         JOIN lots l ON l.id = i.lot_id 
+         WHERE l.project_id = $1`,
+        [projectId]
+      );
+      itemsCount = parseInt(itemsResult.rows[0]?.count || 0);
+    } catch (itemsErr) {
+      console.error('Erreur comptage items:', itemsErr);
+    }
+    
+    try {
+      const moeResult = await query(
+        `SELECT COUNT(DISTINCT m.id) as count 
+         FROM moe_items m 
+         JOIN items i ON i.id = m.item_id
+         JOIN lots l ON l.id = i.lot_id 
+         WHERE l.project_id = $1`,
+        [projectId]
+      );
+      moeCount = parseInt(moeResult.rows[0]?.count || 0);
+    } catch (moeErr) {
+      console.error('Erreur comptage MOE:', moeErr);
+    }
     
     // Offres sont spécifiques au tour
-    const offersStats = await query(
-      'SELECT COUNT(*) as count, COUNT(DISTINCT company_id) as companies FROM offers WHERE round_id = $1',
-      [roundId]
-    );
+    let offersCount = 0;
+    let companiesCount = 0;
+    
+    try {
+      const offersResult = await query(
+        'SELECT COUNT(*) as count, COUNT(DISTINCT company_id) as companies FROM offers WHERE round_id = $1',
+        [roundId]
+      );
+      offersCount = parseInt(offersResult.rows[0]?.count || 0);
+      companiesCount = parseInt(offersResult.rows[0]?.companies || 0);
+    } catch (offersErr) {
+      console.error('Erreur comptage offres:', offersErr);
+    }
     
     // Questions (si la table existe)
     let questionsStats = { total: 0, pending: 0, answered: 0 };
@@ -216,9 +238,9 @@ router.get('/:roundId/stats', async (req, res) => {
       );
       if (qResult.rows[0]) {
         questionsStats = {
-          total: parseInt(qResult.rows[0].total),
-          pending: parseInt(qResult.rows[0].pending),
-          answered: parseInt(qResult.rows[0].answered)
+          total: parseInt(qResult.rows[0].total || 0),
+          pending: parseInt(qResult.rows[0].pending || 0),
+          answered: parseInt(qResult.rows[0].answered || 0)
         };
       }
     } catch (qErr) {
@@ -226,18 +248,97 @@ router.get('/:roundId/stats', async (req, res) => {
     }
     
     res.json({
-      total_items: parseInt(itemsCount.rows[0].count),
-      moe_items: parseInt(moeCount.rows[0].count),
-      total_offers: parseInt(offersStats.rows[0].count),
-      companies_count: parseInt(offersStats.rows[0].companies),
+      total_items: itemsCount,
+      moe_items: moeCount,
+      total_offers: offersCount,
+      companies_count: companiesCount,
       total_questions: questionsStats.total,
       pending_questions: questionsStats.pending,
       answered_questions: questionsStats.answered
     });
   } catch (err) {
     console.error('Erreur stats tour:', err);
-    res.status(500).json({ error: 'Impossible de récupérer les statistiques' });
+    console.error('Stack:', err.stack);
+    res.status(500).json({ error: 'Impossible de récupérer les statistiques: ' + err.message });
+  }
+});
+
+// Tableau récapitulatif des montants par lot et par entreprise
+router.get('/:roundId/summary', async (req, res) => {
+  try {
+    const { roundId } = req.params;
+    
+    // Récupérer le projet_id du tour
+    const roundResult = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
+    if (roundResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Tour introuvable' });
+    }
+    const projectId = roundResult.rows[0].project_id;
+    
+    // Récupérer tous les lots du projet
+    const lotsResult = await query(
+      'SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY code, name',
+      [projectId]
+    );
+    const lots = lotsResult.rows;
+    
+    // Récupérer toutes les entreprises du projet
+    const companiesResult = await query(
+      `SELECT DISTINCT c.id, c.name 
+       FROM companies c
+       JOIN offers o ON o.company_id = c.id
+       JOIN items i ON i.id = o.item_id
+       JOIN lots l ON l.id = i.lot_id
+       WHERE l.project_id = $1 AND o.round_id = $2
+       ORDER BY c.name`,
+      [projectId, roundId]
+    );
+    const companies = companiesResult.rows;
+    
+    // Calculer les montants pour chaque lot
+    const summary = [];
+    for (const lot of lots) {
+      // Montant MOE du lot
+      const moeResult = await query(
+        `SELECT COALESCE(SUM(m.qty * m.unit_price), 0) as total
+         FROM moe_items m
+         JOIN items i ON i.id = m.item_id
+         WHERE i.lot_id = $1`,
+        [lot.id]
+      );
+      const moeTotal = parseFloat(moeResult.rows[0].total);
+      
+      // Montants par entreprise pour ce lot
+      const companyTotals = {};
+      for (const company of companies) {
+        const offerResult = await query(
+          `SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
+           FROM offers o
+           JOIN items i ON i.id = o.item_id
+           WHERE i.lot_id = $1 AND o.company_id = $2 AND o.round_id = $3`,
+          [lot.id, company.id, roundId]
+        );
+        companyTotals[company.id] = parseFloat(offerResult.rows[0].total);
+      }
+      
+      summary.push({
+        lot_id: lot.id,
+        lot_code: lot.code,
+        lot_name: lot.name,
+        moe_total: moeTotal,
+        company_totals: companyTotals
+      });
+    }
+    
+    res.json({
+      lots: summary,
+      companies: companies
+    });
+  } catch (err) {
+    console.error('Erreur récupération récapitulatif:', err);
+    res.status(500).json({ error: 'Impossible de récupérer le récapitulatif' });
   }
 });
 
 export default router;
+

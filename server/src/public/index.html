@@ -112,13 +112,46 @@
       <section id="round-content" class="tabpanel hidden">
         <!-- Sous-navigation pour le tour sélectionné -->
         <div class="tour-subnav">
-          <button data-tour-tab="tour-lots" class="tour-tab-btn active">📦 Lots</button>
+          <button data-tour-tab="tour-summary" class="tour-tab-btn active">📊 Récapitulatif</button>
+          <button data-tour-tab="tour-lots" class="tour-tab-btn">📦 Lots</button>
           <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
           <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
         </div>
 
+        <!-- Onglet: Récapitulatif -->
+        <div id="tour-summary" class="tour-tabpanel">
+          <div class="card">
+            <h4>📊 Tableau Récapitulatif des Montants</h4>
+            <p class="muted">Comparaison automatique des montants MOE et des offres par lot</p>
+            
+            <div style="margin-top:20px">
+              <div class="table-wrapper">
+                <table id="summary-table" class="summary-table">
+                  <thead>
+                    <tr>
+                      <th>Lot</th>
+                      <th class="amount">MOE (€)</th>
+                      <!-- Les colonnes entreprises seront ajoutées dynamiquement -->
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <!-- Les lignes seront ajoutées dynamiquement -->
+                  </tbody>
+                  <tfoot>
+                    <tr class="total-row">
+                      <th>TOTAL</th>
+                      <th class="amount" id="total-moe">0,00 €</th>
+                      <!-- Les totaux entreprises seront ajoutés dynamiquement -->
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Onglet: Lots du tour -->
-        <div id="tour-lots" class="tour-tabpanel">
+        <div id="tour-lots" class="tour-tabpanel hidden">
           <div class="card">
             <h4>📦 Gestion des Lots</h4>
             <p class="muted" id="current-round-name">Tour actuel</p>
