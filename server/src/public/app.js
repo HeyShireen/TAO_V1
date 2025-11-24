@@ -1520,14 +1520,14 @@ async function saveGrid(){
     // Rafraîchir uniquement le comparatif (vue lecture seule)
     await refreshCompare();
     
-    // Rafraîchir le récapitulatif du tour si on est dans un lot de ce tour
+    // Rafraîchir le récapitulatif du tour (toujours, si un round est sélectionné)
     if (currentRound) {
       await loadRoundSummary();
     }
     
-    // Rafraîchir la comparaison des tours si elle est visible
-    const compareTab = qs('#tour-compare');
-    if (currentProject && compareTab && !compareTab.classList.contains('hidden')) {
+    // Rafraîchir la comparaison des tours si visible
+    const compareView = qs('#rounds-compare-view');
+    if (currentProject && compareView && !compareView.classList.contains('hidden')) {
       await loadRoundsComparison();
     }
     
