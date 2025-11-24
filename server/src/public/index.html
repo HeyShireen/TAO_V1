@@ -47,33 +47,59 @@
     <!-- ===== APP ===== -->
     <section id="dashboard" class="hidden">
       <header class="header">
-        <h1>TAO</h1>
-        <div class="tabs">
-          <button data-tab="tab-projects" class="tab active">Projets</button>
-          <button data-tab="tab-project"  class="tab" disabled>Projet</button>
-          <button data-tab="tab-project-config" class="tab" disabled>Config Questions</button>
-          <button data-tab="tab-lot"      class="tab" disabled>Lot</button>
-          <button data-tab="tab-lot-questions" class="tab" disabled>Fiches Questions</button>
+        <div class="header-top">
+          <h1>TAO — Comparateur d'Offres</h1>
+          <button id="logout" class="btn ghost">Déconnexion</button>
         </div>
-        <div class="spacer"></div>
-        <button id="logout" class="btn ghost">Déconnexion</button>
+        <nav class="workflow-nav">
+          <button data-tab="tab-projects" class="workflow-step active">
+            <span class="step-number">1</span>
+            <span class="step-label">Projets</span>
+          </button>
+          <div class="workflow-arrow">→</div>
+          <button data-tab="tab-project" class="workflow-step" disabled>
+            <span class="step-number">2</span>
+            <span class="step-label">Lots</span>
+          </button>
+          <div class="workflow-arrow">→</div>
+          <button data-tab="tab-lot" class="workflow-step" disabled>
+            <span class="step-number">3</span>
+            <span class="step-label">Saisie & Comparatif</span>
+          </button>
+          <div class="workflow-arrow">→</div>
+          <button data-tab="tab-project-config" class="workflow-step" disabled>
+            <span class="step-number">4</span>
+            <span class="step-label">Config Questions</span>
+          </button>
+          <div class="workflow-arrow">→</div>
+          <button data-tab="tab-lot-questions" class="workflow-step" disabled>
+            <span class="step-number">5</span>
+            <span class="step-label">Fiches Questions</span>
+          </button>
+        </nav>
       </header>
 
       <!-- Onglet Projets -->
       <section id="tab-projects" class="tabpanel">
+        <div class="step-header">
+          <h2>📁 Étape 1 : Gestion des Projets</h2>
+          <p class="step-description">Créez un nouveau projet ou sélectionnez un projet existant pour commencer</p>
+        </div>
+
         <div class="card">
-          <h2>Nouveau projet</h2>
+          <h3>➕ Créer un nouveau projet</h3>
           <div class="grid grid-4 gap">
             <input id="proj-name" placeholder="Nom du projet *" />
             <input id="proj-ref" placeholder="Référence" />
             <input id="proj-client" placeholder="Client" />
             <input id="proj-location" placeholder="Localisation" />
           </div>
-          <div class="row"><button id="create-project" class="btn">Créer</button></div>
+          <div class="row"><button id="create-project" class="btn">Créer le projet</button></div>
         </div>
 
         <div class="card">
-          <h2>Liste des projets</h2>
+          <h3>📋 Vos projets</h3>
+          <p class="muted">Cliquez sur "Ouvrir" pour accéder aux lots du projet</p>
           <div class="table-wrapper">
             <table id="projects-table">
               <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th></tr></thead>
@@ -85,30 +111,52 @@
 
       <!-- Onglet Projet -->
       <section id="tab-project" class="tabpanel hidden">
+        <div class="step-header">
+          <h2>📦 Étape 2 : Gestion des Lots</h2>
+          <p class="step-description">Créez les différents lots (corps d'état) de votre projet</p>
+        </div>
+
         <div class="card">
-          <h2 id="project-title">Projet</h2>
-          <div class="grid grid-3 gap">
-            <input id="lot-code" placeholder="Code lot (ex: GO)"/>
-            <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
-            <button id="add-lot" class="btn">Ajouter le lot</button>
+          <div class="card-header-with-back">
+            <button id="back-to-projects" class="btn ghost">← Retour aux projets</button>
+            <h3 id="project-title">Projet</h3>
           </div>
-          <div class="table-wrapper">
-            <table id="lots-table">
-              <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
-              <tbody></tbody>
-            </table>
+          
+          <div class="grid grid-3 gap">
+            <input id="lot-code" placeholder="Code lot (ex: GO, ELE, PLB)"/>
+            <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
+            <button id="add-lot" class="btn">➕ Ajouter le lot</button>
+          </div>
+          
+          <div style="margin-top:20px">
+            <h4>📋 Lots du projet</h4>
+            <p class="muted">Cliquez sur "Ouvrir" pour accéder à la saisie des données</p>
+            <div class="table-wrapper">
+              <table id="lots-table">
+                <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- Onglet Lot -->
       <section id="tab-lot" class="tabpanel hidden">
+        <div class="step-header">
+          <h2>📊 Étape 3 : Saisie des Données et Comparatif</h2>
+          <p class="step-description">Saisissez les données du MOE et des offres, puis comparez-les</p>
+        </div>
+
         <div class="card">
           <div class="lot-header">
-            <h2 id="lot-title">Lot</h2>
+            <div class="card-header-with-back">
+              <button id="back-to-lots" class="btn ghost">← Retour aux lots</button>
+              <h3 id="lot-title">Lot</h3>
+            </div>
             <div class="row gap">
-              <button id="mode-compare" class="btn ghost active-mode">Comparatif</button>
-              <button id="mode-edit" class="btn">Édition (tableur)</button>
+              <button id="mode-compare" class="btn ghost active-mode">👁️ Comparatif</button>
+              <button id="mode-edit" class="btn">✏️ Édition (tableur)</button>
             </div>
           </div>
 
@@ -144,9 +192,17 @@
 
       <!-- Onglet Configuration Questions (Projet) -->
       <section id="tab-project-config" class="tabpanel hidden">
+        <div class="step-header">
+          <h2>⚙️ Étape 4 : Configuration des Questions</h2>
+          <p class="step-description">Personnalisez les questions qui seront posées automatiquement en cas d'écarts</p>
+        </div>
+
         <div class="card">
-          <h2>Configuration des Questions</h2>
-          <p class="muted">Définissez les questions à poser selon les écarts détectés</p>
+          <div class="card-header-with-back">
+            <button id="back-to-lot-from-config" class="btn ghost">← Retour au comparatif</button>
+            <h3>Configuration des Questions</h3>
+          </div>
+          <p class="muted">Ces questions seront posées aux entreprises selon les écarts détectés par rapport au MOE</p>
           
           <div class="field">
             <label><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
@@ -174,8 +230,16 @@
 
       <!-- Onglet Fiches Questions (Lot) -->
       <section id="tab-lot-questions" class="tabpanel hidden">
+        <div class="step-header">
+          <h2>📋 Étape 5 : Fiches Questions</h2>
+          <p class="step-description">Générez et gérez les questions pour les écarts détectés</p>
+        </div>
+
         <div class="card">
-          <h2 id="lot-questions-title">Fiches Questions</h2>
+          <div class="card-header-with-back">
+            <button id="back-to-config" class="btn ghost">← Retour à la config</button>
+            <h3 id="lot-questions-title">Fiches Questions</h3>
+          </div>
           
           <!-- Configuration des seuils -->
           <details class="config-details" style="margin-bottom:20px;padding:12px;background:#0e1218;border:1px solid var(--border);border-radius:10px">

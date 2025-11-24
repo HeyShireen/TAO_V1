@@ -99,11 +99,12 @@ async function api(path, opts = {}) {
 
 /* ================= Onglets ================= */
 function activateTab(id){
-  qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  // Mettre à jour les workflow-step et les tabs (ancien système)
+  qsa('.workflow-step, .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   qsa('.tabpanel').forEach(p => p.id === id ? show('#'+id) : hide('#'+p.id));
 }
 function enableTab(id, enabled=true){
-  const btn = qsa('.tab').find(b => b.dataset.tab === id);
+  const btn = qsa('.workflow-step, .tab').find(b => b.dataset.tab === id);
   if (btn){ btn.disabled = !enabled; }
 }
 
@@ -1049,8 +1050,14 @@ function bindUI(){
   
   qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
 
-  // tabs
-  qsa('.tab').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
+  // tabs et workflow navigation
+  qsa('.tab, .workflow-step').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
+
+  // Boutons de retour navigation
+  qs('#back-to-projects')?.addEventListener('click', () => activateTab('tab-projects'));
+  qs('#back-to-lots')?.addEventListener('click', () => { if (currentProject) activateTab('tab-project'); });
+  qs('#back-to-lot-from-config')?.addEventListener('click', () => { if (currentLot) activateTab('tab-lot'); });
+  qs('#back-to-config')?.addEventListener('click', () => { if (currentProject) activateTab('tab-project-config'); });
 
   // projets / lots
   qs('#create-project').addEventListener('click', async ()=>{ try{

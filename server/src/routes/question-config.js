@@ -417,8 +417,6 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     
     // Créer le workbook
     const ws = xlsx.utils.json_to_sheet(excelData);
-    const wb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(wb, ws, 'Fiches Questions');
     
     // Ajuster la largeur des colonnes
     const colWidths = [
@@ -440,8 +438,103 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     ];
     ws['!cols'] = colWidths;
     
+    // Styliser les en-têtes (première ligne)
+    const range = xlsx.utils.decode_range(ws['!ref']);
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = xlsx.utils.encode_cell({ r: 0, c: col });
+      if (!ws[cellAddress]) continue;
+      
+      ws[cellAddress].s = {
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
+        fill: { fgColor: { rgb: "4472C4" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+        border: {
+          top: { style: "thin", color: { rgb: "000000" } },
+          bottom: { style: "thin", color: { rgb: "000000" } },
+          left: { style: "thin", color: { rgb: "000000" } },
+          right: { style: "thin", color: { rgb: "000000" } }
+        }
+      };
+    }
+    
+    // Formater les cellules de données
+    for (let row = range.s.r + 1; row <= range.e.r; row++) {
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const cellAddress = xlsx.utils.encode_cell({ r: row, c: col });
+        if (!ws[cellAddress]) continue;
+        
+        // Bordures pour toutes les cellules
+        ws[cellAddress].s = {
+          border: {
+            top: { style: "thin", color: { rgb: "D3D3D3" } },
+            bottom: { style: "thin", color: { rgb: "D3D3D3" } },
+            left: { style: "thin", color: { rgb: "D3D3D3" } },
+            right: { style: "thin", color: { rgb: "D3D3D3" } }
+          },
+          alignment: { vertical: "top", wrapText: true }
+        };
+        
+        // Format numérique pour les colonnes de valeurs
+        if (col === 8) { // Écart %
+          ws[cellAddress].z = '0.00"%"';
+          ws[cellAddress].s.alignment.horizontal = "right";
+        } else if (col === 9 || col === 10) { // Valeur MOE / Offre
+          ws[cellAddress].z = '#,##0.00';
+          ws[cellAddress].s.alignment.horizontal = "right";
+        }
+        
+        // Coloration selon le statut (colonne 12)
+        if (col === 12) {
+          const status = ws[cellAddress].v;
+          if (status === 'En attente') {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "FFF3CD" } }; // Jaune
+          } else if (status === 'Répondue') {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "D1E7DD" } }; // Vert
+          } else if (status === 'Ignorée') {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "F8D7DA" } }; // Rouge
+          }
+        }
+        
+        // Coloration selon l'écart (colonne 8)
+        if (col === 8 && ws[cellAddress].v) {
+          const ecartValue = parseFloat(ws[cellAddress].v);
+          const ecartAbs = Math.abs(ecartValue);
+          if (ecartAbs > 20) {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "FFCCCC" } }; // Rouge clair
+            ws[cellAddress].s.font = { color: { rgb: "CC0000" }, bold: true };
+          } else if (ecartAbs > 10) {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "FFE5CC" } }; // Orange clair
+            ws[cellAddress].s.font = { color: { rgb: "CC6600" } };
+          }
+        }
+        
+        // Coloration selon le type (colonne 6)
+        if (col === 6) {
+          const type = ws[cellAddress].v;
+          if (type === 'Quantité Basse' || type === 'Quantité Haute') {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "E7F3FF" } }; // Bleu clair
+          } else if (type === 'Prix Bas' || type === 'Prix Haut') {
+            ws[cellAddress].s.fill = { fgColor: { rgb: "FFF0E7" } }; // Orange très clair
+          }
+        }
+      }
+    }
+    
+    // Figer la première ligne
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+    
+    // Hauteur de la première ligne (en-têtes)
+    ws['!rows'] = [{ hpt: 30 }];
+    
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Fiches Questions');
+    
     // Générer le buffer Excel
-    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buffer = xlsx.write(wb, { 
+      type: 'buffer', 
+      bookType: 'xlsx',
+      cellStyles: true 
+    });
     
     // Envoyer le fichier
     const filename = `Fiches_Questions_Lot_${lotId}_${new Date().toISOString().split('T')[0]}.xlsx`;
