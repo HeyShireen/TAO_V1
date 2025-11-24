@@ -297,15 +297,19 @@ async function refreshQuestions(){
         'dismissed': '❌ Ignorée'
       }[q.status] || q.status;
       
+      const deviationPct = q.deviation_pct != null ? Number(q.deviation_pct).toFixed(1) + '%' : '';
+      const moeVal = q.moe_value != null ? fmtNum(q.moe_value) : '';
+      const offerVal = q.offer_value != null ? fmtNum(q.offer_value) : '';
+      
       html += `
         <tr data-qid="${q.id}">
           <td>${q.company_name}</td>
           <td>${q.num || ''} - ${q.designation || ''}</td>
           <td>${typeLabel}</td>
           <td style="max-width:300px">${q.question_text}</td>
-          <td>${q.deviation_pct != null ? q.deviation_pct.toFixed(1) + '%' : ''}</td>
-          <td>${q.moe_value != null ? fmtNum(q.moe_value) : ''}</td>
-          <td>${q.offer_value != null ? fmtNum(q.offer_value) : ''}</td>
+          <td>${deviationPct}</td>
+          <td>${moeVal}</td>
+          <td>${offerVal}</td>
           <td><textarea data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Réponse...">${q.answer || ''}</textarea></td>
           <td>${statusBadge}</td>
           <td>
