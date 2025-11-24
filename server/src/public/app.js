@@ -284,6 +284,11 @@ async function loadLotsForRound(){
 }
 
 async function createRound(){
+  console.log('createRound called, currentProject:', currentProject);
+  if (!currentProject) {
+    alert('Veuillez d\'abord ouvrir un projet');
+    return;
+  }
   try {
     // Déterminer le nom automatique
     const rounds = await api(`/rounds/project/${currentProject.id}`);

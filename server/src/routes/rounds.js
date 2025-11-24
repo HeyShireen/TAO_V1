@@ -188,26 +188,53 @@ router.get('/:roundId/stats', async (req, res) => {
   try {
     const { roundId } = req.params;
     
-    const stats = await query(
-      `SELECT 
-        COUNT(DISTINCT i.id) as total_items,
-        COUNT(DISTINCT m.id) as moe_items,
-        COUNT(DISTINCT o.id) as total_offers,
-        COUNT(DISTINCT o.company_id) as companies_count,
-        COUNT(DISTINCT gq.id) as total_questions,
-        COUNT(DISTINCT CASE WHEN gq.status = 'pending' THEN gq.id END) as pending_questions,
-        COUNT(DISTINCT CASE WHEN gq.status = 'answered' THEN gq.id END) as answered_questions
-      FROM rounds r
-      LEFT JOIN items i ON i.round_id = r.id
-      LEFT JOIN moe_items m ON m.round_id = r.id
-      LEFT JOIN offers o ON o.round_id = r.id
-      LEFT JOIN generated_questions gq ON gq.round_id = r.id
-      WHERE r.id = $1
-      GROUP BY r.id`,
+    // Requêtes séparées pour éviter les erreurs si certaines tables n'existent pas
+    const itemsCount = await query(
+      'SELECT COUNT(*) as count FROM items WHERE round_id = $1',
       [roundId]
     );
     
-    res.json(stats.rows[0] || {});
+    const moeCount = await query(
+      'SELECT COUNT(*) as count FROM moe_items WHERE round_id = $1',
+      [roundId]
+    );
+    
+    const offersStats = await query(
+      'SELECT COUNT(*) as count, COUNT(DISTINCT company_id) as companies FROM offers WHERE round_id = $1',
+      [roundId]
+    );
+    
+    // Questions (si la table existe)
+    let questionsStats = { total: 0, pending: 0, answered: 0 };
+    try {
+      const qResult = await query(
+        `SELECT 
+          COUNT(*) as total,
+          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+          COUNT(CASE WHEN status = 'answered' THEN 1 END) as answered
+         FROM generated_questions WHERE round_id = $1`,
+        [roundId]
+      );
+      if (qResult.rows[0]) {
+        questionsStats = {
+          total: parseInt(qResult.rows[0].total),
+          pending: parseInt(qResult.rows[0].pending),
+          answered: parseInt(qResult.rows[0].answered)
+        };
+      }
+    } catch (qErr) {
+      console.log('Table generated_questions non disponible:', qErr.message);
+    }
+    
+    res.json({
+      total_items: parseInt(itemsCount.rows[0].count),
+      moe_items: parseInt(moeCount.rows[0].count),
+      total_offers: parseInt(offersStats.rows[0].count),
+      companies_count: parseInt(offersStats.rows[0].companies),
+      total_questions: questionsStats.total,
+      pending_questions: questionsStats.pending,
+      answered_questions: questionsStats.answered
+    });
   } catch (err) {
     console.error('Erreur stats tour:', err);
     res.status(500).json({ error: 'Impossible de récupérer les statistiques' });
