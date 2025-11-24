@@ -161,7 +161,11 @@ async function openLot(id, lotMeta){
 
 /* ================= Comparatif (lecture) ================= */
 function fmtPct(p){ if (p==null || isNaN(p)) return ''; const cls = p>0?'delta-neg':(p<0?'delta-pos':''); const s=(p>0?'+':'')+p.toFixed(1)+'%'; return `<span class="${cls}">${s}</span>`; }
-function fmtNum(v){ const n = parseNum(v); return Number.isFinite(n) ? formatNum(n) : (v ?? ''); }
+function fmtNum(v){ 
+  if (v == null || v === '') return ''; 
+  const n = parseNum(v); 
+  return Number.isFinite(n) ? formatNum(n) : ''; 
+}
 
 async function refreshCompare(){
   if (!currentLot) return;
@@ -195,12 +199,19 @@ function buildSheetModel(raw){
       num: it.num || '',
       designation: it.designation || '',
       unit: it.unit || '',
-      moe: { qty: moe.qty ?? '', pu: moe.unit_price ?? '' },
+      moe: { 
+        qty: moe.qty != null ? String(moe.qty) : '', 
+        pu: moe.unit_price != null ? String(moe.unit_price) : '' 
+      },
       offers: {}
     };
     for (const c of lotCompanies) {
       const o = offersByItem.get(it.id)?.get(c.id) || {};
-      row.offers[c.id] = { u: o.unit ?? '', qty: o.qty ?? '', pu: o.unit_price ?? '' };
+      row.offers[c.id] = { 
+        u: o.unit ?? '', 
+        qty: o.qty != null ? String(o.qty) : '', 
+        pu: o.unit_price != null ? String(o.unit_price) : '' 
+      };
     }
     return row;
   });
