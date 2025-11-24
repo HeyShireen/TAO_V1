@@ -124,11 +124,12 @@ router.put('/lot/:lotId/thresholds', async (req, res) => {
 router.post('/lot/:lotId/generate', async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { roundId } = req.body;
+    const { round_id } = req.body;
     
-    if (!roundId) {
-      return res.status(400).json({ error: 'roundId requis' });
+    if (!round_id) {
+      return res.status(400).json({ error: 'round_id requis' });
     }
+    const roundId = round_id;
     
     // 1. Récupérer les seuils du lot
     const thresholdsRes = await query(

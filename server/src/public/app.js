@@ -355,82 +355,74 @@ async function loadRoundSummary(){
     const { lots, companies } = data;
     
     const table = qs('#summary-table');
-    const thead = table.querySelector('thead tr');
+    const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
-    const tfoot = table.querySelector('tfoot tr');
+    const tfoot = table.querySelector('tfoot');
     
-    // Construire les en-têtes
-    thead.innerHTML = '<th>Lot</th><th class="amount">Estimation (€)</th><th class="amount">Écart (€)</th><th class="amount">Écart (%)</th>';
+    // Construire les en-têtes: Lot | MOE | Entreprise1 | Entreprise2 | ...
+    thead.innerHTML = '';
+    const headerRow = document.createElement('tr');
+    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
+    for (const company of companies) {
+      const th = document.createElement('th');
+      th.className = 'amount company-col';
+      th.textContent = company.name;
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
     
-    // Construire les lignes
+    // Construire les lignes: une ligne par lot
     tbody.innerHTML = '';
     let totalMoe = 0;
     const totalsByCompany = {};
     companies.forEach(c => totalsByCompany[c.id] = 0);
     
     for (const lot of lots) {
-      // Ligne MOE du lot
-      const moeRow = document.createElement('tr');
-      moeRow.className = 'lot-moe-row';
+      const row = document.createElement('tr');
       
+      // Colonne Lot
       const lotCell = document.createElement('td');
       lotCell.className = 'lot-name-cell';
-      lotCell.rowSpan = companies.length + 1;
       lotCell.innerHTML = lot.lot_code 
-        ? `<span class="lot-code">${lot.lot_code}</span>${lot.lot_name}` 
+        ? `<span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}` 
         : lot.lot_name;
-      moeRow.appendChild(lotCell);
+      row.appendChild(lotCell);
       
+      // Colonne MOE
       const moeCell = document.createElement('td');
       moeCell.className = 'amount moe-amount';
-      moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
-      moeRow.appendChild(moeCell);
-      
-      const emptyEcartEur = document.createElement('td');
-      emptyEcartEur.className = 'amount empty-cell';
-      emptyEcartEur.textContent = '—';
-      moeRow.appendChild(emptyEcartEur);
-      
-      const emptyEcartPct = document.createElement('td');
-      emptyEcartPct.className = 'amount empty-cell';
-      emptyEcartPct.textContent = '—';
-      moeRow.appendChild(emptyEcartPct);
-      
-      tbody.appendChild(moeRow);
+      moeCell.textContent = fmtEuro(lot.moe_total);
+      row.appendChild(moeCell);
       totalMoe += lot.moe_total;
       
-      // Lignes entreprises
+      // Colonnes entreprises avec écarts
       for (const company of companies) {
         const companyTotal = lot.company_totals[company.id] || 0;
-        const companyRow = document.createElement('tr');
-        companyRow.className = 'company-row';
-        
         const companyCell = document.createElement('td');
         companyCell.className = 'amount company-cell';
-        companyCell.innerHTML = `<span class="company-name">${company.name}</span><br>${fmtEuro(companyTotal)}`;
-        companyRow.appendChild(companyCell);
         
-        // Écart en euros
+        // Montant + écarts
         const ecartEur = companyTotal - lot.moe_total;
-        const ecartEurCell = document.createElement('td');
-        ecartEurCell.className = 'amount ecart-cell';
-        const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-        const ecartEurSign = ecartEur > 0 ? '+' : '';
-        ecartEurCell.innerHTML = `<span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>`;
-        companyRow.appendChild(ecartEurCell);
-        
-        // Écart en pourcentage
         const ecartPct = lot.moe_total > 0 ? ((companyTotal - lot.moe_total) / lot.moe_total) * 100 : 0;
-        const ecartPctCell = document.createElement('td');
-        ecartPctCell.className = 'amount ecart-cell';
-        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
-        const ecartPctSign = ecartPct > 0 ? '+' : '';
-        ecartPctCell.innerHTML = `<span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(2)} %</span>`;
-        companyRow.appendChild(ecartPctCell);
         
-        tbody.appendChild(companyRow);
+        const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+        const ecartEurSign = ecartEur > 0 ? '+' : '';
+        const ecartPctSign = ecartPct > 0 ? '+' : '';
+        
+        companyCell.innerHTML = `
+          <div><strong>${fmtEuro(companyTotal)}</strong></div>
+          <div style="font-size:11px; margin-top:4px">
+            <span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>
+            <span style="color:var(--muted)"> | </span>
+            <span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(1)}%</span>
+          </div>
+        `;
+        row.appendChild(companyCell);
         totalsByCompany[company.id] += companyTotal;
       }
+      
+      tbody.appendChild(row);
     }
     
     // Ligne de totaux
@@ -444,47 +436,35 @@ async function loadRoundSummary(){
     
     const totalMoeCell = document.createElement('th');
     totalMoeCell.className = 'amount';
-    totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
+    totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
     totalRow.appendChild(totalMoeCell);
     
-    totalRow.appendChild(document.createElement('th'));
-    totalRow.appendChild(document.createElement('th'));
-    
-    tfoot.appendChild(totalRow);
-    
-    // Lignes de totaux par entreprise
+    // Totaux par entreprise
     for (const company of companies) {
-      const companyTotalRow = document.createElement('tr');
-      companyTotalRow.className = 'total-row';
-      
-      companyTotalRow.appendChild(document.createElement('th'));
-      
       const companyTotal = totalsByCompany[company.id];
       const companyTotalCell = document.createElement('th');
       companyTotalCell.className = 'amount';
-      companyTotalCell.innerHTML = `<span class="company-name">${company.name}</span><br>${fmtEuro(companyTotal)}`;
-      companyTotalRow.appendChild(companyTotalCell);
       
-      // Écart total en euros
       const totalEcartEur = companyTotal - totalMoe;
-      const totalEcartEurCell = document.createElement('th');
-      totalEcartEurCell.className = 'amount';
-      const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-      const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
-      totalEcartEurCell.innerHTML = `<span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span>`;
-      companyTotalRow.appendChild(totalEcartEurCell);
-      
-      // Écart total en pourcentage
       const totalEcartPct = totalMoe > 0 ? ((companyTotal - totalMoe) / totalMoe) * 100 : 0;
-      const totalEcartPctCell = document.createElement('th');
-      totalEcartPctCell.className = 'amount';
-      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
-      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
-      totalEcartPctCell.innerHTML = `<span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(2)} %</span>`;
-      companyTotalRow.appendChild(totalEcartPctCell);
       
-      tfoot.appendChild(companyTotalRow);
+      const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+      const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
+      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
+      
+      companyTotalCell.innerHTML = `
+        <div><strong>${fmtEuro(companyTotal)}</strong></div>
+        <div style="font-size:11px; margin-top:4px">
+          <span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span>
+          <span style="color:var(--muted)"> | </span>
+          <span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(1)}%</span>
+        </div>
+      `;
+      totalRow.appendChild(companyTotalCell);
     }
+    
+    tfoot.appendChild(totalRow);
     
   } catch (err) {
     console.error('Erreur chargement récapitulatif:', err);
@@ -664,9 +644,12 @@ async function saveLotThresholds(){
 }
 
 async function generateQuestions(){
-  if (!currentLot) return;
+  if (!currentLot || !currentRound) return;
   try {
-    const result = await api(`/question-config/lot/${currentLot.id}/generate`, { method: 'POST' });
+    const result = await api(`/question-config/lot/${currentLot.id}/generate`, { 
+      method: 'POST',
+      body: { round_id: currentRound.id }
+    });
     alert(`✅ ${result.generated} fiche(s) question générée(s)`);
     await refreshQuestions();
   } catch (err) {
@@ -686,14 +669,14 @@ function populateCompanyFilter(){
 }
 
 async function exportQuestionsExcel(){
-  if (!currentLot) return;
+  if (!currentLot || !currentRound) return;
   try {
     const companyId = qs('#filter-company').value;
     const status = qs('#filter-status').value;
     
-    let url = `/question-config/lot/${currentLot.id}/export-excel?`;
-    if (companyId) url += `company_id=${companyId}&`;
-    if (status) url += `status=${status}`;
+    let url = `/question-config/lot/${currentLot.id}/export-excel?round_id=${currentRound.id}`;
+    if (companyId) url += `&company_id=${companyId}`;
+    if (status) url += `&status=${status}`;
     
     // Télécharger directement en ouvrant l'URL
     window.location.href = API_BASE + url;
@@ -703,14 +686,14 @@ async function exportQuestionsExcel(){
 }
 
 async function refreshQuestions(){
-  if (!currentLot) return;
+  if (!currentLot || !currentRound) return;
   try {
     const companyId = qs('#filter-company').value;
     const status = qs('#filter-status').value;
     
-    let url = `/question-config/lot/${currentLot.id}?`;
-    if (companyId) url += `company_id=${companyId}&`;
-    if (status) url += `status=${status}`;
+    let url = `/question-config/lot/${currentLot.id}?round_id=${currentRound.id}`;
+    if (companyId) url += `&company_id=${companyId}`;
+    if (status) url += `&status=${status}`;
     
     const questions = await api(url);
     
@@ -1360,6 +1343,11 @@ async function saveGrid(){
     
     // Rafraîchir uniquement le comparatif (vue lecture seule)
     await refreshCompare();
+    
+    // Rafraîchir le récapitulatif du tour si on est dans un lot de ce tour
+    if (currentRound) {
+      await loadRoundSummary();
+    }
     
     hasUnsavedChanges = false;
     updateSaveButton();

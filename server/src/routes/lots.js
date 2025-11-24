@@ -129,7 +129,7 @@ router.get('/:id/table', async (req, res) => {
   const moeByItem = new Map(moeRes.rows.map(r => [r.item_id, r]));
 
   const compsRes = await query(
-    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY c.name',
+    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.id',
     [id]
   );
   const companies = compsRes.rows;

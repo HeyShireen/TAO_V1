@@ -113,8 +113,8 @@ th,td{ padding:8px 10px; border:1px solid var(--border); vertical-align:top; tex
 thead{ background:var(--sticky); position:sticky; top:0; z-index:2 }
 thead th{ border-bottom:2px solid var(--border) }
 .moe-col{ background:#101722 } .company-col{ background:#111a25 }
-.sticky-col{ position:sticky; left:0; z-index:3; background:#0f141c; border-right:2px solid var(--border) }
-.sticky-col2{ position:sticky; left:140px; z-index:3; background:#0f141c; border-right:2px solid var(--border); min-width:320px; max-width:520px; white-space:normal; word-wrap:break-word }
+.sticky-col{ position:sticky; left:0; z-index:3; background:#0f141c; border-right:2px solid var(--border); min-width:120px; width:120px; max-width:120px }
+.sticky-col2{ position:sticky; left:120px; z-index:3; background:#0f141c; border-right:2px solid var(--border); min-width:320px; max-width:520px; white-space:normal; word-wrap:break-word }
 thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 .delta-pos{ color:var(--success); font-weight:600 } .delta-neg{ color:var(--danger); font-weight:600 }
 
