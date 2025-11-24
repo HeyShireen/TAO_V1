@@ -317,7 +317,6 @@ router.get('/:roundId/summary', async (req, res) => {
           [lot.id, company.id, roundId]
         );
         const total = parseFloat(offerResult.rows[0].total);
-        console.log(`📊 Lot ${lot.code || lot.name} - ${company.name}: ${total}`);
         companyTotals.push({
           company_id: company.id,
           company_name: company.name,

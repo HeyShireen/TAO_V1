@@ -376,8 +376,6 @@ async function loadRoundSummary(){
     const data = await api(`/rounds/${currentRound.id}/summary`);
     const { lots } = data;
     
-    console.log('📊 Données récapitulatif:', lots);
-    
     const table = qs('#summary-table');
     const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
@@ -420,7 +418,6 @@ async function loadRoundSummary(){
       
       // Lignes entreprises (uniquement celles qui répondent à ce lot)
       for (const companyData of lot.companies) {
-        console.log(`💼 ${lot.lot_name} - ${companyData.company_name}: ${companyData.total}`);
         const companyRow = document.createElement('tr');
         companyRow.className = 'company-row';
         
@@ -980,12 +977,6 @@ async function refreshCompare(){
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
-  
-  // Stocker les totaux dans des variables globales pour le récap
-  window.currentLotTotals = {
-    moe: totalMoe,
-    companies: totalsByCompany
-  };
 }
 
 /* ================= Tableur (édition) ================= */

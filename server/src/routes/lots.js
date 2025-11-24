@@ -271,7 +271,6 @@ router.post('/:id/save-grid', async (req, res) => {
   if (!round_id) return res.status(400).json({ error: 'round_id requis' });
   
   const roundId = Number(round_id);
-  console.log(`💾 Sauvegarde lot ${lotId} pour tour ${roundId}`);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -388,7 +387,6 @@ router.post('/:id/save-grid', async (req, res) => {
     if (offersData.length > 0) {
       for (const offer of offersData) {
         if (!offer.itemId) continue;
-        console.log(`💰 Offre: item=${offer.itemId}, company=${offer.companyId}, round=${roundId}, amount=${offer.om}`);
         await client.query(`
           INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
           VALUES ($1,$2,$3,$4,$5,$6,$7)
