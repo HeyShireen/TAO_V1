@@ -87,25 +87,43 @@
 
       <!-- Onglet Projet -->
       <section id="tab-project" class="tabpanel hidden">
+        <!-- Gestion des Tours/Phases -->
         <div class="card">
           <div class="card-header-with-back">
             <button id="back-to-projects" class="btn ghost">← Projets</button>
             <h3 id="project-title">Projet</h3>
           </div>
           
-          <div class="grid grid-3 gap">
-            <input id="lot-code" placeholder="Code (ex: GO, ELE)"/>
-            <input id="lot-name" placeholder="Nom du lot *"/>
-            <button id="add-lot" class="btn">➕ Ajouter</button>
-          </div>
+          <h4>🔄 Phases / Tours</h4>
+          <p class="muted">Sélectionnez la phase de travail (ouverture, 1er tour, 2ème tour, etc.)</p>
           
-          <div style="margin-top:20px">
-            <h4>📋 Lots</h4>
-            <div class="table-wrapper">
-              <table id="lots-table">
-                <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
-                <tbody></tbody>
-              </table>
+          <div class="rounds-container">
+            <div class="rounds-list" id="rounds-list">
+              <!-- Les tours seront ajoutés ici dynamiquement -->
+            </div>
+            <button id="add-round" class="btn ghost" style="margin-top:12px">➕ Nouveau tour</button>
+          </div>
+        </div>
+
+        <!-- Gestion des Lots -->
+        <div class="card">
+          <h4>📦 Lots du tour actuel</h4>
+          <p class="muted" id="current-round-name">Sélectionnez un tour ci-dessus</p>
+          
+          <div id="lot-management" class="hidden">
+            <div class="grid grid-3 gap">
+              <input id="lot-code" placeholder="Code (ex: GO, ELE)"/>
+              <input id="lot-name" placeholder="Nom du lot *"/>
+              <button id="add-lot" class="btn">➕ Ajouter</button>
+            </div>
+            
+            <div style="margin-top:20px">
+              <div class="table-wrapper">
+                <table id="lots-table">
+                  <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

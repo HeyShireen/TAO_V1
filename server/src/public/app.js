@@ -6,6 +6,7 @@ const API_BASE = API_ROOT + '/api';
 /* ====== Auth ================= */
 let token = localStorage.getItem('token') || null;
 let currentProject = null;
+let currentRound = null;    // Tour/phase actuel
 let currentLot = null;
 
 let lotCompanies = [];      // [{id,name}]
@@ -141,21 +142,136 @@ async function refreshProjects(){ const list = await api('/projects'); renderPro
 async function openProject(id){
   const { project, lots } = await api('/projects/'+id);
   currentProject = project;
+  currentRound = null; // Réinitialiser le tour
+  
   enableTab('tab-project', true); 
-  enableTab('tab-project-config', true);
-  enableTab('tab-lot', false);
-  enableTab('tab-lot-questions', false);
   activateTab('tab-project');
   setText('#project-title', `Projet #${project.id} — ${project.name}`);
   
+  // Charger les tours/phases
+  await loadRounds();
+  
   // Charger la config des questions
   await loadProjectQuestionConfig();
-  const tbody = qs('#lots-table tbody'); tbody.innerHTML='';
+  
+  // Cacher la gestion des lots tant qu'aucun tour n'est sélectionné
+  hide('#lot-management');
+}
+
+async function loadRounds(){
+  try {
+    const rounds = await api(`/rounds/project/${currentProject.id}`);
+    const container = qs('#rounds-list');
+    container.innerHTML = '';
+    
+    for (const round of rounds){
+      const stats = await api(`/rounds/${round.id}/stats`);
+      const card = document.createElement('div');
+      card.className = 'round-card';
+      card.innerHTML = `
+        <div class="round-card-header">
+          <span class="round-number">${round.round_number}</span>
+          <div class="round-actions">
+            <button class="duplicate-round" title="Dupliquer">📋</button>
+            <button class="delete-round" title="Supprimer">🗑️</button>
+          </div>
+        </div>
+        <div class="round-name">${round.name}</div>
+        <div class="round-stats">
+          <span>${stats.total_items || 0} items</span>
+          <span>${stats.companies_count || 0} entreprises</span>
+          <span>${stats.pending_questions || 0} questions</span>
+        </div>
+      `;
+      
+      card.addEventListener('click', () => selectRound(round));
+      card.querySelector('.duplicate-round').addEventListener('click', (e) => {
+        e.stopPropagation();
+        duplicateRound(round.id);
+      });
+      card.querySelector('.delete-round').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteRound(round.id);
+      });
+      
+      container.appendChild(card);
+    }
+  } catch (err) {
+    console.error('Erreur chargement tours:', err);
+  }
+}
+
+async function selectRound(round){
+  currentRound = round;
+  
+  // Mettre à jour l'UI
+  qsa('.round-card').forEach(c => c.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  
+  setText('#current-round-name', `Tour actuel: ${round.name}`);
+  show('#lot-management');
+  
+  // Charger les lots pour ce tour
+  await loadLotsForRound();
+}
+
+async function loadLotsForRound(){
+  if (!currentRound) return;
+  
+  const { project, lots } = await api('/projects/'+currentProject.id);
+  const tbody = qs('#lots-table tbody'); 
+  tbody.innerHTML='';
+  
   for (const l of lots){
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${l.id}</td><td>${l.code||''}</td><td>${l.name}</td><td><button class="btn">Ouvrir</button></td>`;
     tr.querySelector('button').addEventListener('click', () => openLot(l.id, l));
     tbody.appendChild(tr);
+  }
+}
+
+async function createRound(){
+  const name = prompt('Nom du nouveau tour (ex: "1er tour", "2ème tour")');
+  if (!name) return;
+  
+  try {
+    await api(`/rounds/project/${currentProject.id}`, {
+      method: 'POST',
+      body: { name, description: '' }
+    });
+    await loadRounds();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+async function duplicateRound(roundId){
+  const newName = prompt('Nom du nouveau tour:');
+  if (!newName) return;
+  
+  try {
+    await api(`/rounds/${roundId}/duplicate`, {
+      method: 'POST',
+      body: { newName }
+    });
+    await loadRounds();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+async function deleteRound(roundId){
+  if (!confirm('Supprimer ce tour et toutes ses données ?')) return;
+  
+  try {
+    await api(`/rounds/${roundId}`, { method: 'DELETE' });
+    if (currentRound && currentRound.id === roundId) {
+      currentRound = null;
+      hide('#lot-management');
+    }
+    await loadRounds();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
   }
 }
 
@@ -1081,12 +1197,17 @@ function bindUI(){
     await refreshProjects();
   }catch(e){ alert(e.message);} });
 
+  // Gestion des tours
+  qs('#add-round')?.addEventListener('click', createRound);
+
   qs('#add-lot').addEventListener('click', async ()=>{ try{
     if(!currentProject) return alert('Ouvrir un projet');
+    if(!currentRound) return alert('Sélectionner un tour d\'abord');
     const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim();
     if(!name) return alert('Nom du lot requis');
     await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}});
-    qsa('#lot-code,#lot-name').forEach(i=>i.value=''); await openProject(currentProject.id);
+    qsa('#lot-code,#lot-name').forEach(i=>i.value=''); 
+    await loadLotsForRound();
   }catch(e){ alert(e.message);} });
 
   // Config questions projet
