@@ -282,18 +282,6 @@ router.get('/:roundId/summary', async (req, res) => {
     );
     const lots = lotsResult.rows;
     
-    // Récupérer toutes les entreprises du projet (via lot_companies)
-    const companiesResult = await query(
-      `SELECT DISTINCT c.id, c.name 
-       FROM companies c
-       JOIN lot_companies lc ON lc.company_id = c.id
-       JOIN lots l ON l.id = lc.lot_id
-       WHERE l.project_id = $1
-       ORDER BY c.name`,
-      [projectId]
-    );
-    const companies = companiesResult.rows;
-    
     // Calculer les montants pour chaque lot
     const summary = [];
     for (const lot of lots) {
@@ -307,9 +295,20 @@ router.get('/:roundId/summary', async (req, res) => {
       );
       const moeTotal = parseFloat(moeResult.rows[0].total);
       
+      // Récupérer les entreprises qui répondent à ce lot spécifique
+      const lotCompaniesResult = await query(
+        `SELECT DISTINCT c.id, c.name 
+         FROM companies c
+         JOIN lot_companies lc ON lc.company_id = c.id
+         WHERE lc.lot_id = $1
+         ORDER BY lc.created_at, c.id`,
+        [lot.id]
+      );
+      const lotCompanies = lotCompaniesResult.rows;
+      
       // Montants par entreprise pour ce lot
-      const companyTotals = {};
-      for (const company of companies) {
+      const companyTotals = [];
+      for (const company of lotCompanies) {
         const offerResult = await query(
           `SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
            FROM offers o
@@ -317,7 +316,11 @@ router.get('/:roundId/summary', async (req, res) => {
            WHERE i.lot_id = $1 AND o.company_id = $2 AND o.round_id = $3`,
           [lot.id, company.id, roundId]
         );
-        companyTotals[company.id] = parseFloat(offerResult.rows[0].total);
+        companyTotals.push({
+          company_id: company.id,
+          company_name: company.name,
+          total: parseFloat(offerResult.rows[0].total)
+        });
       }
       
       summary.push({
@@ -325,13 +328,12 @@ router.get('/:roundId/summary', async (req, res) => {
         lot_code: lot.code,
         lot_name: lot.name,
         moe_total: moeTotal,
-        company_totals: companyTotals
+        companies: companyTotals
       });
     }
     
     res.json({
-      lots: summary,
-      companies: companies
+      lots: summary
     });
   } catch (err) {
     console.error('Erreur récupération récapitulatif:', err);
