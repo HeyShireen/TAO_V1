@@ -120,10 +120,15 @@ router.put('/lot/:lotId/thresholds', async (req, res) => {
 
 // ========== Génération et gestion des fiches questions ==========
 
-// Générer les fiches questions pour un lot
+// Générer les fiches questions pour un lot et un tour
 router.post('/lot/:lotId/generate', async (req, res) => {
   try {
     const { lotId } = req.params;
+    const { roundId } = req.body;
+    
+    if (!roundId) {
+      return res.status(400).json({ error: 'roundId requis' });
+    }
     
     // 1. Récupérer les seuils du lot
     const thresholdsRes = await query(
@@ -169,8 +174,8 @@ router.post('/lot/:lotId/generate', async (req, res) => {
     const moeByItem = new Map(moeRes.rows.map(m => [m.item_id, m]));
     
     const offersRes = await query(
-      'SELECT * FROM offers WHERE item_id = ANY($1::int[])',
-      [items.map(i => i.id)]
+      'SELECT * FROM offers WHERE item_id = ANY($1::int[]) AND round_id = $2',
+      [items.map(i => i.id), roundId]
     );
     
     // 4. Générer les questions
@@ -187,30 +192,32 @@ router.post('/lot/:lotId/generate', async (req, res) => {
           // Quantité basse
           await query(
             `INSERT INTO generated_questions 
-              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
-             VALUES ($1, $2, $3, 'qty_low', $4, $5, $6, $7)
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
+             VALUES ($1, $2, $3, 'qty_low', $4, $5, $6, $7, $8)
              ON CONFLICT (lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct`,
-            [lotId, offer.item_id, offer.company_id, questions.question_qty_low, moe.qty, offer.qty, qtyDev]
+               deviation_pct = EXCLUDED.deviation_pct,
+               round_id = EXCLUDED.round_id`,
+            [lotId, offer.item_id, offer.company_id, questions.question_qty_low, moe.qty, offer.qty, qtyDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_low' });
         } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
           // Quantité haute
           await query(
             `INSERT INTO generated_questions 
-              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
-             VALUES ($1, $2, $3, 'qty_high', $4, $5, $6, $7)
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
+             VALUES ($1, $2, $3, 'qty_high', $4, $5, $6, $7, $8)
              ON CONFLICT (lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct`,
-            [lotId, offer.item_id, offer.company_id, questions.question_qty_high, moe.qty, offer.qty, qtyDev]
+               deviation_pct = EXCLUDED.deviation_pct,
+               round_id = EXCLUDED.round_id`,
+            [lotId, offer.item_id, offer.company_id, questions.question_qty_high, moe.qty, offer.qty, qtyDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_high' });
         }
@@ -224,30 +231,32 @@ router.post('/lot/:lotId/generate', async (req, res) => {
           // Prix bas
           await query(
             `INSERT INTO generated_questions 
-              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
-             VALUES ($1, $2, $3, 'price_low', $4, $5, $6, $7)
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
+             VALUES ($1, $2, $3, 'price_low', $4, $5, $6, $7, $8)
              ON CONFLICT (lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct`,
-            [lotId, offer.item_id, offer.company_id, questions.question_price_low, moe.unit_price, offer.unit_price, priceDev]
+               deviation_pct = EXCLUDED.deviation_pct,
+               round_id = EXCLUDED.round_id`,
+            [lotId, offer.item_id, offer.company_id, questions.question_price_low, moe.unit_price, offer.unit_price, priceDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_low' });
         } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
           // Prix haut
           await query(
             `INSERT INTO generated_questions 
-              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
-             VALUES ($1, $2, $3, 'price_high', $4, $5, $6, $7)
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
+             VALUES ($1, $2, $3, 'price_high', $4, $5, $6, $7, $8)
              ON CONFLICT (lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct`,
-            [lotId, offer.item_id, offer.company_id, questions.question_price_high, moe.unit_price, offer.unit_price, priceDev]
+               deviation_pct = EXCLUDED.deviation_pct,
+               round_id = EXCLUDED.round_id`,
+            [lotId, offer.item_id, offer.company_id, questions.question_price_high, moe.unit_price, offer.unit_price, priceDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_high' });
         }
@@ -261,11 +270,11 @@ router.post('/lot/:lotId/generate', async (req, res) => {
   }
 });
 
-// Liste des fiches questions d'un lot
+// Liste des fiches questions d'un lot et d'un tour
 router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { status, company_id } = req.query;
+    const { status, company_id, round_id } = req.query;
     
     let sql = `
       SELECT gq.*, 
@@ -278,6 +287,11 @@ router.get('/lot/:lotId', async (req, res) => {
     `;
     
     const params = [lotId];
+    
+    if (round_id) {
+      sql += ` AND gq.round_id = $${params.length + 1}`;
+      params.push(round_id);
+    }
     
     if (status) {
       sql += ` AND gq.status = $${params.length + 1}`;
@@ -340,7 +354,7 @@ router.delete('/question/:id', async (req, res) => {
 router.get('/lot/:lotId/export-excel', async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { status, company_id } = req.query;
+    const { status, company_id, round_id } = req.query;
     
     // Import dynamique de xlsx
     const xlsx = await import('xlsx');
@@ -361,6 +375,11 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     `;
     
     const params = [lotId];
+    
+    if (round_id) {
+      sql += ` AND gq.round_id = $${params.length + 1}`;
+      params.push(round_id);
+    }
     
     if (status) {
       sql += ` AND gq.status = $${params.length + 1}`;

@@ -130,40 +130,24 @@ router.post('/:roundId/duplicate', async (req, res) => {
       
       const newRoundId = newRound.rows[0].id;
       
-      // Copier les items
-      await client.query(
-        `INSERT INTO items (lot_id, num, article_no, designation, unit, round_id)
-         SELECT lot_id, num, article_no, designation, unit, $1
-         FROM items WHERE round_id = $2`,
-        [newRoundId, roundId]
+      // Les items et moe_items sont partagés entre tous les tours (pas de copie)
+      // On copie uniquement les offres vers le nouveau tour
+      
+      // Récupérer tous les items du projet (via les lots)
+      const itemsResult = await client.query(
+        `SELECT i.id FROM items i
+         JOIN lots l ON l.id = i.lot_id
+         WHERE l.project_id = $1`,
+        [source.project_id]
       );
       
-      // Créer un mapping des anciens IDs vers les nouveaux
-      const itemMapping = await client.query(
-        `SELECT old.id as old_id, new.id as new_id
-         FROM items old
-         JOIN items new ON old.num = new.num AND old.lot_id = new.lot_id
-         WHERE old.round_id = $1 AND new.round_id = $2`,
-        [roundId, newRoundId]
-      );
-      
-      // Copier moe_items
-      for (const map of itemMapping.rows) {
-        await client.query(
-          `INSERT INTO moe_items (item_id, qty, unit_price, round_id)
-           SELECT $1, qty, unit_price, $2
-           FROM moe_items WHERE item_id = $3 AND round_id = $4`,
-          [map.new_id, newRoundId, map.old_id, roundId]
-        );
-      }
-      
-      // Copier offers
-      for (const map of itemMapping.rows) {
+      // Copier les offres pour chaque item
+      for (const item of itemsResult.rows) {
         await client.query(
           `INSERT INTO offers (item_id, company_id, qty, unit_price, round_id)
-           SELECT $1, company_id, qty, unit_price, $2
-           FROM offers WHERE item_id = $3 AND round_id = $4`,
-          [map.new_id, newRoundId, map.old_id, roundId]
+           SELECT item_id, company_id, qty, unit_price, $1
+           FROM offers WHERE item_id = $2 AND round_id = $3`,
+          [newRoundId, item.id, roundId]
         );
       }
       
