@@ -627,29 +627,21 @@ async function saveGrid(){
     const unit = getByKey('unit');
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
-    
-    // Fonction pour nettoyer les valeurs (éviter NaN, undefined, etc)
-    const cleanValue = (v) => {
-      if (v == null || v === '' || v === 'NaN' || v === 'undefined') return '';
-      return v;
-    };
 
     // Sauvegarder toutes les lignes, même vides, pour préserver l'espacement DPGF
     const row = {
       item_id: sheetRows[r]?.item_id || null,
-      num: cleanValue(num),
-      designation: cleanValue(designation),
-      unit: cleanValue(unit),
-      moe: { qty: cleanValue(moeQty), pu: cleanValue(moePu) },
+      num, designation, unit,
+      moe: { qty: moeQty, pu: moePu },
       offers: {}
     };
 
     for (const c of lotCompanies){
       const base = `c.${c.id}.`;
       row.offers[c.id] = {
-        u:  cleanValue(getByKey(base+'u')),
-        qty:cleanValue(getByKey(base+'qty')),
-        pu: cleanValue(getByKey(base+'pu')),
+        u:  getByKey(base+'u'),
+        qty:getByKey(base+'qty'),
+        pu: getByKey(base+'pu'),
       };
     }
     rows.push(row);
