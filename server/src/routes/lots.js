@@ -291,9 +291,16 @@ router.post('/:id/save-grid', async (req, res) => {
       }
 
       // Préparer MOE
-      const q  = r.moe?.qty != null && r.moe.qty !== '' ? Number(r.moe.qty) : null;
-      const pu = r.moe?.pu  != null && r.moe.pu  !== '' ? Number(r.moe.pu)  : null;
-      const mt = (q != null && pu != null) ? q * pu : null;
+      let q = null, pu = null, mt = null;
+      if (r.moe?.qty != null && r.moe.qty !== '' && !isNaN(Number(r.moe.qty))) {
+        q = Number(r.moe.qty);
+      }
+      if (r.moe?.pu != null && r.moe.pu !== '' && !isNaN(Number(r.moe.pu))) {
+        pu = Number(r.moe.pu);
+      }
+      if (q != null && pu != null) {
+        mt = q * pu;
+      }
       moeData.push({ itemId, q, pu, mt, rowIndex: rows.indexOf(r) });
 
       // Préparer OFFERS
@@ -301,9 +308,16 @@ router.post('/:id/save-grid', async (req, res) => {
         for (const [cid, val] of Object.entries(r.offers)) {
           const companyId = Number(cid);
           const u  = val?.u ?? null;
-          const oq = val?.qty != null && val.qty !== '' ? Number(val.qty) : null;
-          const op = val?.pu  != null && val.pu  !== '' ? Number(val.pu)  : null;
-          const om = (oq != null && op != null) ? oq * op : null;
+          let oq = null, op = null, om = null;
+          if (val?.qty != null && val.qty !== '' && !isNaN(Number(val.qty))) {
+            oq = Number(val.qty);
+          }
+          if (val?.pu != null && val.pu !== '' && !isNaN(Number(val.pu))) {
+            op = Number(val.pu);
+          }
+          if (oq != null && op != null) {
+            om = oq * op;
+          }
           offersData.push({ itemId, companyId, u, oq, op, om, rowIndex: rows.indexOf(r) });
         }
       }

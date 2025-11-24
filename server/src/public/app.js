@@ -628,6 +628,12 @@ async function saveGrid(){
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
 
+    // Validation PU MOE
+    if (moePu !== '' && isNaN(parseNum(moePu))) {
+      alert(`Erreur: Le PU de la ligne "${designation}" n'est pas un nombre valide.`);
+      return;
+    }
+
     // Sauvegarder toutes les lignes, même vides, pour préserver l'espacement DPGF
     const row = {
       item_id: sheetRows[r]?.item_id || null,
@@ -638,10 +644,15 @@ async function saveGrid(){
 
     for (const c of lotCompanies){
       const base = `c.${c.id}.`;
+      const offerPu = getByKey(base+'pu');
+      if (offerPu !== '' && isNaN(parseNum(offerPu))) {
+        alert(`Erreur: Le PU de l'offre (entreprise) de la ligne "${designation}" n'est pas un nombre valide.`);
+        return;
+      }
       row.offers[c.id] = {
         u:  getByKey(base+'u'),
         qty:getByKey(base+'qty'),
-        pu: getByKey(base+'pu'),
+        pu: offerPu,
       };
     }
     rows.push(row);
