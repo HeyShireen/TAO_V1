@@ -274,17 +274,28 @@ router.post('/:id/save-grid', async (req, res) => {
     // 1. Séparer items existants vs nouveaux
     for (const r of rows) {
       const designation = (r.designation ?? '').trim();
-      if (!designation) continue;
-      pos += 1;
-
       const num = r.num ?? null;
       const unit = r.unit ?? null;
+      
+      // Vérifier si la ligne a des données (designation OU données MOE/offres)
+      const hasMoeData = (r.moe?.qty != null && r.moe.qty !== '') || (r.moe?.pu != null && r.moe.pu !== '');
+      const hasOfferData = r.offers && Object.values(r.offers).some(v => 
+        (v?.qty != null && v.qty !== '') || (v?.pu != null && v.pu !== '') || (v?.u != null && v.u !== '')
+      );
+      
+      // Ignorer uniquement les lignes complètement vides
+      if (!designation && !num && !unit && !hasMoeData && !hasOfferData) continue;
+      
+      pos += 1;
       const itemId = r.item_id ? Number(r.item_id) : null;
+      
+      // Utiliser une désignation par défaut si vide mais avec données
+      const finalDesignation = designation || '(sans désignation)';
 
       if (itemId) {
-        itemsToUpdate.push({ id: itemId, num, designation, unit, pos });
+        itemsToUpdate.push({ id: itemId, num, designation: finalDesignation, unit, pos });
       } else {
-        itemsToInsert.push({ num, designation, unit, pos, rowIndex: rows.indexOf(r) });
+        itemsToInsert.push({ num, designation: finalDesignation, unit, pos, rowIndex: rows.indexOf(r) });
       }
 
       // Préparer MOE
