@@ -504,7 +504,10 @@ function attachSheetDelegates(){
         if (col >= colModel.length) break;
 
         const val = String(grid[i][j]).trim();
-        const prev = getCell(startR+i, col).textContent;
+        const cellTarget = getCell(startR+i, col);
+        if (!cellTarget) break;
+        
+        const prev = cellTarget.textContent;
 
         setCell(startR+i, col, val, true); // updateDOM = true pour le collage
         if (prev !== val) { pushUndo({ r:startR+i, c:col, key: colModel[col].key, prev, next: val }); redoStack.length = 0; }
@@ -624,21 +627,29 @@ async function saveGrid(){
     const unit = getByKey('unit');
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
+    
+    // Fonction pour nettoyer les valeurs (éviter NaN, undefined, etc)
+    const cleanValue = (v) => {
+      if (v == null || v === '' || v === 'NaN' || v === 'undefined') return '';
+      return v;
+    };
 
     // Sauvegarder toutes les lignes, même vides, pour préserver l'espacement DPGF
     const row = {
       item_id: sheetRows[r]?.item_id || null,
-      num, designation, unit,
-      moe: { qty: moeQty, pu: moePu },
+      num: cleanValue(num),
+      designation: cleanValue(designation),
+      unit: cleanValue(unit),
+      moe: { qty: cleanValue(moeQty), pu: cleanValue(moePu) },
       offers: {}
     };
 
     for (const c of lotCompanies){
       const base = `c.${c.id}.`;
       row.offers[c.id] = {
-        u:  getByKey(base+'u'),
-        qty:getByKey(base+'qty'),
-        pu: getByKey(base+'pu'),
+        u:  cleanValue(getByKey(base+'u')),
+        qty:cleanValue(getByKey(base+'qty')),
+        pu: cleanValue(getByKey(base+'pu')),
       };
     }
     rows.push(row);
