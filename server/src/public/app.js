@@ -359,112 +359,140 @@ async function loadRoundSummary(){
     const tbody = table.querySelector('tbody');
     const tfoot = table.querySelector('tfoot');
     
-    // Construire les en-têtes: Lot | MOE | Entreprise1 | Entreprise2 | ...
+    // Construire les en-têtes: Lot | MOE (€) | Montant (€) | Écart (€) | Écart (%)
     thead.innerHTML = '';
     const headerRow = document.createElement('tr');
-    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
-    for (const company of companies) {
-      const th = document.createElement('th');
-      th.className = 'amount company-col';
-      th.textContent = company.name;
-      headerRow.appendChild(th);
-    }
+    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th><th class="amount">Montant (€)</th><th class="amount">Écart (€)</th><th class="amount">Écart (%)</th>';
     thead.appendChild(headerRow);
     
-    // Construire les lignes: une ligne par lot
+    // Construire les lignes: une ligne par lot avec MOE, puis une ligne par entreprise
     tbody.innerHTML = '';
     let totalMoe = 0;
     const totalsByCompany = {};
     companies.forEach(c => totalsByCompany[c.id] = 0);
     
     for (const lot of lots) {
-      const row = document.createElement('tr');
+      // Ligne d'en-tête du lot avec MOE
+      const lotRow = document.createElement('tr');
+      lotRow.className = 'lot-header-row';
       
-      // Colonne Lot
       const lotCell = document.createElement('td');
+      lotCell.rowSpan = companies.length + 1;
       lotCell.className = 'lot-name-cell';
       lotCell.innerHTML = lot.lot_code 
-        ? `<span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}` 
-        : lot.lot_name;
-      row.appendChild(lotCell);
+        ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>` 
+        : `<strong>${lot.lot_name}</strong>`;
+      lotRow.appendChild(lotCell);
       
-      // Colonne MOE
       const moeCell = document.createElement('td');
       moeCell.className = 'amount moe-amount';
-      moeCell.textContent = fmtEuro(lot.moe_total);
-      row.appendChild(moeCell);
+      moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
+      lotRow.appendChild(moeCell);
+      
+      // Cellules vides pour Montant, Écart €, Écart %
+      lotRow.innerHTML += '<td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td>';
+      
+      tbody.appendChild(lotRow);
       totalMoe += lot.moe_total;
       
-      // Colonnes entreprises avec écarts
+      // Lignes entreprises (une par entreprise)
       for (const company of companies) {
         const companyTotal = lot.company_totals[company.id] || 0;
-        const companyCell = document.createElement('td');
-        companyCell.className = 'amount company-cell';
+        const companyRow = document.createElement('tr');
+        companyRow.className = 'company-row';
         
-        // Montant + écarts
+        // Colonne entreprise (nom)
+        const companyNameCell = document.createElement('td');
+        companyNameCell.className = 'amount company-name-cell';
+        companyNameCell.textContent = company.name;
+        companyRow.appendChild(companyNameCell);
+        
+        // Colonne montant
+        const amountCell = document.createElement('td');
+        amountCell.className = 'amount';
+        amountCell.textContent = fmtEuro(companyTotal);
+        companyRow.appendChild(amountCell);
+        
+        // Colonne écart en euros
         const ecartEur = companyTotal - lot.moe_total;
-        const ecartPct = lot.moe_total > 0 ? ((companyTotal - lot.moe_total) / lot.moe_total) * 100 : 0;
-        
+        const ecartEurCell = document.createElement('td');
+        ecartEurCell.className = 'amount';
         const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
         const ecartEurSign = ecartEur > 0 ? '+' : '';
-        const ecartPctSign = ecartPct > 0 ? '+' : '';
+        ecartEurCell.innerHTML = `<span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>`;
+        companyRow.appendChild(ecartEurCell);
         
-        companyCell.innerHTML = `
-          <div><strong>${fmtEuro(companyTotal)}</strong></div>
-          <div style="font-size:11px; margin-top:4px">
-            <span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>
-            <span style="color:var(--muted)"> | </span>
-            <span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(1)}%</span>
-          </div>
-        `;
-        row.appendChild(companyCell);
+        // Colonne écart en pourcentage
+        const ecartPct = lot.moe_total > 0 ? ((companyTotal - lot.moe_total) / lot.moe_total) * 100 : 0;
+        const ecartPctCell = document.createElement('td');
+        ecartPctCell.className = 'amount';
+        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+        const ecartPctSign = ecartPct > 0 ? '+' : '';
+        ecartPctCell.innerHTML = `<span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(1)}%</span>`;
+        companyRow.appendChild(ecartPctCell);
+        
+        tbody.appendChild(companyRow);
         totalsByCompany[company.id] += companyTotal;
       }
-      
-      tbody.appendChild(row);
     }
     
-    // Ligne de totaux
+    // Ligne de totaux MOE
     tfoot.innerHTML = '';
-    const totalRow = document.createElement('tr');
-    totalRow.className = 'total-row';
+    const totalMoeRow = document.createElement('tr');
+    totalMoeRow.className = 'total-row lot-header-row';
     
     const totalLabelCell = document.createElement('th');
     totalLabelCell.textContent = 'TOTAL';
-    totalRow.appendChild(totalLabelCell);
+    totalLabelCell.rowSpan = companies.length + 1;
+    totalMoeRow.appendChild(totalLabelCell);
     
     const totalMoeCell = document.createElement('th');
     totalMoeCell.className = 'amount';
-    totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
-    totalRow.appendChild(totalMoeCell);
+    totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
+    totalMoeRow.appendChild(totalMoeCell);
     
-    // Totaux par entreprise
+    totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
+    
+    tfoot.appendChild(totalMoeRow);
+    
+    // Lignes de totaux par entreprise
     for (const company of companies) {
       const companyTotal = totalsByCompany[company.id];
-      const companyTotalCell = document.createElement('th');
-      companyTotalCell.className = 'amount';
+      const companyTotalRow = document.createElement('tr');
+      companyTotalRow.className = 'total-row company-row';
       
+      // Nom entreprise
+      const companyNameCell = document.createElement('th');
+      companyNameCell.className = 'amount';
+      companyNameCell.textContent = company.name;
+      companyTotalRow.appendChild(companyNameCell);
+      
+      // Montant total
+      const amountCell = document.createElement('th');
+      amountCell.className = 'amount';
+      amountCell.innerHTML = `<strong>${fmtEuro(companyTotal)}</strong>`;
+      companyTotalRow.appendChild(amountCell);
+      
+      // Écart total en euros
       const totalEcartEur = companyTotal - totalMoe;
-      const totalEcartPct = totalMoe > 0 ? ((companyTotal - totalMoe) / totalMoe) * 100 : 0;
-      
+      const totalEcartEurCell = document.createElement('th');
+      totalEcartEurCell.className = 'amount';
       const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
       const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
-      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
+      totalEcartEurCell.innerHTML = `<strong><span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span></strong>`;
+      companyTotalRow.appendChild(totalEcartEurCell);
       
-      companyTotalCell.innerHTML = `
-        <div><strong>${fmtEuro(companyTotal)}</strong></div>
-        <div style="font-size:11px; margin-top:4px">
-          <span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span>
-          <span style="color:var(--muted)"> | </span>
-          <span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(1)}%</span>
-        </div>
-      `;
-      totalRow.appendChild(companyTotalCell);
+      // Écart total en pourcentage
+      const totalEcartPct = totalMoe > 0 ? ((companyTotal - totalMoe) / totalMoe) * 100 : 0;
+      const totalEcartPctCell = document.createElement('th');
+      totalEcartPctCell.className = 'amount';
+      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
+      totalEcartPctCell.innerHTML = `<strong><span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(1)}%</span></strong>`;
+      companyTotalRow.appendChild(totalEcartPctCell);
+      
+      tfoot.appendChild(companyTotalRow);
     }
-    
-    tfoot.appendChild(totalRow);
     
   } catch (err) {
     console.error('Erreur chargement récapitulatif:', err);

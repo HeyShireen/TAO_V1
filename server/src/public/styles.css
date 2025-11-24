@@ -13,55 +13,55 @@ h1,h2{ margin:0 0 .6rem 0 } .muted{ color:var(--muted) } .hidden{ display:none !
 .btn.warning{ background:var(--danger); }
 .active-mode{ filter:brightness(1.05) }
 
-.card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; margin:16px }
+.card{ background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin:12px }
 .max-480{ max-width:480px; margin:40px auto }
 
-.header{ position:sticky; top:0; z-index:5; padding:12px 16px; background:var(--bg); border-bottom:1px solid var(--border) }
-.header-top{ display:flex; align-items:center; gap:16px }
-.header-top h1{ margin:0; font-size:20px }
+.header{ position:sticky; top:0; z-index:5; padding:6px 12px; background:var(--bg); border-bottom:1px solid var(--border) }
+.header-top{ display:flex; align-items:center; gap:12px }
+.header-top h1{ margin:0; font-size:16px }
 
 /* Navigation principale */
-.main-nav{ display:flex; gap:8px; flex:1; margin:0 20px }
-.nav-btn{ background:#0e1218; color:var(--fg); border:1px solid var(--border); border-radius:10px; 
-  padding:8px 16px; cursor:pointer; transition:all .2s; font-size:14px }
+.main-nav{ display:flex; gap:6px; flex:1; margin:0 12px }
+.nav-btn{ background:#0e1218; color:var(--fg); border:1px solid var(--border); border-radius:8px; 
+  padding:6px 12px; cursor:pointer; transition:all .2s; font-size:13px }
 .nav-btn:hover:not(:disabled){ background:#151a22; border-color:#35507a }
 .nav-btn.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
 .nav-btn:disabled{ opacity:.4; cursor:not-allowed }
 
 /* Sous-navigation pour les tours */
-.subnav{ background:#0e1218; border-bottom:1px solid var(--border); padding:12px 16px }
-.subnav-header{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
-.subnav-header h3{ margin:0; flex:1; font-size:16px }
-.subnav-tabs{ display:flex; gap:8px; overflow-x:auto; padding:4px 0 }
+.subnav{ background:#0e1218; border-bottom:1px solid var(--border); padding:6px 12px }
+.subnav-header{ display:flex; align-items:center; gap:8px; margin-bottom:6px }
+.subnav-header h3{ margin:0; flex:1; font-size:14px }
+.subnav-tabs{ display:flex; gap:6px; overflow-x:auto; padding:2px 0 }
 .subnav-tabs button{ background:#151a22; color:var(--muted); border:1px solid var(--border); 
-  border-radius:8px; padding:8px 16px; cursor:pointer; transition:all .2s; font-size:13px; white-space:nowrap }
+  border-radius:6px; padding:5px 12px; cursor:pointer; transition:all .2s; font-size:12px; white-space:nowrap }
 .subnav-tabs button:hover{ background:#1a2028; border-color:#35507a; color:var(--fg) }
 .subnav-tabs button.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
 
 /* Sous-onglets pour un tour spécifique */
-.tour-subnav{ display:flex; gap:8px; padding:16px; background:#0e1218; border-bottom:1px solid var(--border) }
+.tour-subnav{ display:flex; gap:6px; padding:8px 12px; background:#0e1218; border-bottom:1px solid var(--border) }
 .tour-tab-btn{ background:transparent; color:var(--muted); border:none; border-bottom:2px solid transparent; 
-  padding:10px 20px; cursor:pointer; transition:all .2s; font-size:14px; font-weight:500 }
+  padding:6px 12px; cursor:pointer; transition:all .2s; font-size:13px; font-weight:500 }
 .tour-tab-btn:hover{ color:var(--fg) }
 .tour-tab-btn.active{ color:var(--accent); border-bottom-color:var(--accent) }
 .tour-tabpanel{ display:block }
 .tour-tabpanel.hidden{ display:none }
 
 /* Breadcrumb */
-.breadcrumb{ padding:8px 16px; background:#0e1218; font-size:13px; color:var(--muted) }
+.breadcrumb{ padding:4px 12px; background:#0e1218; font-size:12px; color:var(--muted) }
 
 /* Sous-panels */
 .subtabpanel{ display:block }
 .subtabpanel.hidden{ display:none }
 
 /* En-têtes de cartes avec bouton retour */
-.card-header-with-back{ display:flex; align-items:center; gap:12px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border) }
-.card-header-with-back h3{ margin:0; flex:1 }
+.card-header-with-back{ display:flex; align-items:center; gap:8px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border) }
+.card-header-with-back h3{ margin:0; flex:1; font-size:15px }
 
 /* Sections paramètres */
-.settings-section{ margin-top:24px; padding-top:24px; border-top:1px solid var(--border) }
+.settings-section{ margin-top:16px; padding-top:16px; border-top:1px solid var(--border) }
 .settings-section:first-child{ margin-top:0; padding-top:0; border-top:none }
-.settings-section h4{ margin:0 0 16px 0; font-size:16px }
+.settings-section h4{ margin:0 0 10px 0; font-size:14px }
 
 /* Rounds/Tours */
 .rounds-container{ margin-top:16px }
@@ -150,17 +150,16 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 .summary-table th{ background:#0e1218; font-weight:600; position:sticky; top:0; z-index:1 }
 .summary-table th.amount, .summary-table td.amount{ text-align:right; font-variant-numeric:tabular-nums }
 
-/* Lignes du lot */
-.summary-table .lot-moe-row{ background:#151a22; font-weight:500 }
-.summary-table .lot-moe-row td{ border-top:2px solid var(--accent); border-bottom:1px solid var(--border) }
-.summary-table .lot-name-cell{ font-weight:600; vertical-align:middle; border-right:1px solid var(--border) }
-.summary-table .moe-amount{ background:#1a2028; color:var(--accent) }
+/* Lignes d'en-tête de lot */
+.summary-table .lot-header-row{ background:#151a22; font-weight:600 }
+.summary-table .lot-header-row td{ border-top:2px solid var(--accent); padding:12px 16px }
+.summary-table .lot-name-cell{ font-weight:600; vertical-align:middle; border-right:2px solid var(--border); background:#1a2028 }
+.summary-table .moe-amount{ background:#1a2028; color:var(--accent); font-weight:600 }
 
 /* Lignes des entreprises */
 .summary-table .company-row{ background:#0e1218 }
 .summary-table .company-row:hover{ background:#151a22 }
-.summary-table .company-cell{ padding-left:24px }
-.summary-table .company-name{ font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:500 }
+.summary-table .company-name-cell{ padding-left:32px; color:var(--muted); font-size:12px }
 
 /* Écarts */
 .summary-table .ecart-cell{ font-weight:600 }

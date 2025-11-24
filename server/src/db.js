@@ -194,6 +194,7 @@ function defaultSchemaSQL() {
   CREATE TABLE IF NOT EXISTS public.lot_companies (
     lot_id BIGINT NOT NULL REFERENCES public.lots(id) ON DELETE CASCADE,
     company_id BIGINT NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now(),
     PRIMARY KEY (lot_id, company_id)
   );
 
