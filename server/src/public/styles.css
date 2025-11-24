@@ -145,19 +145,37 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 @keyframes spin{ to{ transform:rotate(360deg) } }
 
 /* Tableau récapitulatif */
-.summary-table{ width:100%; border-collapse:collapse }
-.summary-table th, .summary-table td{ padding:12px 16px; text-align:left; border-bottom:1px solid var(--border) }
+.summary-table{ width:100%; border-collapse:collapse; font-size:13px }
+.summary-table th, .summary-table td{ padding:10px 16px; text-align:left; border-bottom:1px solid var(--border) }
 .summary-table th{ background:#0e1218; font-weight:600; position:sticky; top:0; z-index:1 }
 .summary-table th.amount, .summary-table td.amount{ text-align:right; font-variant-numeric:tabular-nums }
-.summary-table tbody tr:hover{ background:#151a22 }
-.summary-table .total-row{ background:#0e1218; font-weight:700; font-size:15px; border-top:2px solid var(--accent) }
-.summary-table .total-row th, .summary-table .total-row td{ padding:16px }
-.summary-table .company-header{ background:#1a2028; color:var(--accent); text-align:right }
-.summary-table .deviation{ font-size:12px; color:var(--muted); margin-left:8px }
-.summary-table .deviation.positive{ color:var(--danger) }
-.summary-table .deviation.negative{ color:var(--success) }
-.summary-table .lot-code{ display:inline-block; background:#0e1218; padding:4px 8px; border-radius:4px; 
-  font-size:11px; font-weight:600; margin-right:8px; color:var(--accent) }
+
+/* Lignes du lot */
+.summary-table .lot-moe-row{ background:#151a22; font-weight:500 }
+.summary-table .lot-moe-row td{ border-top:2px solid var(--accent); border-bottom:1px solid var(--border) }
+.summary-table .lot-name-cell{ font-weight:600; vertical-align:middle; border-right:1px solid var(--border) }
+.summary-table .moe-amount{ background:#1a2028; color:var(--accent) }
+
+/* Lignes des entreprises */
+.summary-table .company-row{ background:#0e1218 }
+.summary-table .company-row:hover{ background:#151a22 }
+.summary-table .company-cell{ padding-left:24px }
+.summary-table .company-name{ font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:500 }
+
+/* Écarts */
+.summary-table .ecart-cell{ font-weight:600 }
+.summary-table .ecart-positive{ color:#ff6b6b; font-weight:700 }
+.summary-table .ecart-negative{ color:#2bc94f; font-weight:700 }
+.summary-table .ecart-zero{ color:var(--muted) }
+.summary-table .empty-cell{ color:var(--muted); font-size:18px }
+
+/* Totaux */
+.summary-table .total-row{ background:#0e1218; font-weight:700; border-top:2px solid var(--accent) }
+.summary-table .total-row th{ padding:14px 16px; font-size:14px }
+
+/* Code lot */
+.summary-table .lot-code{ display:inline-block; background:var(--accent-ghost); padding:4px 8px; border-radius:4px; 
+  font-size:11px; font-weight:600; margin-right:8px; color:var(--accent); border:1px solid var(--accent) }
 
 /* Login page styles */
 .login-options{ margin-top:24px; display:flex; flex-direction:column; gap:20px }

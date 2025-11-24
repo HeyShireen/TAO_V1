@@ -129,6 +129,12 @@ function activateTourTab(id){
   }
 }
 
+/* ================= Sous-onglets pour les lots ================= */
+function activateSubtab(id){
+  qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
+  qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+}
+
 /* ================= Auth ================= */
 async function login(email, password){
   const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
@@ -353,84 +359,131 @@ async function loadRoundSummary(){
     const tbody = table.querySelector('tbody');
     const tfoot = table.querySelector('tfoot tr');
     
-    // Construire les en-têtes avec les entreprises
-    thead.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
-    for (const company of companies) {
-      const th = document.createElement('th');
-      th.className = 'amount company-header';
-      th.textContent = company.name;
-      thead.appendChild(th);
-    }
+    // Construire les en-têtes
+    thead.innerHTML = '<th>Lot</th><th class="amount">Estimation (€)</th><th class="amount">Écart (€)</th><th class="amount">Écart (%)</th>';
     
-    // Construire les lignes de lots
+    // Construire les lignes
     tbody.innerHTML = '';
     let totalMoe = 0;
     const totalsByCompany = {};
     companies.forEach(c => totalsByCompany[c.id] = 0);
     
     for (const lot of lots) {
-      const tr = document.createElement('tr');
+      // Ligne MOE du lot
+      const moeRow = document.createElement('tr');
+      moeRow.className = 'lot-moe-row';
       
-      // Colonne lot
       const lotCell = document.createElement('td');
+      lotCell.className = 'lot-name-cell';
+      lotCell.rowSpan = companies.length + 1;
       lotCell.innerHTML = lot.lot_code 
         ? `<span class="lot-code">${lot.lot_code}</span>${lot.lot_name}` 
         : lot.lot_name;
-      tr.appendChild(lotCell);
+      moeRow.appendChild(lotCell);
       
-      // Colonne MOE
       const moeCell = document.createElement('td');
-      moeCell.className = 'amount';
-      moeCell.textContent = fmtEuro(lot.moe_total);
-      tr.appendChild(moeCell);
+      moeCell.className = 'amount moe-amount';
+      moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
+      moeRow.appendChild(moeCell);
+      
+      const emptyEcartEur = document.createElement('td');
+      emptyEcartEur.className = 'amount empty-cell';
+      emptyEcartEur.textContent = '—';
+      moeRow.appendChild(emptyEcartEur);
+      
+      const emptyEcartPct = document.createElement('td');
+      emptyEcartPct.className = 'amount empty-cell';
+      emptyEcartPct.textContent = '—';
+      moeRow.appendChild(emptyEcartPct);
+      
+      tbody.appendChild(moeRow);
       totalMoe += lot.moe_total;
       
-      // Colonnes entreprises
+      // Lignes entreprises
       for (const company of companies) {
         const companyTotal = lot.company_totals[company.id] || 0;
-        const cell = document.createElement('td');
-        cell.className = 'amount';
+        const companyRow = document.createElement('tr');
+        companyRow.className = 'company-row';
         
-        // Calcul de l'écart
-        let deviationHtml = '';
-        if (lot.moe_total > 0) {
-          const deviation = ((companyTotal - lot.moe_total) / lot.moe_total) * 100;
-          const deviationClass = deviation > 0 ? 'positive' : 'negative';
-          const deviationSign = deviation > 0 ? '+' : '';
-          deviationHtml = `<span class="deviation ${deviationClass}">${deviationSign}${deviation.toFixed(1)}%</span>`;
-        }
+        const companyCell = document.createElement('td');
+        companyCell.className = 'amount company-cell';
+        companyCell.innerHTML = `<span class="company-name">${company.name}</span><br>${fmtEuro(companyTotal)}`;
+        companyRow.appendChild(companyCell);
         
-        cell.innerHTML = fmtEuro(companyTotal) + deviationHtml;
-        tr.appendChild(cell);
+        // Écart en euros
+        const ecartEur = companyTotal - lot.moe_total;
+        const ecartEurCell = document.createElement('td');
+        ecartEurCell.className = 'amount ecart-cell';
+        const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+        const ecartEurSign = ecartEur > 0 ? '+' : '';
+        ecartEurCell.innerHTML = `<span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>`;
+        companyRow.appendChild(ecartEurCell);
         
+        // Écart en pourcentage
+        const ecartPct = lot.moe_total > 0 ? ((companyTotal - lot.moe_total) / lot.moe_total) * 100 : 0;
+        const ecartPctCell = document.createElement('td');
+        ecartPctCell.className = 'amount ecart-cell';
+        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+        const ecartPctSign = ecartPct > 0 ? '+' : '';
+        ecartPctCell.innerHTML = `<span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(2)} %</span>`;
+        companyRow.appendChild(ecartPctCell);
+        
+        tbody.appendChild(companyRow);
         totalsByCompany[company.id] += companyTotal;
       }
-      
-      tbody.appendChild(tr);
     }
     
-    // Construire la ligne de totaux
-    tfoot.innerHTML = '<th>TOTAL</th>';
+    // Ligne de totaux
+    tfoot.innerHTML = '';
+    const totalRow = document.createElement('tr');
+    totalRow.className = 'total-row';
+    
+    const totalLabelCell = document.createElement('th');
+    totalLabelCell.textContent = 'TOTAL';
+    totalRow.appendChild(totalLabelCell);
+    
     const totalMoeCell = document.createElement('th');
     totalMoeCell.className = 'amount';
-    totalMoeCell.textContent = fmtEuro(totalMoe);
-    tfoot.appendChild(totalMoeCell);
+    totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
+    totalRow.appendChild(totalMoeCell);
     
+    totalRow.appendChild(document.createElement('th'));
+    totalRow.appendChild(document.createElement('th'));
+    
+    tfoot.appendChild(totalRow);
+    
+    // Lignes de totaux par entreprise
     for (const company of companies) {
-      const totalCell = document.createElement('th');
-      totalCell.className = 'amount';
+      const companyTotalRow = document.createElement('tr');
+      companyTotalRow.className = 'total-row';
+      
+      companyTotalRow.appendChild(document.createElement('th'));
       
       const companyTotal = totalsByCompany[company.id];
-      let deviationHtml = '';
-      if (totalMoe > 0) {
-        const deviation = ((companyTotal - totalMoe) / totalMoe) * 100;
-        const deviationClass = deviation > 0 ? 'positive' : 'negative';
-        const deviationSign = deviation > 0 ? '+' : '';
-        deviationHtml = `<span class="deviation ${deviationClass}">${deviationSign}${deviation.toFixed(1)}%</span>`;
-      }
+      const companyTotalCell = document.createElement('th');
+      companyTotalCell.className = 'amount';
+      companyTotalCell.innerHTML = `<span class="company-name">${company.name}</span><br>${fmtEuro(companyTotal)}`;
+      companyTotalRow.appendChild(companyTotalCell);
       
-      totalCell.innerHTML = fmtEuro(companyTotal) + deviationHtml;
-      tfoot.appendChild(totalCell);
+      // Écart total en euros
+      const totalEcartEur = companyTotal - totalMoe;
+      const totalEcartEurCell = document.createElement('th');
+      totalEcartEurCell.className = 'amount';
+      const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+      const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
+      totalEcartEurCell.innerHTML = `<span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span>`;
+      companyTotalRow.appendChild(totalEcartEurCell);
+      
+      // Écart total en pourcentage
+      const totalEcartPct = totalMoe > 0 ? ((companyTotal - totalMoe) / totalMoe) * 100 : 0;
+      const totalEcartPctCell = document.createElement('th');
+      totalEcartPctCell.className = 'amount';
+      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
+      totalEcartPctCell.innerHTML = `<span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(2)} %</span>`;
+      companyTotalRow.appendChild(totalEcartPctCell);
+      
+      tfoot.appendChild(companyTotalRow);
     }
     
   } catch (err) {
@@ -493,11 +546,24 @@ async function deleteRound(roundId){
   
   try {
     await api(`/rounds/${roundId}`, { method: 'DELETE' });
+    
+    // Supprimer la carte du DOM
+    const card = qs(`.round-card[data-round-id="${roundId}"]`);
+    if (card) {
+      card.remove();
+    }
+    
+    // Supprimer l'onglet de la sous-navigation
+    const tab = qs(`#rounds-tabs button[data-round-id="${roundId}"]`);
+    if (tab) {
+      tab.remove();
+    }
+    
+    // Si c'était le tour actuel, revenir à la liste
     if (currentRound && currentRound.id === roundId) {
       currentRound = null;
-      hide('#lot-management');
+      activateTab('tab-rounds');
     }
-    await loadRounds();
   } catch (err) {
     alert('Erreur: ' + err.message);
   }
@@ -505,8 +571,11 @@ async function deleteRound(roundId){
 
 async function openLot(id, lotMeta){
   currentLot = { id, ...lotMeta };
-  enableTab('tab-lot', true);
-  activateTab('tab-lot');
+  
+  // Afficher l'onglet lot (il n'est pas dans la nav principale)
+  qsa('.tabpanel').forEach(p => p.classList.add('hidden'));
+  show('#tab-lot');
+  
   activateSubtab('subtab-data'); // Activer le sous-onglet "Données" par défaut
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
   setText('#lot-questions-title', `Fiches Questions - ${lotMeta.name}`);
@@ -1408,12 +1477,23 @@ function bindUI(){
   // Sous-onglets des tours (lots, config, questions)
   qsa('.tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
 
+  // Sous-onglets des lots (données, config, questions)
+  qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));
+
   // Bouton de retour vers projets
   qs('#back-to-projects')?.addEventListener('click', () => {
     currentProject = null;
     currentRound = null;
     enableTab('tab-rounds', false);
     activateTab('tab-projects');
+  });
+
+  // Bouton de retour vers lots
+  qs('#back-to-lots')?.addEventListener('click', () => {
+    if (currentRound) {
+      activateTab('round-content');
+      activateTourTab('tour-lots');
+    }
   });
 
   // projets / lots
