@@ -523,9 +523,22 @@ function attachSheetDelegates(){
         while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
         if (col >= colModel.length) break;
 
-        const val = String(grid[i][j]).trim();
+        let val = String(grid[i][j]).trim();
         const cellTarget = getCell(startR+i, col);
         if (!cellTarget) break;
+        
+        // Nettoyer automatiquement les valeurs numériques (colonnes qty, pu)
+        const colKey = colModel[col]?.key || '';
+        const isNumericCol = colKey.includes('qty') || colKey.includes('pu');
+        
+        if (isNumericCol && val !== '') {
+          const parsed = parseNum(val);
+          // Si la conversion réussit, utiliser le nombre formaté proprement
+          if (Number.isFinite(parsed)) {
+            val = String(parsed);
+          }
+          // Sinon, laisser la valeur telle quelle (sera validée à la sauvegarde)
+        }
         
         const prev = cellTarget.textContent;
 
