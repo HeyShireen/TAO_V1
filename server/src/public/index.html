@@ -51,15 +51,23 @@
           <h1>TAO</h1>
           <nav class="main-nav">
             <button data-tab="tab-projects" class="nav-btn active">📁 Projets</button>
-            <button data-tab="tab-project" class="nav-btn" disabled>📦 Lots</button>
+            <button data-tab="tab-rounds" class="nav-btn" disabled>🔄 Tours</button>
             <button data-tab="tab-settings" class="nav-btn">⚙️ Paramètres</button>
           </nav>
           <button id="logout" class="btn ghost">Déconnexion</button>
         </div>
+        
+        <!-- Sous-navigation pour les tours -->
+        <div id="rounds-subnav" class="subnav hidden">
+          <div class="subnav-header">
+            <button id="back-to-projects" class="btn ghost">← Projets</button>
+            <h3 id="project-title-nav">Projet</h3>
+          </div>
+          <div class="subnav-tabs" id="rounds-tabs">
+            <!-- Les onglets de tours seront ajoutés dynamiquement -->
+          </div>
+        </div>
       </header>
-      
-      <!-- Breadcrumb navigation -->
-      <div id="breadcrumb" class="breadcrumb hidden"></div>
 
       <!-- Onglet Projets -->
       <section id="tab-projects" class="tabpanel">
@@ -85,17 +93,11 @@
         </div>
       </section>
 
-      <!-- Onglet Projet -->
-      <section id="tab-project" class="tabpanel hidden">
-        <!-- Gestion des Tours/Phases -->
+      <!-- Onglet Tours (Gestion des tours) -->
+      <section id="tab-rounds" class="tabpanel hidden">
         <div class="card">
-          <div class="card-header-with-back">
-            <button id="back-to-projects" class="btn ghost">← Projets</button>
-            <h3 id="project-title">Projet</h3>
-          </div>
-          
-          <h4>🔄 Phases / Tours</h4>
-          <p class="muted">Sélectionnez la phase de travail (ouverture, 1er tour, 2ème tour, etc.)</p>
+          <h3>🔄 Gestion des Tours</h3>
+          <p class="muted">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
           
           <div class="rounds-container">
             <div class="rounds-list" id="rounds-list">
@@ -104,13 +106,23 @@
             <button id="add-round" class="btn ghost" style="margin-top:12px">➕ Nouveau tour</button>
           </div>
         </div>
+      </section>
 
-        <!-- Gestion des Lots -->
-        <div class="card">
-          <h4>📦 Lots du tour actuel</h4>
-          <p class="muted" id="current-round-name">Sélectionnez un tour ci-dessus</p>
-          
-          <div id="lot-management" class="hidden">
+      <!-- Sous-onglets pour chaque tour -->
+      <section id="round-content" class="tabpanel hidden">
+        <!-- Sous-navigation pour le tour sélectionné -->
+        <div class="tour-subnav">
+          <button data-tour-tab="tour-lots" class="tour-tab-btn active">📦 Lots</button>
+          <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
+          <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
+        </div>
+
+        <!-- Onglet: Lots du tour -->
+        <div id="tour-lots" class="tour-tabpanel">
+          <div class="card">
+            <h4>📦 Gestion des Lots</h4>
+            <p class="muted" id="current-round-name">Tour actuel</p>
+            
             <div class="grid grid-3 gap">
               <input id="lot-code" placeholder="Code (ex: GO, ELE)"/>
               <input id="lot-name" placeholder="Nom du lot *"/>
@@ -125,6 +137,24 @@
                 </table>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Onglet: Config Questions -->
+        <div id="tour-config" class="tour-tabpanel hidden">
+          <div class="card">
+            <h4>⚙️ Configuration des Questions</h4>
+            <p class="muted">Configurez les seuils et questions pour ce tour</p>
+            <!-- Contenu à ajouter -->
+          </div>
+        </div>
+
+        <!-- Onglet: Fiches Questions -->
+        <div id="tour-questions" class="tour-tabpanel hidden">
+          <div class="card">
+            <h4>📋 Fiches Questions</h4>
+            <p class="muted">Gérez les fiches questions de ce tour</p>
+            <!-- Contenu à ajouter -->
           </div>
         </div>
       </section>

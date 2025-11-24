@@ -103,16 +103,23 @@ function activateTab(id){
   // Mettre à jour la navigation principale
   qsa('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   qsa('.tabpanel').forEach(p => p.id === id ? show('#'+id) : hide('#'+p.id));
+  
+  // Afficher/masquer la sous-navigation des tours
+  if (id === 'tab-rounds' || id === 'round-content') {
+    show('#rounds-subnav');
+  } else {
+    hide('#rounds-subnav');
+  }
 }
 function enableTab(id, enabled=true){
   const btn = qsa('.nav-btn').find(b => b.dataset.tab === id);
   if (btn){ btn.disabled = !enabled; }
 }
 
-/* ================= Sous-onglets (pour les lots) ================= */
-function activateSubtab(id){
-  qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
-  qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+/* ================= Sous-onglets pour les tours ================= */
+function activateTourTab(id){
+  qsa('.tour-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tourTab === id));
+  qsa('.tour-tabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
 }
 
 /* ================= Auth ================= */
@@ -144,30 +151,36 @@ async function openProject(id){
   currentProject = project;
   currentRound = null; // Réinitialiser le tour
   
-  enableTab('tab-project', true); 
-  activateTab('tab-project');
-  setText('#project-title', `Projet #${project.id} — ${project.name}`);
+  enableTab('tab-rounds', true); 
+  activateTab('tab-rounds');
+  setText('#project-title-nav', `Projet #${project.id} — ${project.name}`);
   
   // Charger les tours/phases
   await loadRounds();
   
   // Charger la config des questions
   await loadProjectQuestionConfig();
-  
-  // Cacher la gestion des lots tant qu'aucun tour n'est sélectionné
-  hide('#lot-management');
 }
 
 async function loadRounds(){
   try {
     const rounds = await api(`/rounds/project/${currentProject.id}`);
+    
+    // Charger les cartes dans la gestion des tours
     const container = qs('#rounds-list');
     container.innerHTML = '';
     
+    // Charger les onglets dans la sous-navigation
+    const tabsContainer = qs('#rounds-tabs');
+    tabsContainer.innerHTML = '';
+    
     for (const round of rounds){
       const stats = await api(`/rounds/${round.id}/stats`);
+      
+      // Créer la carte pour la liste des tours
       const card = document.createElement('div');
       card.className = 'round-card';
+      card.dataset.roundId = round.id;
       card.innerHTML = `
         <div class="round-card-header">
           <span class="round-number">${round.round_number}</span>
@@ -191,6 +204,14 @@ async function loadRounds(){
           selectRound(round, card);
         }
       });
+      
+      // Créer l'onglet dans la sous-navigation
+      const tab = document.createElement('button');
+      tab.className = 'round-tab';
+      tab.textContent = round.name;
+      tab.dataset.roundId = round.id;
+      tab.addEventListener('click', () => selectRoundFromTab(round));
+      tabsContainer.appendChild(tab);
       
       const nameEl = card.querySelector('.round-name');
       
@@ -252,19 +273,43 @@ async function loadRounds(){
 async function selectRound(round, cardElement = null){
   currentRound = round;
   
-  // Mettre à jour l'UI
+  // Mettre à jour les cartes actives
   qsa('.round-card').forEach(c => c.classList.remove('active'));
-  
-  // Si cardElement est fourni, l'utiliser, sinon chercher la carte correspondante
-  const activeCard = cardElement || event?.currentTarget;
-  if (activeCard) {
-    activeCard.classList.add('active');
+  if (cardElement) {
+    cardElement.classList.add('active');
+  } else {
+    const card = qs(`.round-card[data-round-id="${round.id}"]`);
+    if (card) card.classList.add('active');
   }
   
-  setText('#current-round-name', `Tour actuel: ${round.name}`);
-  show('#lot-management');
+  // Mettre à jour les onglets de la sous-navigation
+  qsa('#rounds-tabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.roundId === String(round.id));
+  });
+  
+  // Afficher le contenu du tour avec les sous-onglets
+  activateTab('round-content');
+  activateTourTab('tour-lots');
+  setText('#current-round-name', `${round.name}`);
   
   // Charger les lots pour ce tour
+  await loadLotsForRound();
+}
+
+async function selectRoundFromTab(round){
+  currentRound = round;
+  
+  // Mettre à jour les onglets
+  qsa('#rounds-tabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.roundId === String(round.id));
+  });
+  
+  // Afficher le contenu
+  activateTab('round-content');
+  activateTourTab('tour-lots');
+  setText('#current-round-name', `${round.name}`);
+  
+  // Charger les lots
   await loadLotsForRound();
 }
 
@@ -1249,15 +1294,15 @@ function bindUI(){
   // Navigation principale
   qsa('.nav-btn').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
 
-  // Sous-navigation (lots)
-  qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));
+  // Sous-onglets des tours (lots, config, questions)
+  qsa('.tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
 
-  // Boutons de retour navigation
-  qs('#back-to-projects')?.addEventListener('click', () => activateTab('tab-projects'));
-  qs('#back-to-lots')?.addEventListener('click', () => { 
-    if (currentProject) {
-      activateTab('tab-project');
-    }
+  // Bouton de retour vers projets
+  qs('#back-to-projects')?.addEventListener('click', () => {
+    currentProject = null;
+    currentRound = null;
+    enableTab('tab-rounds', false);
+    activateTab('tab-projects');
   });
 
   // projets / lots

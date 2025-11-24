@@ -28,14 +28,24 @@ h1,h2{ margin:0 0 .6rem 0 } .muted{ color:var(--muted) } .hidden{ display:none !
 .nav-btn.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
 .nav-btn:disabled{ opacity:.4; cursor:not-allowed }
 
-/* Sous-navigation (pour les lots) */
-.subnav{ display:flex; align-items:center; gap:12px; padding:12px 16px; background:#0e1218; 
-  border-bottom:1px solid var(--border); margin-bottom:16px }
-.subnav-tabs{ display:flex; gap:8px; flex:1; justify-content:center }
-.subnav-tab{ background:transparent; color:var(--muted); border:none; border-bottom:2px solid transparent; 
-  padding:8px 16px; cursor:pointer; transition:all .2s; font-size:14px }
-.subnav-tab:hover{ color:var(--fg) }
-.subnav-tab.active{ color:var(--accent); border-bottom-color:var(--accent) }
+/* Sous-navigation pour les tours */
+.subnav{ background:#0e1218; border-bottom:1px solid var(--border); padding:12px 16px }
+.subnav-header{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
+.subnav-header h3{ margin:0; flex:1; font-size:16px }
+.subnav-tabs{ display:flex; gap:8px; overflow-x:auto; padding:4px 0 }
+.subnav-tabs button{ background:#151a22; color:var(--muted); border:1px solid var(--border); 
+  border-radius:8px; padding:8px 16px; cursor:pointer; transition:all .2s; font-size:13px; white-space:nowrap }
+.subnav-tabs button:hover{ background:#1a2028; border-color:#35507a; color:var(--fg) }
+.subnav-tabs button.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
+
+/* Sous-onglets pour un tour spécifique */
+.tour-subnav{ display:flex; gap:8px; padding:16px; background:#0e1218; border-bottom:1px solid var(--border) }
+.tour-tab-btn{ background:transparent; color:var(--muted); border:none; border-bottom:2px solid transparent; 
+  padding:10px 20px; cursor:pointer; transition:all .2s; font-size:14px; font-weight:500 }
+.tour-tab-btn:hover{ color:var(--fg) }
+.tour-tab-btn.active{ color:var(--accent); border-bottom-color:var(--accent) }
+.tour-tabpanel{ display:block }
+.tour-tabpanel.hidden{ display:none }
 
 /* Breadcrumb */
 .breadcrumb{ padding:8px 16px; background:#0e1218; font-size:13px; color:var(--muted) }
