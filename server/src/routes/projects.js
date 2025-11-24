@@ -28,7 +28,7 @@ router.post('/', async (req, res) => {
         location ? location.trim() : null, 
         study_phase, 
         study_date, 
-        req.user.id
+        req.user?.id || null
       ]
     );
     res.json(r.rows[0]);

@@ -168,7 +168,7 @@ function defaultSchemaSQL() {
     reference TEXT,
     client TEXT,
     location TEXT,
-    created_by BIGINT REFERENCES public.users(id),
+    created_by BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
