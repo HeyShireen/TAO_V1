@@ -488,7 +488,8 @@ function attachSheetDelegates(){
 
     const text = e.clipboardData.getData('text/plain') || '';
     const delim = detectDelimiter(text);
-    const lines = text.replace(/\r/g,'').split('\n').filter(l => l !== '');
+    // Garder toutes les lignes, même vides, pour préserver l'espacement DPGF
+    const lines = text.replace(/\r/g,'').split('\n');
     if (!lines.length) return;
     const grid = lines.map(l => l.split(delim));
 
