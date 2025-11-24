@@ -99,13 +99,19 @@ async function api(path, opts = {}) {
 
 /* ================= Onglets ================= */
 function activateTab(id){
-  // Mettre à jour les workflow-step et les tabs (ancien système)
-  qsa('.workflow-step, .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  // Mettre à jour la navigation principale
+  qsa('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   qsa('.tabpanel').forEach(p => p.id === id ? show('#'+id) : hide('#'+p.id));
 }
 function enableTab(id, enabled=true){
-  const btn = qsa('.workflow-step, .tab').find(b => b.dataset.tab === id);
+  const btn = qsa('.nav-btn').find(b => b.dataset.tab === id);
   if (btn){ btn.disabled = !enabled; }
+}
+
+/* ================= Sous-onglets (pour les lots) ================= */
+function activateSubtab(id){
+  qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
+  qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
 }
 
 /* ================= Auth ================= */
@@ -157,7 +163,9 @@ async function openLot(id, lotMeta){
   currentLot = { id, ...lotMeta };
   enableTab('tab-lot', true);
   activateTab('tab-lot');
+  activateSubtab('subtab-data'); // Activer le sous-onglet "Données" par défaut
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
+  setText('#lot-questions-title', `Fiches Questions - ${lotMeta.name}`);
 
   // Entreprises du lot
   lotCompanies = await api(`/lots/${id}/companies`);
@@ -1050,14 +1058,19 @@ function bindUI(){
   
   qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
 
-  // tabs et workflow navigation
-  qsa('.tab, .workflow-step').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
+  // Navigation principale
+  qsa('.nav-btn').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
+
+  // Sous-navigation (lots)
+  qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));
 
   // Boutons de retour navigation
   qs('#back-to-projects')?.addEventListener('click', () => activateTab('tab-projects'));
-  qs('#back-to-lots')?.addEventListener('click', () => { if (currentProject) activateTab('tab-project'); });
-  qs('#back-to-lot-from-config')?.addEventListener('click', () => { if (currentLot) activateTab('tab-lot'); });
-  qs('#back-to-config')?.addEventListener('click', () => { if (currentProject) activateTab('tab-project-config'); });
+  qs('#back-to-lots')?.addEventListener('click', () => { 
+    if (currentProject) {
+      activateTab('tab-project');
+    }
+  });
 
   // projets / lots
   qs('#create-project').addEventListener('click', async ()=>{ try{

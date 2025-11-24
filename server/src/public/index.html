@@ -48,58 +48,34 @@
     <section id="dashboard" class="hidden">
       <header class="header">
         <div class="header-top">
-          <h1>TAO — Comparateur d'Offres</h1>
+          <h1>TAO</h1>
+          <nav class="main-nav">
+            <button data-tab="tab-projects" class="nav-btn active">📁 Projets</button>
+            <button data-tab="tab-project" class="nav-btn" disabled>📦 Lots</button>
+            <button data-tab="tab-settings" class="nav-btn">⚙️ Paramètres</button>
+          </nav>
           <button id="logout" class="btn ghost">Déconnexion</button>
         </div>
-        <nav class="workflow-nav">
-          <button data-tab="tab-projects" class="workflow-step active">
-            <span class="step-number">1</span>
-            <span class="step-label">Projets</span>
-          </button>
-          <div class="workflow-arrow">→</div>
-          <button data-tab="tab-project" class="workflow-step" disabled>
-            <span class="step-number">2</span>
-            <span class="step-label">Lots</span>
-          </button>
-          <div class="workflow-arrow">→</div>
-          <button data-tab="tab-lot" class="workflow-step" disabled>
-            <span class="step-number">3</span>
-            <span class="step-label">Saisie & Comparatif</span>
-          </button>
-          <div class="workflow-arrow">→</div>
-          <button data-tab="tab-project-config" class="workflow-step" disabled>
-            <span class="step-number">4</span>
-            <span class="step-label">Config Questions</span>
-          </button>
-          <div class="workflow-arrow">→</div>
-          <button data-tab="tab-lot-questions" class="workflow-step" disabled>
-            <span class="step-number">5</span>
-            <span class="step-label">Fiches Questions</span>
-          </button>
-        </nav>
       </header>
+      
+      <!-- Breadcrumb navigation -->
+      <div id="breadcrumb" class="breadcrumb hidden"></div>
 
       <!-- Onglet Projets -->
       <section id="tab-projects" class="tabpanel">
-        <div class="step-header">
-          <h2>📁 Étape 1 : Gestion des Projets</h2>
-          <p class="step-description">Créez un nouveau projet ou sélectionnez un projet existant pour commencer</p>
-        </div>
-
         <div class="card">
-          <h3>➕ Créer un nouveau projet</h3>
+          <h3>➕ Nouveau projet</h3>
           <div class="grid grid-4 gap">
             <input id="proj-name" placeholder="Nom du projet *" />
             <input id="proj-ref" placeholder="Référence" />
             <input id="proj-client" placeholder="Client" />
             <input id="proj-location" placeholder="Localisation" />
           </div>
-          <div class="row"><button id="create-project" class="btn">Créer le projet</button></div>
+          <div class="row"><button id="create-project" class="btn">Créer</button></div>
         </div>
 
         <div class="card">
-          <h3>📋 Vos projets</h3>
-          <p class="muted">Cliquez sur "Ouvrir" pour accéder aux lots du projet</p>
+          <h3>📋 Liste des projets</h3>
           <div class="table-wrapper">
             <table id="projects-table">
               <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th></tr></thead>
@@ -111,26 +87,20 @@
 
       <!-- Onglet Projet -->
       <section id="tab-project" class="tabpanel hidden">
-        <div class="step-header">
-          <h2>📦 Étape 2 : Gestion des Lots</h2>
-          <p class="step-description">Créez les différents lots (corps d'état) de votre projet</p>
-        </div>
-
         <div class="card">
           <div class="card-header-with-back">
-            <button id="back-to-projects" class="btn ghost">← Retour aux projets</button>
+            <button id="back-to-projects" class="btn ghost">← Projets</button>
             <h3 id="project-title">Projet</h3>
           </div>
           
           <div class="grid grid-3 gap">
-            <input id="lot-code" placeholder="Code lot (ex: GO, ELE, PLB)"/>
-            <input id="lot-name" placeholder="Nom du lot (ex: Gros Œuvre) *"/>
-            <button id="add-lot" class="btn">➕ Ajouter le lot</button>
+            <input id="lot-code" placeholder="Code (ex: GO, ELE)"/>
+            <input id="lot-name" placeholder="Nom du lot *"/>
+            <button id="add-lot" class="btn">➕ Ajouter</button>
           </div>
           
           <div style="margin-top:20px">
-            <h4>📋 Lots du projet</h4>
-            <p class="muted">Cliquez sur "Ouvrir" pour accéder à la saisie des données</p>
+            <h4>📋 Lots</h4>
             <div class="table-wrapper">
               <table id="lots-table">
                 <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
@@ -143,25 +113,29 @@
 
       <!-- Onglet Lot -->
       <section id="tab-lot" class="tabpanel hidden">
-        <div class="step-header">
-          <h2>📊 Étape 3 : Saisie des Données et Comparatif</h2>
-          <p class="step-description">Saisissez les données du MOE et des offres, puis comparez-les</p>
+        <!-- Sous-navigation pour le lot -->
+        <div class="subnav">
+          <button id="back-to-lots" class="btn ghost">← Lots</button>
+          <div class="subnav-tabs">
+            <button data-subtab="subtab-data" class="subnav-tab active">📊 Données</button>
+            <button data-subtab="subtab-config" class="subnav-tab">⚙️ Config Questions</button>
+            <button data-subtab="subtab-questions" class="subnav-tab">📋 Fiches Questions</button>
+          </div>
         </div>
 
-        <div class="card">
-          <div class="lot-header">
-            <div class="card-header-with-back">
-              <button id="back-to-lots" class="btn ghost">← Retour aux lots</button>
+        <!-- Sous-onglet Données -->
+        <div id="subtab-data" class="subtabpanel">
+          <div class="card">
+            <div class="lot-header">
               <h3 id="lot-title">Lot</h3>
+              <div class="row gap">
+                <button id="mode-compare" class="btn ghost active-mode">👁️ Comparatif</button>
+                <button id="mode-edit" class="btn">✏️ Édition</button>
+              </div>
             </div>
-            <div class="row gap">
-              <button id="mode-compare" class="btn ghost active-mode">👁️ Comparatif</button>
-              <button id="mode-edit" class="btn">✏️ Édition (tableur)</button>
-            </div>
-          </div>
 
-          <!-- Actions tableur -->
-          <div id="sheet-actions" class="row gap hidden">
+            <!-- Actions tableur -->
+            <div id="sheet-actions" class="row gap hidden">
             <button id="add-row" class="btn">+ Ligne</button>
             <input id="company-input" placeholder="Nom d’une entreprise"/>
             <button id="add-company" class="btn ghost">+ Entreprise</button>
@@ -187,22 +161,14 @@
               <tbody id="compare-body"></tbody>
             </table>
           </div>
-        </div>
-      </section>
-
-      <!-- Onglet Configuration Questions (Projet) -->
-      <section id="tab-project-config" class="tabpanel hidden">
-        <div class="step-header">
-          <h2>⚙️ Étape 4 : Configuration des Questions</h2>
-          <p class="step-description">Personnalisez les questions qui seront posées automatiquement en cas d'écarts</p>
-        </div>
-
-        <div class="card">
-          <div class="card-header-with-back">
-            <button id="back-to-lot-from-config" class="btn ghost">← Retour au comparatif</button>
-            <h3>Configuration des Questions</h3>
           </div>
-          <p class="muted">Ces questions seront posées aux entreprises selon les écarts détectés par rapport au MOE</p>
+        </div>
+
+        <!-- Sous-onglet Config Questions -->
+        <div id="subtab-config" class="subtabpanel hidden">
+          <div class="card">
+            <h3>⚙️ Configuration des Questions</h3>
+            <p class="muted">Questions automatiques selon les écarts détectés</p>
           
           <div class="field">
             <label><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
@@ -224,22 +190,14 @@
             <textarea id="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:#0e1218;color:var(--fg)"></textarea>
           </div>
           
-          <button id="save-project-questions" class="btn" style="margin-top:16px">💾 Sauvegarder les questions</button>
-        </div>
-      </section>
-
-      <!-- Onglet Fiches Questions (Lot) -->
-      <section id="tab-lot-questions" class="tabpanel hidden">
-        <div class="step-header">
-          <h2>📋 Étape 5 : Fiches Questions</h2>
-          <p class="step-description">Générez et gérez les questions pour les écarts détectés</p>
-        </div>
-
-        <div class="card">
-          <div class="card-header-with-back">
-            <button id="back-to-config" class="btn ghost">← Retour à la config</button>
-            <h3 id="lot-questions-title">Fiches Questions</h3>
+          <button id="save-project-questions" class="btn" style="margin-top:16px">💾 Sauvegarder</button>
           </div>
+        </div>
+
+        <!-- Sous-onglet Fiches Questions -->
+        <div id="subtab-questions" class="subtabpanel hidden">
+          <div class="card">
+            <h3>📋 Fiches Questions</h3>
           
           <!-- Configuration des seuils -->
           <details class="config-details" style="margin-bottom:20px;padding:12px;background:#0e1218;border:1px solid var(--border);border-radius:10px">
@@ -288,6 +246,37 @@
           <!-- Liste des fiches -->
           <div id="questions-list" class="table-wrapper">
             <p class="muted" style="padding:20px;text-align:center">Aucune fiche question générée</p>
+          </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Onglet Paramètres -->
+      <section id="tab-settings" class="tabpanel hidden">
+        <div class="card">
+          <h3>⚙️ Paramètres Généraux</h3>
+          
+          <div class="settings-section">
+            <h4>👤 Compte</h4>
+            <div class="field">
+              <label>Email</label>
+              <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled />
+            </div>
+            <div class="field">
+              <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label>
+              <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" />
+            </div>
+            <div class="field">
+              <label>Confirmer le mot de passe</label>
+              <input id="settings-confirm-password" type="password" placeholder="Confirmer" />
+            </div>
+            <button id="save-settings" class="btn">💾 Sauvegarder</button>
+          </div>
+
+          <div class="settings-section">
+            <h4>ℹ️ À propos</h4>
+            <p class="muted">TAO - Comparateur d'Offres v1.0</p>
+            <p class="muted">© 2025 - Tous droits réservés</p>
           </div>
         </div>
       </section>
