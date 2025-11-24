@@ -351,9 +351,14 @@ function getCell(r, c){
   const rowEl = qsa('#sheet-body tr')[r];
   return rowEl ? rowEl.children[c] : null;
 }
-function setCell(r, c, text){
+function setCell(r, c, text, updateDOM = true){
   const td = getCell(r, c); if (!td) return;
-  td.textContent = text ?? '';
+  
+  // Ne mettre à jour le DOM que si demandé (pas pendant la saisie)
+  if (updateDOM) {
+    td.textContent = text ?? '';
+  }
+  
   // mettre à jour le modèle
   const key = colModel[c].key;
   const row = sheetRows[r] || (sheetRows[r] = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
@@ -436,11 +441,11 @@ function attachSheetDelegates(){
     if (prev !== now) { pushUndo({ r, c, key: colModel[c].key, prev, next: now }); redoStack.length = 0; }
   }, true);
 
-  // input = maj modèle + recalcul
+  // input = maj modèle + recalcul (sans toucher au DOM pour ne pas déplacer le curseur)
   body.addEventListener('input', (e) => {
     const td = e.target.closest('td'); if (!td) return;
     const r = Number(td.dataset.r), c = Number(td.dataset.c);
-    setCell(r, c, td.textContent.trim());
+    setCell(r, c, td.textContent.trim(), false); // false = ne pas modifier le DOM
     recalcRowAmountsRow(r);
   });
 
