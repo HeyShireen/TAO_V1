@@ -505,12 +505,15 @@ function attachSheetDelegates(){
         const val = String(grid[i][j]).trim();
         const prev = getCell(startR+i, col).textContent;
 
-        setCell(startR+i, col, val);
+        setCell(startR+i, col, val, true); // updateDOM = true pour le collage
         if (prev !== val) { pushUndo({ r:startR+i, c:col, key: colModel[col].key, prev, next: val }); redoStack.length = 0; }
         col++;
       }
       recalcRowAmountsRow(startR + i);
     }
+    
+    // Forcer une sauvegarde après collage massif
+    scheduleAutoSave();
   }, true);
 
   delegatesAttached = true;
@@ -525,17 +528,21 @@ function detectDelimiter(sample){
 /* ====== Auto-save ====== */
 let autoSaveTimeout = null;
 let hasUnsavedChanges = false;
+let isSaving = false;
 
 function scheduleAutoSave() {
   hasUnsavedChanges = true;
   updateSaveButton();
   
+  // Annuler la sauvegarde en attente
   clearTimeout(autoSaveTimeout);
+  
+  // Attendre 3 secondes d'inactivité avant de sauvegarder
   autoSaveTimeout = setTimeout(() => {
-    if (hasUnsavedChanges && currentLot) {
+    if (hasUnsavedChanges && currentLot && !isSaving) {
       saveGrid(true); // true = auto-save silencieux
     }
-  }, 2000); // 2 secondes d'inactivité
+  }, 3000); // 3 secondes pour laisser le temps au collage multiple
 }
 
 function updateSaveButton() {
@@ -649,7 +656,14 @@ async function saveGrid(isAutoSave = false){
     rows.push(row);
   }
 
+  // Empêcher les sauvegardes multiples simultanées
+  if (isSaving) {
+    console.log('Sauvegarde déjà en cours, ignore...');
+    return;
+  }
+
   try {
+    isSaving = true;
     await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
 
     // recharger pour récupérer item_id & offres mis à jour proprement
@@ -668,6 +682,8 @@ async function saveGrid(isAutoSave = false){
     if (!isAutoSave) {
       alert('❌ Erreur lors de la sauvegarde: ' + err.message);
     }
+  } finally {
+    isSaving = false;
   }
 }
 
@@ -704,10 +720,32 @@ function renderSheetBindings(){
     qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
   });
 
-  // Ctrl+S → sauvegarder
+  // Raccourcis globaux
   document.addEventListener('keydown', (e) => {
+    // Ctrl+S → sauvegarder
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-      e.preventDefault(); saveGrid();
+      e.preventDefault(); 
+      saveGrid();
+      return;
+    }
+    
+    // Ctrl+Z → undo (global, même hors cellule)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey && currentLot) {
+      // Si on est pas dans une cellule, faire l'undo global
+      if (!e.target.closest('#sheet-body td[contenteditable]')) {
+        e.preventDefault();
+        undo();
+      }
+      return;
+    }
+    
+    // Ctrl+Shift+Z ou Ctrl+Y → redo (global)
+    if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key === 'z') || e.key === 'y') && currentLot) {
+      if (!e.target.closest('#sheet-body td[contenteditable]')) {
+        e.preventDefault();
+        redo();
+      }
+      return;
     }
   });
 }
