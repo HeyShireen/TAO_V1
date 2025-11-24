@@ -297,7 +297,7 @@ router.get('/:roundId/summary', async (req, res) => {
       
       // Récupérer les entreprises qui répondent à ce lot spécifique
       const lotCompaniesResult = await query(
-        `SELECT DISTINCT c.id, c.name 
+        `SELECT c.id, c.name 
          FROM companies c
          JOIN lot_companies lc ON lc.company_id = c.id
          WHERE lc.lot_id = $1
