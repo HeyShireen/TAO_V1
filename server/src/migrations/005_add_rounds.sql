@@ -1,5 +1,26 @@
 -- Migration 005: Ajout du système de phases/tours
 
+-- Vérifier et renommer l'ancienne table rounds si elle existe avec une structure différente
+DO $$ 
+BEGIN
+  -- Si une table rounds existe déjà avec lot_id, on la renomme
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables 
+    WHERE table_name = 'rounds'
+  ) AND EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'rounds' AND column_name = 'lot_id'
+  ) THEN
+    -- Sauvegarder les anciennes données
+    DROP TABLE IF EXISTS rounds_old CASCADE;
+    ALTER TABLE rounds RENAME TO rounds_old;
+    
+    -- Supprimer les tables dépendantes de l'ancien système
+    DROP TABLE IF EXISTS question_sheets CASCADE;
+    DROP TABLE IF EXISTS round_offers CASCADE;
+  END IF;
+END $$;
+
 -- Table des tours/phases d'un projet
 CREATE TABLE IF NOT EXISTS rounds (
   id SERIAL PRIMARY KEY,
