@@ -654,32 +654,24 @@ async function saveGrid(){
   try {
     isSaving = true;
     
-    // Sauvegarde en arrière-plan sans loader (showLoader: false)
-    await api(`/lots/${currentLot.id}/save-grid`, { 
+    // Sauvegarde en arrière-plan sans loader
+    const result = await api(`/lots/${currentLot.id}/save-grid`, { 
       method:'POST', 
       body:{ rows },
       showLoader: false 
     });
 
-    // Recharger les données en arrière-plan pour synchroniser les IDs
-    const raw = await api(`/lots/${currentLot.id}`, { showLoader: false });
-    
-    // Mettre à jour le modèle sans re-render complet (conserve la position de l'utilisateur)
-    const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
-    const offersByItem = new Map();
-    for (const o of raw.offers) {
-      if (!offersByItem.has(o.item_id)) offersByItem.set(o.item_id, new Map());
-      offersByItem.get(o.item_id).set(o.company_id, o);
-    }
-    
-    // Synchroniser les item_id créés
-    for (let i = 0; i < Math.min(raw.items.length, sheetRows.length); i++) {
-      if (sheetRows[i] && raw.items[i]) {
-        sheetRows[i].item_id = raw.items[i].id;
+    // Le serveur retourne les items créés avec leurs IDs
+    // Synchroniser uniquement les item_id sans toucher aux données affichées
+    if (result && result.items && Array.isArray(result.items)) {
+      for (let i = 0; i < Math.min(result.items.length, sheetRows.length); i++) {
+        if (sheetRows[i] && result.items[i] && result.items[i].id) {
+          sheetRows[i].item_id = result.items[i].id;
+        }
       }
     }
     
-    // Rafraîchir le comparatif
+    // Rafraîchir uniquement le comparatif (vue lecture seule)
     await refreshCompare();
     
     hasUnsavedChanges = false;

@@ -369,7 +369,22 @@ router.post('/:id/save-grid', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ ok: true, saved: pos });
+    
+    // Retourner les items avec leurs IDs (anciens + nouveaux)
+    const allItems = [];
+    
+    // Ajouter les items mis à jour
+    for (const item of itemsToUpdate) {
+      allItems.push({ id: item.id, designation: item.designation });
+    }
+    
+    // Ajouter les nouveaux items créés
+    for (const newItem of newItemIds) {
+      const originalRow = rows[newItem.rowIndex];
+      allItems.push({ id: newItem.id, designation: originalRow.designation });
+    }
+    
+    res.json({ ok: true, saved: pos, items: allItems });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Erreur save-grid:', e);
