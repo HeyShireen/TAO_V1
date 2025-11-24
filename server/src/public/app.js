@@ -1514,7 +1514,7 @@ async function saveGrid(){
     // Sauvegarde en arrière-plan sans loader
     const result = await api(`/lots/${currentLot.id}/save-grid`, { 
       method:'POST', 
-      body:{ rows },
+      body:{ rows, round_id: currentRound?.id },
       showLoader: false 
     });
 

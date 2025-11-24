@@ -257,9 +257,11 @@ router.delete('/:id/companies/:companyId', async (req, res) => {
 // Body: { rows: [ { item_id?, num, designation, unit, moe:{qty,pu}, offers:{ [companyId]:{u,qty,pu} } } ] }
 router.post('/:id/save-grid', async (req, res) => {
   const lotId = Number(req.params.id);
-  const { rows } = req.body || {};
+  const { rows, round_id } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] requis' });
-
+  if (!round_id) return res.status(400).json({ error: 'round_id requis' });
+  
+  const roundId = Number(round_id);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -377,11 +379,11 @@ router.post('/:id/save-grid', async (req, res) => {
       for (const offer of offersData) {
         if (!offer.itemId) continue;
         await client.query(`
-          INSERT INTO offers (item_id, company_id, unit, qty, unit_price, amount)
-          VALUES ($1,$2,$3,$4,$5,$6)
-          ON CONFLICT (item_id, company_id) DO UPDATE
+          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT (item_id, company_id, round_id) DO UPDATE
           SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
-        `, [offer.itemId, offer.companyId, offer.u, offer.oq, offer.op, offer.om]);
+        `, [offer.itemId, offer.companyId, roundId, offer.u, offer.oq, offer.op, offer.om]);
       }
     }
 

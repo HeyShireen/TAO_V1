@@ -316,10 +316,12 @@ router.get('/:roundId/summary', async (req, res) => {
            WHERE i.lot_id = $1 AND o.company_id = $2 AND o.round_id = $3`,
           [lot.id, company.id, roundId]
         );
+        const total = parseFloat(offerResult.rows[0].total);
+        console.log(`📊 Lot ${lot.code || lot.name} - ${company.name}: ${total}`);
         companyTotals.push({
           company_id: company.id,
           company_name: company.name,
-          total: parseFloat(offerResult.rows[0].total)
+          total: total
         });
       }
       
