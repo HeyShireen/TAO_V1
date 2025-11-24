@@ -648,10 +648,16 @@ async function saveGrid(){
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
 
-    // Validation PU MOE
-    if (moePu !== '' && isNaN(parseNum(moePu))) {
-      alert(`Erreur: Le PU de la ligne "${designation}" n'est pas un nombre valide.`);
-      return;
+    // Validation et conversion PU MOE
+    if (moePu !== '') {
+      const parsedPu = parseNum(moePu);
+      if (isNaN(parsedPu)) {
+        alert(`Erreur: Le PU MOE de la ligne "${designation || '(vide)'}" n'est pas un nombre valide.\nValeur saisie: "${moePu}"`);
+        // Mettre en évidence la cellule problématique
+        const puCol = colModel.findIndex(x => x.key === 'moe.pu');
+        if (puCol >= 0) focusCell(r, puCol);
+        return;
+      }
     }
 
     // Sauvegarder toutes les lignes, même vides, pour préserver l'espacement DPGF
@@ -665,10 +671,20 @@ async function saveGrid(){
     for (const c of lotCompanies){
       const base = `c.${c.id}.`;
       const offerPu = getByKey(base+'pu');
-      if (offerPu !== '' && isNaN(parseNum(offerPu))) {
-        alert(`Erreur: Le PU de l'offre (entreprise) de la ligne "${designation}" n'est pas un nombre valide.`);
-        return;
+      
+      // Validation et conversion PU offre
+      if (offerPu !== '') {
+        const parsedOfferPu = parseNum(offerPu);
+        if (isNaN(parsedOfferPu)) {
+          const companyName = lotCompanies.find(comp => comp.id === c.id)?.name || 'Entreprise';
+          alert(`Erreur: Le PU de ${companyName} pour la ligne "${designation || '(vide)'}" n'est pas un nombre valide.\nValeur saisie: "${offerPu}"`);
+          // Mettre en évidence la cellule problématique
+          const puCol = colModel.findIndex(x => x.key === base+'pu');
+          if (puCol >= 0) focusCell(r, puCol);
+          return;
+        }
       }
+      
       row.offers[c.id] = {
         u:  getByKey(base+'u'),
         qty:getByKey(base+'qty'),
