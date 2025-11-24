@@ -722,7 +722,8 @@ async function openLot(id, lotMeta){
   lotCompanies = await api(`/lots/${id}/companies`);
 
   // Données pour éditer
-  const raw = await api(`/lots/${id}`); // {items, moe, companies, offers}
+  const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
+  const raw = await api(`/lots/${id}${roundParam}`); // {items, moe, companies, offers}
   buildSheetModel(raw);
 
   // Afficher comparatif par défaut
@@ -944,7 +945,8 @@ function fmtEuro(v){
 
 async function refreshCompare(){
   if (!currentLot) return;
-  const data = await api('/lots/'+currentLot.id+'/table');
+  const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
+  const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
   let h1 = `<tr><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';

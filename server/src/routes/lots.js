@@ -13,8 +13,13 @@ router.use(requireAuth);
 /* ---------- RAW LOT (pour construire le tableur) ---------- */
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
+  const roundId = req.query.round_id ? Number(req.query.round_id) : null;
 
   try {
+    // Construire la condition pour filtrer les offres par round_id
+    const offerCondition = roundId ? 'AND o.round_id = $2' : '';
+    const queryParams = roundId ? [id, roundId] : [id];
+    
     // Une seule requête optimisée avec JOINs
     const result = await query(`
       SELECT 
@@ -38,11 +43,11 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN moe_items m ON m.item_id = i.id
       LEFT JOIN lot_companies lc ON lc.lot_id = l.id
       LEFT JOIN companies c ON c.id = lc.company_id
-      LEFT JOIN offers o ON o.item_id = i.id
+      LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
       WHERE l.id = $1
       GROUP BY l.id, i.id, m.item_id
       ORDER BY i.position NULLS LAST, i.id
-    `, [id]);
+    `, queryParams);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Lot introuvable' });
@@ -118,6 +123,7 @@ router.get('/:id', async (req, res) => {
 /* ---------- TABLE COMPARATIVE (lecture) ---------- */
 router.get('/:id/table', async (req, res) => {
   const id = Number(req.params.id);
+  const roundId = req.query.round_id ? Number(req.query.round_id) : null;
 
   const itemsRes = await query('SELECT * FROM items WHERE lot_id=$1 ORDER BY position NULLS LAST, id', [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
@@ -134,7 +140,10 @@ router.get('/:id/table', async (req, res) => {
   );
   const companies = compsRes.rows;
 
-  const offersRes = itemIds.length
+  // Filtrer les offres par round_id si fourni
+  const offersRes = itemIds.length && roundId
+    ? await query('SELECT * FROM offers WHERE item_id = ANY($1::int[]) AND round_id = $2', [itemIds, roundId])
+    : itemIds.length
     ? await query('SELECT * FROM offers WHERE item_id = ANY($1::int[])', [itemIds])
     : { rows: [] };
 
@@ -262,6 +271,7 @@ router.post('/:id/save-grid', async (req, res) => {
   if (!round_id) return res.status(400).json({ error: 'round_id requis' });
   
   const roundId = Number(round_id);
+  console.log(`💾 Sauvegarde lot ${lotId} pour tour ${roundId}`);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -378,6 +388,7 @@ router.post('/:id/save-grid', async (req, res) => {
     if (offersData.length > 0) {
       for (const offer of offersData) {
         if (!offer.itemId) continue;
+        console.log(`💰 Offre: item=${offer.itemId}, company=${offer.companyId}, round=${roundId}, amount=${offer.om}`);
         await client.query(`
           INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
           VALUES ($1,$2,$3,$4,$5,$6,$7)
