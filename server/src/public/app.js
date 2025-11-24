@@ -134,9 +134,15 @@ async function refreshProjects(){ const list = await api('/projects'); renderPro
 async function openProject(id){
   const { project, lots } = await api('/projects/'+id);
   currentProject = project;
-  enableTab('tab-project', true); enableTab('tab-lot', false);
+  enableTab('tab-project', true); 
+  enableTab('tab-project-config', true);
+  enableTab('tab-lot', false);
+  enableTab('tab-lot-questions', false);
   activateTab('tab-project');
   setText('#project-title', `Projet #${project.id} — ${project.name}`);
+  
+  // Charger la config des questions
+  await loadProjectQuestionConfig();
   const tbody = qs('#lots-table tbody'); tbody.innerHTML='';
   for (const l of lots){
     const tr = document.createElement('tr');
@@ -166,6 +172,176 @@ async function openLot(id, lotMeta){
 
   // Chips entreprises
   renderLotCompanies();
+  
+  // Activer l'onglet Fiches Questions
+  enableTab('tab-lot-questions', true);
+  
+  // Charger les seuils et questions
+  await loadLotThresholds();
+  populateCompanyFilter();
+}
+
+/* ================= Configuration Questions (Projet) ================= */
+async function loadProjectQuestionConfig(){
+  if (!currentProject) return;
+  try {
+    const config = await api(`/question-config/project/${currentProject.id}`);
+    qs('#q-qty-low').value = config.question_qty_low || '';
+    qs('#q-qty-high').value = config.question_qty_high || '';
+    qs('#q-price-low').value = config.question_price_low || '';
+    qs('#q-price-high').value = config.question_price_high || '';
+  } catch (err) {
+    console.error('Erreur chargement config questions:', err);
+  }
+}
+
+async function saveProjectQuestionConfig(){
+  if (!currentProject) return;
+  try {
+    const body = {
+      question_qty_low: qs('#q-qty-low').value.trim(),
+      question_qty_high: qs('#q-qty-high').value.trim(),
+      question_price_low: qs('#q-price-low').value.trim(),
+      question_price_high: qs('#q-price-high').value.trim()
+    };
+    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
+    alert('✅ Configuration sauvegardée');
+  } catch (err) {
+    alert('❌ Erreur: ' + err.message);
+  }
+}
+
+/* ================= Fiches Questions (Lot) ================= */
+async function loadLotThresholds(){
+  if (!currentLot) return;
+  try {
+    const thresholds = await api(`/question-config/lot/${currentLot.id}/thresholds`);
+    qs('#threshold-qty-low').value = thresholds.qty_low_threshold || 10;
+    qs('#threshold-qty-high').value = thresholds.qty_high_threshold || 10;
+    qs('#threshold-price-low').value = thresholds.price_low_threshold || 10;
+    qs('#threshold-price-high').value = thresholds.price_high_threshold || 10;
+  } catch (err) {
+    console.error('Erreur chargement seuils:', err);
+  }
+}
+
+async function saveLotThresholds(){
+  if (!currentLot) return;
+  try {
+    const body = {
+      qty_low_threshold: parseFloat(qs('#threshold-qty-low').value),
+      qty_high_threshold: parseFloat(qs('#threshold-qty-high').value),
+      price_low_threshold: parseFloat(qs('#threshold-price-low').value),
+      price_high_threshold: parseFloat(qs('#threshold-price-high').value)
+    };
+    await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
+    alert('✅ Seuils sauvegardés');
+  } catch (err) {
+    alert('❌ Erreur: ' + err.message);
+  }
+}
+
+async function generateQuestions(){
+  if (!currentLot) return;
+  try {
+    const result = await api(`/question-config/lot/${currentLot.id}/generate`, { method: 'POST' });
+    alert(`✅ ${result.generated} fiche(s) question générée(s)`);
+    await refreshQuestions();
+  } catch (err) {
+    alert('❌ Erreur: ' + err.message);
+  }
+}
+
+function populateCompanyFilter(){
+  const select = qs('#filter-company');
+  select.innerHTML = '<option value="">Toutes les entreprises</option>';
+  for (const c of lotCompanies) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    select.appendChild(opt);
+  }
+}
+
+async function refreshQuestions(){
+  if (!currentLot) return;
+  try {
+    const companyId = qs('#filter-company').value;
+    const status = qs('#filter-status').value;
+    
+    let url = `/question-config/lot/${currentLot.id}?`;
+    if (companyId) url += `company_id=${companyId}&`;
+    if (status) url += `status=${status}`;
+    
+    const questions = await api(url);
+    
+    const listDiv = qs('#questions-list');
+    if (questions.length === 0) {
+      listDiv.innerHTML = '<p class="muted" style="padding:20px;text-align:center">Aucune fiche question trouvée</p>';
+      return;
+    }
+    
+    let html = '<table><thead><tr><th>Entreprise</th><th>Article</th><th>Type</th><th>Question</th><th>Écart</th><th>MOE</th><th>Offre</th><th>Réponse</th><th>Statut</th><th>Actions</th></tr></thead><tbody>';
+    
+    for (const q of questions) {
+      const typeLabel = {
+        'qty_low': '📉 Qté Basse',
+        'qty_high': '📈 Qté Haute',
+        'price_low': '💰 Prix Bas',
+        'price_high': '💸 Prix Haut'
+      }[q.question_type] || q.question_type;
+      
+      const statusBadge = {
+        'pending': '⏳ En attente',
+        'answered': '✅ Répondue',
+        'dismissed': '❌ Ignorée'
+      }[q.status] || q.status;
+      
+      html += `
+        <tr data-qid="${q.id}">
+          <td>${q.company_name}</td>
+          <td>${q.num || ''} - ${q.designation || ''}</td>
+          <td>${typeLabel}</td>
+          <td style="max-width:300px">${q.question_text}</td>
+          <td>${q.deviation_pct != null ? q.deviation_pct.toFixed(1) + '%' : ''}</td>
+          <td>${q.moe_value != null ? fmtNum(q.moe_value) : ''}</td>
+          <td>${q.offer_value != null ? fmtNum(q.offer_value) : ''}</td>
+          <td><textarea data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Réponse...">${q.answer || ''}</textarea></td>
+          <td>${statusBadge}</td>
+          <td>
+            <button class="btn-answer" data-qid="${q.id}" data-status="answered" style="padding:4px 8px;font-size:12px">✓</button>
+            <button class="btn-dismiss" data-qid="${q.id}" data-status="dismissed" style="padding:4px 8px;font-size:12px">✗</button>
+          </td>
+        </tr>
+      `;
+    }
+    
+    html += '</tbody></table>';
+    listDiv.innerHTML = html;
+    
+    // Bind actions
+    qsa('.btn-answer, .btn-dismiss').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const qid = e.target.dataset.qid;
+        const status = e.target.dataset.status;
+        const textarea = qs(`textarea[data-qid="${qid}"]`);
+        const answer = textarea ? textarea.value.trim() : '';
+        
+        try {
+          await api(`/question-config/question/${qid}`, {
+            method: 'PUT',
+            body: { answer, status }
+          });
+          await refreshQuestions();
+        } catch (err) {
+          alert('❌ Erreur: ' + err.message);
+        }
+      });
+    });
+  } catch (err) {
+    console.error('Erreur chargement questions:', err);
+    alert('❌ Erreur: ' + err.message);
+  }
 }
 
 /* ================= Comparatif (lecture) ================= */
@@ -174,6 +350,12 @@ function fmtNum(v){
   if (v == null || v === '') return ''; 
   const n = parseNum(v); 
   return Number.isFinite(n) ? formatNum(n) : ''; 
+}
+function fmtEuro(v){ 
+  if (v == null || v === '') return ''; 
+  const n = parseNum(v); 
+  if (!Number.isFinite(n)) return '';
+  return n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 async function refreshCompare(){
@@ -185,8 +367,8 @@ async function refreshCompare(){
   let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; for (let i=0;i<data.companies.length;i++) h2 += '<th>Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; h2 += '</tr>';
   head.innerHTML = h1 + h2;
   for (const r of data.rows){
-    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td>${fmtNum(r.moe.qty)}</td><td>${fmtNum(r.moe.pu)}</td><td>${fmtNum(r.moe.mt)}</td>`;
-    for (const c of r.companies){ tr += `<td>${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtNum(c.pu)}</td><td>${fmtNum(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`; }
+    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td>${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
+    for (const c of r.companies){ tr += `<td>${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`; }
     tr += '</tr>'; body.insertAdjacentHTML('beforeend', tr);
   }
 }
@@ -865,6 +1047,16 @@ function bindUI(){
     await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}});
     qsa('#lot-code,#lot-name').forEach(i=>i.value=''); await openProject(currentProject.id);
   }catch(e){ alert(e.message);} });
+
+  // Config questions projet
+  qs('#save-project-questions').addEventListener('click', saveProjectQuestionConfig);
+  
+  // Fiches questions lot
+  qs('#save-thresholds').addEventListener('click', saveLotThresholds);
+  qs('#generate-questions').addEventListener('click', generateQuestions);
+  qs('#refresh-questions').addEventListener('click', refreshQuestions);
+  qs('#filter-company').addEventListener('change', refreshQuestions);
+  qs('#filter-status').addEventListener('change', refreshQuestions);
 
   renderSheetBindings();
 }

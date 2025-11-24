@@ -1,0 +1,339 @@
+// server/src/routes/question-config.js
+import express from 'express';
+import { query } from '../db.js';
+import { requireAuth } from '../middleware.auth.js';
+
+const router = express.Router();
+router.use(requireAuth);
+
+// ========== Configuration Projet ==========
+
+// Obtenir la config des questions pour un projet
+router.get('/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    
+    let config = await query(
+      'SELECT * FROM project_question_config WHERE project_id = $1',
+      [projectId]
+    );
+    
+    // Si pas de config, créer avec valeurs par défaut
+    if (config.rowCount === 0) {
+      config = await query(
+        `INSERT INTO project_question_config (project_id) 
+         VALUES ($1) RETURNING *`,
+        [projectId]
+      );
+    }
+    
+    res.json(config.rows[0]);
+  } catch (err) {
+    console.error('Erreur récupération config projet:', err);
+    res.status(500).json({ error: 'Impossible de récupérer la configuration' });
+  }
+});
+
+// Mettre à jour la config des questions pour un projet
+router.put('/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { question_qty_low, question_qty_high, question_price_low, question_price_high } = req.body;
+    
+    const result = await query(
+      `INSERT INTO project_question_config 
+        (project_id, question_qty_low, question_qty_high, question_price_low, question_price_high, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (project_id) 
+       DO UPDATE SET 
+         question_qty_low = EXCLUDED.question_qty_low,
+         question_qty_high = EXCLUDED.question_qty_high,
+         question_price_low = EXCLUDED.question_price_low,
+         question_price_high = EXCLUDED.question_price_high,
+         updated_at = now()
+       RETURNING *`,
+      [projectId, question_qty_low, question_qty_high, question_price_low, question_price_high]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur mise à jour config projet:', err);
+    res.status(500).json({ error: 'Impossible de mettre à jour la configuration' });
+  }
+});
+
+// ========== Configuration Lot (seuils) ==========
+
+// Obtenir les seuils pour un lot
+router.get('/lot/:lotId/thresholds', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    
+    let config = await query(
+      'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
+      [lotId]
+    );
+    
+    // Si pas de config, créer avec valeurs par défaut (10%)
+    if (config.rowCount === 0) {
+      config = await query(
+        `INSERT INTO lot_threshold_config (lot_id) 
+         VALUES ($1) RETURNING *`,
+        [lotId]
+      );
+    }
+    
+    res.json(config.rows[0]);
+  } catch (err) {
+    console.error('Erreur récupération seuils lot:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les seuils' });
+  }
+});
+
+// Mettre à jour les seuils pour un lot
+router.put('/lot/:lotId/thresholds', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const { qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold } = req.body;
+    
+    const result = await query(
+      `INSERT INTO lot_threshold_config 
+        (lot_id, qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (lot_id) 
+       DO UPDATE SET 
+         qty_low_threshold = EXCLUDED.qty_low_threshold,
+         qty_high_threshold = EXCLUDED.qty_high_threshold,
+         price_low_threshold = EXCLUDED.price_low_threshold,
+         price_high_threshold = EXCLUDED.price_high_threshold,
+         updated_at = now()
+       RETURNING *`,
+      [lotId, qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur mise à jour seuils lot:', err);
+    res.status(500).json({ error: 'Impossible de mettre à jour les seuils' });
+  }
+});
+
+// ========== Génération et gestion des fiches questions ==========
+
+// Générer les fiches questions pour un lot
+router.post('/lot/:lotId/generate', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    
+    // 1. Récupérer les seuils du lot
+    const thresholdsRes = await query(
+      'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
+      [lotId]
+    );
+    const thresholds = thresholdsRes.rows[0] || {
+      qty_low_threshold: 10,
+      qty_high_threshold: 10,
+      price_low_threshold: 10,
+      price_high_threshold: 10
+    };
+    
+    // 2. Récupérer les questions du projet
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Lot introuvable' });
+    }
+    const projectId = lotRes.rows[0].project_id;
+    
+    const questionsRes = await query(
+      'SELECT * FROM project_question_config WHERE project_id = $1',
+      [projectId]
+    );
+    const questions = questionsRes.rows[0] || {
+      question_qty_low: 'Pourquoi la quantité est-elle inférieure à la MOE ?',
+      question_qty_high: 'Pourquoi la quantité est-elle supérieure à la MOE ?',
+      question_price_low: 'Pourquoi le prix unitaire est-il inférieur à la MOE ?',
+      question_price_high: 'Pourquoi le prix unitaire est-il supérieur à la MOE ?'
+    };
+    
+    // 3. Récupérer les items, MOE et offres
+    const itemsRes = await query(
+      'SELECT * FROM items WHERE lot_id = $1',
+      [lotId]
+    );
+    const items = itemsRes.rows;
+    
+    const moeRes = await query(
+      'SELECT * FROM moe_items WHERE item_id = ANY($1::int[])',
+      [items.map(i => i.id)]
+    );
+    const moeByItem = new Map(moeRes.rows.map(m => [m.item_id, m]));
+    
+    const offersRes = await query(
+      'SELECT * FROM offers WHERE item_id = ANY($1::int[])',
+      [items.map(i => i.id)]
+    );
+    
+    // 4. Générer les questions
+    const generated = [];
+    for (const offer of offersRes.rows) {
+      const moe = moeByItem.get(offer.item_id);
+      if (!moe) continue;
+      
+      // Vérifier écart quantité
+      if (moe.qty != null && offer.qty != null && moe.qty !== 0) {
+        const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
+        
+        if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
+          // Quantité basse
+          await query(
+            `INSERT INTO generated_questions 
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
+             VALUES ($1, $2, $3, 'qty_low', $4, $5, $6, $7)
+             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             DO UPDATE SET 
+               question_text = EXCLUDED.question_text,
+               moe_value = EXCLUDED.moe_value,
+               offer_value = EXCLUDED.offer_value,
+               deviation_pct = EXCLUDED.deviation_pct`,
+            [lotId, offer.item_id, offer.company_id, questions.question_qty_low, moe.qty, offer.qty, qtyDev]
+          );
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_low' });
+        } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
+          // Quantité haute
+          await query(
+            `INSERT INTO generated_questions 
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
+             VALUES ($1, $2, $3, 'qty_high', $4, $5, $6, $7)
+             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             DO UPDATE SET 
+               question_text = EXCLUDED.question_text,
+               moe_value = EXCLUDED.moe_value,
+               offer_value = EXCLUDED.offer_value,
+               deviation_pct = EXCLUDED.deviation_pct`,
+            [lotId, offer.item_id, offer.company_id, questions.question_qty_high, moe.qty, offer.qty, qtyDev]
+          );
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_high' });
+        }
+      }
+      
+      // Vérifier écart prix
+      if (moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
+        const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
+        
+        if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
+          // Prix bas
+          await query(
+            `INSERT INTO generated_questions 
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
+             VALUES ($1, $2, $3, 'price_low', $4, $5, $6, $7)
+             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             DO UPDATE SET 
+               question_text = EXCLUDED.question_text,
+               moe_value = EXCLUDED.moe_value,
+               offer_value = EXCLUDED.offer_value,
+               deviation_pct = EXCLUDED.deviation_pct`,
+            [lotId, offer.item_id, offer.company_id, questions.question_price_low, moe.unit_price, offer.unit_price, priceDev]
+          );
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_low' });
+        } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
+          // Prix haut
+          await query(
+            `INSERT INTO generated_questions 
+              (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct)
+             VALUES ($1, $2, $3, 'price_high', $4, $5, $6, $7)
+             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             DO UPDATE SET 
+               question_text = EXCLUDED.question_text,
+               moe_value = EXCLUDED.moe_value,
+               offer_value = EXCLUDED.offer_value,
+               deviation_pct = EXCLUDED.deviation_pct`,
+            [lotId, offer.item_id, offer.company_id, questions.question_price_high, moe.unit_price, offer.unit_price, priceDev]
+          );
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_high' });
+        }
+      }
+    }
+    
+    res.json({ generated: generated.length, questions: generated });
+  } catch (err) {
+    console.error('Erreur génération fiches questions:', err);
+    res.status(500).json({ error: 'Impossible de générer les fiches questions' });
+  }
+});
+
+// Liste des fiches questions d'un lot
+router.get('/lot/:lotId', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const { status, company_id } = req.query;
+    
+    let sql = `
+      SELECT gq.*, 
+        i.num, i.designation, i.unit,
+        c.name as company_name
+      FROM generated_questions gq
+      JOIN items i ON i.id = gq.item_id
+      JOIN companies c ON c.id = gq.company_id
+      WHERE gq.lot_id = $1
+    `;
+    
+    const params = [lotId];
+    
+    if (status) {
+      sql += ` AND gq.status = $${params.length + 1}`;
+      params.push(status);
+    }
+    
+    if (company_id) {
+      sql += ` AND gq.company_id = $${params.length + 1}`;
+      params.push(company_id);
+    }
+    
+    sql += ` ORDER BY c.name, i.num, gq.question_type`;
+    
+    const result = await query(sql, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur récupération fiches questions:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les fiches questions' });
+  }
+});
+
+// Mettre à jour une fiche question (réponse, statut)
+router.put('/question/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { answer, status } = req.body;
+    
+    const result = await query(
+      `UPDATE generated_questions 
+       SET answer = $1, status = $2, answered_at = CASE WHEN $2 = 'answered' THEN now() ELSE answered_at END
+       WHERE id = $3
+       RETURNING *`,
+      [answer, status, id]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur mise à jour fiche question:', err);
+    res.status(500).json({ error: 'Impossible de mettre à jour la fiche question' });
+  }
+});
+
+// Supprimer une fiche question
+router.delete('/question/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM generated_questions WHERE id = $1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erreur suppression fiche question:', err);
+    res.status(500).json({ error: 'Impossible de supprimer la fiche question' });
+  }
+});
+
+export default router;
