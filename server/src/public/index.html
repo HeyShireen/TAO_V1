@@ -95,15 +95,48 @@
 
       <!-- Onglet Tours (Gestion des tours) -->
       <section id="tab-rounds" class="tabpanel hidden">
-        <div class="card">
-          <h3>🔄 Gestion des Tours</h3>
-          <p class="muted">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
-          
-          <div class="rounds-container">
-            <div class="rounds-list" id="rounds-list">
-              <!-- Les tours seront ajoutés ici dynamiquement -->
+        <!-- Sous-onglets dans l'inventaire des tours -->
+        <div class="tour-subnav">
+          <button data-rounds-tab="rounds-list-view" class="tour-tab-btn active">🔄 Liste des Tours</button>
+          <button data-rounds-tab="rounds-compare-view" class="tour-tab-btn">📊 Comparaison Tours</button>
+        </div>
+
+        <!-- Vue: Liste des tours -->
+        <div id="rounds-list-view" class="tour-tabpanel">
+          <div class="card">
+            <h3>🔄 Gestion des Tours</h3>
+            <p class="muted">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
+            
+            <div class="rounds-container">
+              <div class="rounds-list" id="rounds-list">
+                <!-- Les tours seront ajoutés ici dynamiquement -->
+              </div>
+              <button id="add-round" class="btn ghost" style="margin-top:12px">➕ Nouveau tour</button>
             </div>
-            <button id="add-round" class="btn ghost" style="margin-top:12px">➕ Nouveau tour</button>
+          </div>
+        </div>
+
+        <!-- Vue: Comparaison Tours -->
+        <div id="rounds-compare-view" class="tour-tabpanel hidden">
+          <div class="card">
+            <h4>📊 Comparaison des Tours</h4>
+            <p class="muted">Évolution des montants entre les différents tours</p>
+            
+            <div style="margin-top:20px">
+              <div class="table-wrapper">
+                <table id="rounds-compare-table" class="summary-table">
+                  <thead>
+                    <!-- Les en-têtes seront ajoutés dynamiquement: Lot | MOE | Tour 1 | Tour 2 | ... -->
+                  </thead>
+                  <tbody>
+                    <!-- Les lignes seront ajoutées dynamiquement -->
+                  </tbody>
+                  <tfoot>
+                    <!-- Les totaux seront ajoutés dynamiquement -->
+                  </tfoot>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -114,7 +147,6 @@
         <div class="tour-subnav">
           <button data-tour-tab="tour-summary" class="tour-tab-btn active">📊 Récapitulatif</button>
           <button data-tour-tab="tour-lots" class="tour-tab-btn">📦 Lots</button>
-          <button data-tour-tab="tour-compare" class="tour-tab-btn">📊 Comparaison Tours</button>
           <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
           <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
         </div>

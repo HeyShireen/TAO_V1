@@ -198,7 +198,7 @@ router.get('/:roundId/stats', async (req, res) => {
     
     try {
       const moeResult = await query(
-        `SELECT COUNT(DISTINCT m.id) as count 
+        `SELECT COUNT(DISTINCT m.item_id) as count 
          FROM moe_items m 
          JOIN items i ON i.id = m.item_id
          JOIN lots l ON l.id = i.lot_id 

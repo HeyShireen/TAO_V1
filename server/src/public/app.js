@@ -110,24 +110,44 @@ function activateTab(id){
   } else {
     hide('#rounds-subnav');
   }
+  
+  // Si on active l'onglet tours, activer par défaut la liste des tours
+  if (id === 'tab-rounds') {
+    activateRoundsTab('rounds-list-view');
+  }
 }
 function enableTab(id, enabled=true){
   const btn = qsa('.nav-btn').find(b => b.dataset.tab === id);
   if (btn){ btn.disabled = !enabled; }
 }
 
-/* ================= Sous-onglets pour les tours ================= */
+/* ================= Sous-onglets dans l'inventaire des tours ================= */
+function activateRoundsTab(id){
+  const btns = qsa('#tab-rounds .tour-tab-btn');
+  const panels = qsa('#tab-rounds .tour-tabpanel');
+  
+  btns.forEach(b => b.classList.toggle('active', b.dataset.roundsTab === id));
+  panels.forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+  
+  // Charger les données selon l'onglet
+  if (id === 'rounds-compare-view') {
+    loadRoundsComparison();
+  }
+}
+
+/* ================= Sous-onglets pour un tour sélectionné ================= */
 function activateTourTab(id){
-  qsa('.tour-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tourTab === id));
-  qsa('.tour-tabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+  const btns = qsa('#round-content .tour-tab-btn');
+  const panels = qsa('#round-content .tour-tabpanel');
+  
+  btns.forEach(b => b.classList.toggle('active', b.dataset.tourTab === id));
+  panels.forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
   
   // Charger les données selon l'onglet
   if (id === 'tour-summary') {
     loadRoundSummary();
   } else if (id === 'tour-lots') {
     loadLotsForRound();
-  } else if (id === 'tour-compare') {
-    loadRoundsComparison();
   }
 }
 
@@ -1624,8 +1644,11 @@ function bindUI(){
   // Navigation principale
   qsa('.nav-btn').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
 
-  // Sous-onglets des tours (lots, config, questions)
-  qsa('.tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
+  // Sous-onglets dans l'inventaire des tours (liste/comparaison)
+  qsa('#tab-rounds .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateRoundsTab(b.dataset.roundsTab)));
+
+  // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
+  qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
 
   // Sous-onglets des lots (données, config, questions)
   qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));
