@@ -26,23 +26,32 @@ function parseNum(v){
   if (v == null || v === '') return NaN;
   if (typeof v === 'number') return v;
   let s = String(v).trim();
-  // enlever espaces (y compris insécables)
-  s = s.replace(/[\u00A0\u202F\s]/g, '');
-  // formats mixtes 1.234,56 / 1,234.56
+  
+  // Supprimer les symboles monétaires (€, $, £, etc.) et autres caractères spéciaux
+  s = s.replace(/[€$£¥₹]/g, '');
+  
+  // Enlever espaces (y compris insécables U+00A0, U+202F, U+2009)
+  s = s.replace(/[\u00A0\u202F\u2009\s]/g, '');
+  
+  // Style (123) => -123
+  if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
+  
+  // Formats mixtes : 1.234,56 (FR) / 1,234.56 (EN)
   const lastComma = s.lastIndexOf(',');
   const lastDot   = s.lastIndexOf('.');
+  
   if (lastComma > -1 || lastDot > -1) {
     const last = Math.max(lastComma, lastDot);
     const decSep = s[last];
-    // supprimer tous les autres séparateurs de milliers
+    // Supprimer tous les autres séparateurs de milliers
     s = s
       .replace(/[.,]/g, (m, idx) => (idx === last ? m : ''))
       .replace(decSep, '.');
   }
-  // style (123) => -123
-  if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
-  // garder chiffres, ., -
+  
+  // Garder uniquement chiffres, point décimal et signe moins
   s = s.replace(/[^0-9.\-]/g,'');
+  
   const n = Number(s);
   return Number.isFinite(n) ? n : NaN;
 }
