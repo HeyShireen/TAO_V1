@@ -512,8 +512,8 @@ function attachSheetDelegates(){
       recalcRowAmountsRow(startR + i);
     }
     
-    // Forcer une sauvegarde après collage massif
-    scheduleAutoSave();
+    // Marquer comme modifié après collage
+    markAsChanged();
   }, true);
 
   delegatesAttached = true;
@@ -525,31 +525,20 @@ function detectDelimiter(sample){
   return sc >= cc ? ';' : ',';
 }
 
-/* ====== Auto-save ====== */
-let autoSaveTimeout = null;
+/* ====== Indicateur changements non sauvegardés ====== */
 let hasUnsavedChanges = false;
 let isSaving = false;
 
-function scheduleAutoSave() {
+function markAsChanged() {
   hasUnsavedChanges = true;
   updateSaveButton();
-  
-  // Annuler la sauvegarde en attente
-  clearTimeout(autoSaveTimeout);
-  
-  // Attendre 3 secondes d'inactivité avant de sauvegarder
-  autoSaveTimeout = setTimeout(() => {
-    if (hasUnsavedChanges && currentLot && !isSaving) {
-      saveGrid(true); // true = auto-save silencieux
-    }
-  }, 3000); // 3 secondes pour laisser le temps au collage multiple
 }
 
 function updateSaveButton() {
   const btn = qs('#save-grid');
   if (!btn) return;
   if (hasUnsavedChanges) {
-    btn.textContent = '● Sauvegarder';
+    btn.textContent = '💾 Sauvegarder';
     btn.classList.add('btn-unsaved');
   } else {
     btn.textContent = '✓ Sauvegardé';
@@ -559,8 +548,8 @@ function updateSaveButton() {
 
 /* ====== Undo/Redo ====== */
 function pushUndo(ch){ 
-  undoStack.push(ch); 
-  scheduleAutoSave(); // Déclencher auto-save
+  undoStack.push(ch);
+  markAsChanged();
 }
 function undo(){
   const ch = undoStack.pop(); if (!ch) return;
@@ -568,7 +557,7 @@ function undo(){
   setCell(ch.r, ch.c, ch.prev);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
   recalcRowAmountsRow(ch.r);
-  scheduleAutoSave();
+  markAsChanged();
 }
 function redo(){
   const ch = redoStack.pop(); if (!ch) return;
@@ -576,7 +565,7 @@ function redo(){
   setCell(ch.r, ch.c, ch.next);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
   recalcRowAmountsRow(ch.r);
-  scheduleAutoSave();
+  markAsChanged();
 }
 
 /* ====== Actions édition ====== */
@@ -618,7 +607,7 @@ function addRow(){
   if (firstEditable >= 0) focusCell(r, firstEditable);
 }
 
-async function saveGrid(isAutoSave = false){
+async function saveGrid(){
   // Reconstituer les rows depuis le DOM + colModel
   const rows = [];
   const totalRows = qsa('#sheet-body tr').length;
@@ -664,24 +653,42 @@ async function saveGrid(isAutoSave = false){
 
   try {
     isSaving = true;
-    await api(`/lots/${currentLot.id}/save-grid`, { method:'POST', body:{ rows } });
+    
+    // Sauvegarde en arrière-plan sans loader (showLoader: false)
+    await api(`/lots/${currentLot.id}/save-grid`, { 
+      method:'POST', 
+      body:{ rows },
+      showLoader: false 
+    });
 
-    // recharger pour récupérer item_id & offres mis à jour proprement
+    // Recharger les données en arrière-plan pour synchroniser les IDs
     const raw = await api(`/lots/${currentLot.id}`, { showLoader: false });
-    buildSheetModel(raw);
+    
+    // Mettre à jour le modèle sans re-render complet (conserve la position de l'utilisateur)
+    const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
+    const offersByItem = new Map();
+    for (const o of raw.offers) {
+      if (!offersByItem.has(o.item_id)) offersByItem.set(o.item_id, new Map());
+      offersByItem.get(o.item_id).set(o.company_id, o);
+    }
+    
+    // Synchroniser les item_id créés
+    for (let i = 0; i < Math.min(raw.items.length, sheetRows.length); i++) {
+      if (sheetRows[i] && raw.items[i]) {
+        sheetRows[i].item_id = raw.items[i].id;
+      }
+    }
+    
+    // Rafraîchir le comparatif
     await refreshCompare();
     
     hasUnsavedChanges = false;
     updateSaveButton();
     
-    if (!isAutoSave) {
-      alert('Sauvegardé ✅');
-    }
+    console.log('✅ Sauvegarde réussie');
   } catch (err) {
-    console.error('Erreur sauvegarde:', err);
-    if (!isAutoSave) {
-      alert('❌ Erreur lors de la sauvegarde: ' + err.message);
-    }
+    console.error('❌ Erreur sauvegarde:', err);
+    alert('❌ Erreur lors de la sauvegarde: ' + err.message);
   } finally {
     isSaving = false;
   }
