@@ -820,11 +820,40 @@ async function refreshCompare(){
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
   let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; for (let i=0;i<data.companies.length;i++) h2 += '<th>Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; h2 += '</tr>';
   head.innerHTML = h1 + h2;
+  
+  // Calculer les totaux
+  let totalMoe = 0;
+  const totalsByCompany = {};
+  data.companies.forEach(c => totalsByCompany[c.id] = 0);
+  
   for (const r of data.rows){
     let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td>${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
-    for (const c of r.companies){ tr += `<td>${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`; }
+    
+    // Accumuler le total MOE
+    if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
+    
+    for (const c of r.companies){ 
+      tr += `<td>${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+      // Accumuler le total par entreprise
+      if (c.mt != null) totalsByCompany[c.company_id] = (totalsByCompany[c.company_id] || 0) + parseNum(c.mt);
+    }
     tr += '</tr>'; body.insertAdjacentHTML('beforeend', tr);
   }
+  
+  // Ajouter la ligne de totaux
+  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+  for (const c of data.companies) {
+    const companyTotal = totalsByCompany[c.id] || 0;
+    totalRow += `<td></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
+  }
+  totalRow += '</tr>';
+  body.insertAdjacentHTML('beforeend', totalRow);
+  
+  // Stocker les totaux dans des variables globales pour le récap
+  window.currentLotTotals = {
+    moe: totalMoe,
+    companies: totalsByCompany
+  };
 }
 
 /* ================= Tableur (édition) ================= */

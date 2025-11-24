@@ -195,13 +195,12 @@ router.post('/lot/:lotId/generate', async (req, res) => {
             `INSERT INTO generated_questions 
               (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
              VALUES ($1, $2, $3, 'qty_low', $4, $5, $6, $7, $8)
-             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             ON CONFLICT (round_id, lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct,
-               round_id = EXCLUDED.round_id`,
+               deviation_pct = EXCLUDED.deviation_pct`,
             [lotId, offer.item_id, offer.company_id, questions.question_qty_low, moe.qty, offer.qty, qtyDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_low' });
@@ -211,13 +210,12 @@ router.post('/lot/:lotId/generate', async (req, res) => {
             `INSERT INTO generated_questions 
               (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
              VALUES ($1, $2, $3, 'qty_high', $4, $5, $6, $7, $8)
-             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             ON CONFLICT (round_id, lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct,
-               round_id = EXCLUDED.round_id`,
+               deviation_pct = EXCLUDED.deviation_pct`,
             [lotId, offer.item_id, offer.company_id, questions.question_qty_high, moe.qty, offer.qty, qtyDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_high' });
@@ -234,13 +232,12 @@ router.post('/lot/:lotId/generate', async (req, res) => {
             `INSERT INTO generated_questions 
               (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
              VALUES ($1, $2, $3, 'price_low', $4, $5, $6, $7, $8)
-             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             ON CONFLICT (round_id, lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct,
-               round_id = EXCLUDED.round_id`,
+               deviation_pct = EXCLUDED.deviation_pct`,
             [lotId, offer.item_id, offer.company_id, questions.question_price_low, moe.unit_price, offer.unit_price, priceDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_low' });
@@ -250,13 +247,12 @@ router.post('/lot/:lotId/generate', async (req, res) => {
             `INSERT INTO generated_questions 
               (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
              VALUES ($1, $2, $3, 'price_high', $4, $5, $6, $7, $8)
-             ON CONFLICT (lot_id, item_id, company_id, question_type) 
+             ON CONFLICT (round_id, lot_id, item_id, company_id, question_type) 
              DO UPDATE SET 
                question_text = EXCLUDED.question_text,
                moe_value = EXCLUDED.moe_value,
                offer_value = EXCLUDED.offer_value,
-               deviation_pct = EXCLUDED.deviation_pct,
-               round_id = EXCLUDED.round_id`,
+               deviation_pct = EXCLUDED.deviation_pct`,
             [lotId, offer.item_id, offer.company_id, questions.question_price_high, moe.unit_price, offer.unit_price, priceDev, roundId]
           );
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_high' });
