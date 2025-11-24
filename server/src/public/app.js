@@ -172,11 +172,12 @@ async function loadRounds(){
         <div class="round-card-header">
           <span class="round-number">${round.round_number}</span>
           <div class="round-actions">
+            <button class="edit-round" title="Modifier">✏️</button>
             <button class="duplicate-round" title="Dupliquer">📋</button>
             <button class="delete-round" title="Supprimer">🗑️</button>
           </div>
         </div>
-        <div class="round-name">${round.name}</div>
+        <div class="round-name" contenteditable="false">${round.name}</div>
         <div class="round-stats">
           <span>${stats.total_items || 0} items</span>
           <span>${stats.companies_count || 0} entreprises</span>
@@ -184,7 +185,54 @@ async function loadRounds(){
         </div>
       `;
       
-      card.addEventListener('click', () => selectRound(round));
+      card.addEventListener('click', (e) => {
+        // Ne pas sélectionner si on clique sur le nom en mode édition
+        if (!e.target.classList.contains('round-name') || e.target.getAttribute('contenteditable') === 'false') {
+          selectRound(round, card);
+        }
+      });
+      
+      const nameEl = card.querySelector('.round-name');
+      
+      card.querySelector('.edit-round').addEventListener('click', (e) => {
+        e.stopPropagation();
+        nameEl.setAttribute('contenteditable', 'true');
+        nameEl.focus();
+        // Sélectionner tout le texte
+        const range = document.createRange();
+        range.selectNodeContents(nameEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+      
+      nameEl.addEventListener('blur', async () => {
+        nameEl.setAttribute('contenteditable', 'false');
+        const newName = nameEl.textContent.trim();
+        if (newName && newName !== round.name) {
+          try {
+            await api(`/rounds/${round.id}`, {
+              method: 'PUT',
+              body: { name: newName, description: round.description, status: round.status }
+            });
+            round.name = newName; // Mettre à jour localement
+          } catch (err) {
+            alert('Erreur: ' + err.message);
+            nameEl.textContent = round.name; // Restaurer l'ancien nom
+          }
+        }
+      });
+      
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          nameEl.blur();
+        } else if (e.key === 'Escape') {
+          nameEl.textContent = round.name;
+          nameEl.blur();
+        }
+      });
+      
       card.querySelector('.duplicate-round').addEventListener('click', (e) => {
         e.stopPropagation();
         duplicateRound(round.id);
@@ -201,12 +249,17 @@ async function loadRounds(){
   }
 }
 
-async function selectRound(round){
+async function selectRound(round, cardElement = null){
   currentRound = round;
   
   // Mettre à jour l'UI
   qsa('.round-card').forEach(c => c.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+  
+  // Si cardElement est fourni, l'utiliser, sinon chercher la carte correspondante
+  const activeCard = cardElement || event?.currentTarget;
+  if (activeCard) {
+    activeCard.classList.add('active');
+  }
   
   setText('#current-round-name', `Tour actuel: ${round.name}`);
   show('#lot-management');
@@ -231,15 +284,29 @@ async function loadLotsForRound(){
 }
 
 async function createRound(){
-  const name = prompt('Nom du nouveau tour (ex: "1er tour", "2ème tour")');
-  if (!name) return;
-  
   try {
-    await api(`/rounds/project/${currentProject.id}`, {
+    // Déterminer le nom automatique
+    const rounds = await api(`/rounds/project/${currentProject.id}`);
+    const nextNumber = rounds.length;
+    const name = nextNumber === 0 ? 'Ouverture des offres' : `${nextNumber}${nextNumber === 1 ? 'er' : 'ème'} tour`;
+    
+    const newRound = await api(`/rounds/project/${currentProject.id}`, {
       method: 'POST',
       body: { name, description: '' }
     });
+    
+    // Recharger la liste des tours
     await loadRounds();
+    
+    // Sélectionner automatiquement le nouveau tour
+    setTimeout(() => {
+      const newCard = Array.from(qsa('.round-card')).find(card => 
+        card.querySelector('.round-name').textContent === name
+      );
+      if (newCard) {
+        selectRound(newRound, newCard);
+      }
+    }, 100);
   } catch (err) {
     alert('Erreur: ' + err.message);
   }
