@@ -1,7 +1,6 @@
 // server/src/routes/rounds.js
 import express from 'express';
-import db from '../db.js';
-const { query, pool } = db;
+import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware.auth.js';
 import { validateRequired, validateNumber, ValidationError } from '../utils.validation.js';
 
