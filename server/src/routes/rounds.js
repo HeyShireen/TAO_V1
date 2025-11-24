@@ -282,16 +282,15 @@ router.get('/:roundId/summary', async (req, res) => {
     );
     const lots = lotsResult.rows;
     
-    // Récupérer toutes les entreprises du projet
+    // Récupérer toutes les entreprises du projet (via lot_companies)
     const companiesResult = await query(
       `SELECT DISTINCT c.id, c.name 
        FROM companies c
-       JOIN offers o ON o.company_id = c.id
-       JOIN items i ON i.id = o.item_id
-       JOIN lots l ON l.id = i.lot_id
-       WHERE l.project_id = $1 AND o.round_id = $2
+       JOIN lot_companies lc ON lc.company_id = c.id
+       JOIN lots l ON l.id = lc.lot_id
+       WHERE l.project_id = $1
        ORDER BY c.name`,
-      [projectId, roundId]
+      [projectId]
     );
     const companies = companiesResult.rows;
     
@@ -337,6 +336,74 @@ router.get('/:roundId/summary', async (req, res) => {
   } catch (err) {
     console.error('Erreur récupération récapitulatif:', err);
     res.status(500).json({ error: 'Impossible de récupérer le récapitulatif' });
+  }
+});
+
+// Comparaison des montants entre tous les tours d'un projet
+router.get('/project/:projectId/compare', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    
+    // Récupérer tous les tours du projet
+    const roundsResult = await query(
+      'SELECT id, name FROM rounds WHERE project_id = $1 ORDER BY created_at',
+      [projectId]
+    );
+    const rounds = roundsResult.rows;
+    
+    if (rounds.length === 0) {
+      return res.json({ lots: [], rounds: [] });
+    }
+    
+    // Récupérer tous les lots du projet
+    const lotsResult = await query(
+      'SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY code, name',
+      [projectId]
+    );
+    const lots = lotsResult.rows;
+    
+    // Calculer les montants pour chaque lot et chaque tour
+    const summary = [];
+    for (const lot of lots) {
+      // Montant MOE du lot
+      const moeResult = await query(
+        `SELECT COALESCE(SUM(m.qty * m.unit_price), 0) as total
+         FROM moe_items m
+         JOIN items i ON i.id = m.item_id
+         WHERE i.lot_id = $1`,
+        [lot.id]
+      );
+      const moeTotal = parseFloat(moeResult.rows[0].total);
+      
+      // Montants par tour pour ce lot (somme de toutes les entreprises)
+      const roundTotals = {};
+      for (const round of rounds) {
+        const roundResult = await query(
+          `SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
+           FROM offers o
+           JOIN items i ON i.id = o.item_id
+           WHERE i.lot_id = $1 AND o.round_id = $2`,
+          [lot.id, round.id]
+        );
+        roundTotals[round.id] = parseFloat(roundResult.rows[0].total);
+      }
+      
+      summary.push({
+        lot_id: lot.id,
+        lot_code: lot.code,
+        lot_name: lot.name,
+        moe_total: moeTotal,
+        round_totals: roundTotals
+      });
+    }
+    
+    res.json({
+      lots: summary,
+      rounds: rounds
+    });
+  } catch (err) {
+    console.error('Erreur comparaison tours:', err);
+    res.status(500).json({ error: 'Impossible de récupérer la comparaison' });
   }
 });
 

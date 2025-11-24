@@ -126,6 +126,8 @@ function activateTourTab(id){
     loadRoundSummary();
   } else if (id === 'tour-lots') {
     loadLotsForRound();
+  } else if (id === 'tour-compare') {
+    loadRoundsComparison();
   }
 }
 
@@ -164,7 +166,7 @@ async function openProject(id){
   currentProject = project;
   currentRound = null; // Réinitialiser le tour
   
-  enableTab('tab-rounds', true); 
+  enableTab('tab-rounds', true);
   activateTab('tab-rounds');
   setText('#project-title-nav', `Projet #${project.id} — ${project.name}`);
   
@@ -497,6 +499,103 @@ async function loadRoundSummary(){
   } catch (err) {
     console.error('Erreur chargement récapitulatif:', err);
     alert('Erreur lors du chargement du récapitulatif: ' + err.message);
+  }
+}
+
+async function loadRoundsComparison(){
+  if (!currentProject) return;
+  
+  try {
+    const data = await api(`/rounds/project/${currentProject.id}/compare`);
+    const { lots, rounds } = data;
+    
+    if (rounds.length === 0) {
+      qs('#rounds-compare-table').innerHTML = '<tbody><tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucun tour disponible</td></tr></tbody>';
+      return;
+    }
+    
+    const table = qs('#rounds-compare-table');
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    const tfoot = table.querySelector('tfoot');
+    
+    // Construire les en-têtes: Lot | MOE | Tour 1 | Tour 2 | ...
+    thead.innerHTML = '';
+    const headerRow = document.createElement('tr');
+    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
+    for (const round of rounds) {
+      const th = document.createElement('th');
+      th.className = 'amount';
+      th.textContent = round.name;
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    
+    // Construire les lignes: une ligne par lot
+    tbody.innerHTML = '';
+    let totalMoe = 0;
+    const totalsByRound = {};
+    rounds.forEach(r => totalsByRound[r.id] = 0);
+    
+    for (const lot of lots) {
+      const row = document.createElement('tr');
+      
+      // Colonne Lot
+      const lotCell = document.createElement('td');
+      lotCell.className = 'lot-name-cell';
+      lotCell.innerHTML = lot.lot_code 
+        ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>` 
+        : `<strong>${lot.lot_name}</strong>`;
+      row.appendChild(lotCell);
+      
+      // Colonne MOE
+      const moeCell = document.createElement('td');
+      moeCell.className = 'amount moe-amount';
+      moeCell.textContent = fmtEuro(lot.moe_total);
+      row.appendChild(moeCell);
+      totalMoe += lot.moe_total;
+      
+      // Colonnes tours
+      for (const round of rounds) {
+        const roundTotal = lot.round_totals[round.id] || 0;
+        const roundCell = document.createElement('td');
+        roundCell.className = 'amount';
+        roundCell.textContent = fmtEuro(roundTotal);
+        row.appendChild(roundCell);
+        totalsByRound[round.id] += roundTotal;
+      }
+      
+      tbody.appendChild(row);
+    }
+    
+    // Ligne de totaux
+    tfoot.innerHTML = '';
+    const totalRow = document.createElement('tr');
+    totalRow.className = 'total-row';
+    
+    const totalLabelCell = document.createElement('th');
+    totalLabelCell.textContent = 'TOTAL';
+    totalRow.appendChild(totalLabelCell);
+    
+    const totalMoeCell = document.createElement('th');
+    totalMoeCell.className = 'amount';
+    totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
+    totalRow.appendChild(totalMoeCell);
+    
+    // Totaux par tour
+    for (const round of rounds) {
+      const roundTotal = totalsByRound[round.id];
+      const roundTotalCell = document.createElement('th');
+      roundTotalCell.className = 'amount';
+      roundTotalCell.innerHTML = `<strong>${fmtEuro(roundTotal)}</strong>`;
+      totalRow.appendChild(roundTotalCell);
+    }
+    
+    tfoot.appendChild(totalRow);
+    
+  } catch (err) {
+    console.error('Erreur chargement comparaison tours:', err);
+    alert('Erreur lors du chargement de la comparaison: ' + err.message);
   }
 }
 
@@ -1404,6 +1503,12 @@ async function saveGrid(){
     // Rafraîchir le récapitulatif du tour si on est dans un lot de ce tour
     if (currentRound) {
       await loadRoundSummary();
+    }
+    
+    // Rafraîchir la comparaison des tours si elle est visible
+    const compareTab = qs('#tour-compare');
+    if (currentProject && compareTab && !compareTab.classList.contains('hidden')) {
+      await loadRoundsComparison();
     }
     
     hasUnsavedChanges = false;
