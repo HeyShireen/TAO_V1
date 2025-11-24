@@ -16,16 +16,31 @@
 
     <!-- ===== LOGIN ===== -->
     <section id="login-view" class="card max-480">
-      <h1>Connexion</h1>
-      <p class="muted">Crée l'admin à la première utilisation.</p>
-      <label class="field"><span>Email</span><input id="email" type="email" placeholder="vous@exemple.fr"/></label>
-      <label class="field"><span>Mot de passe</span><input id="password" type="password" placeholder="••••••••"/></label>
-      <div class="row gap">
-        <button id="login-btn" class="btn">Se connecter</button>
-        <button id="dev-bypass" class="btn warning">🚧 Dev Bypass</button>
-        <button id="bootstrap-admin" class="btn ghost">Créer admin</button>
-        <button id="reset-admin" class="btn warning">Réinitialiser mot de passe admin</button>
+      <h1>TAO — Comparateur d'offres</h1>
+      <p class="muted">Accédez à votre espace de travail</p>
+      
+      <div class="login-options">
+        <button id="direct-access" class="btn btn-primary btn-large">
+          📊 Accès direct
+        </button>
+        
+        <div class="separator">
+          <span>ou</span>
+        </div>
+        
+        <details class="auth-details">
+          <summary>Se connecter avec un compte</summary>
+          <div class="auth-form">
+            <label class="field"><span>Email</span><input id="email" type="email" placeholder="vous@exemple.fr"/></label>
+            <label class="field"><span>Mot de passe</span><input id="password" type="password" placeholder="••••••••"/></label>
+            <div class="row gap">
+              <button id="login-btn" class="btn">Se connecter</button>
+              <button id="bootstrap-admin" class="btn ghost">Créer admin</button>
+            </div>
+          </div>
+        </details>
       </div>
+      
       <p id="login-msg" class="muted"></p>
     </section>
 

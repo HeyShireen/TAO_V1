@@ -64,7 +64,12 @@ function hideLoader() { qs('#global-loader')?.classList.add('hidden'); }
 async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
-  if (token) headers['Authorization'] = 'Bearer ' + token;
+  
+  // Mode accès direct : pas de token requis
+  if (token && token !== 'direct-access-mode') {
+    headers['Authorization'] = 'Bearer ' + token;
+  }
+  
   let body = opts.body;
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
   
@@ -706,29 +711,35 @@ function renderSheetBindings(){
 function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
 
 function bindUI(){
-  // auth
-  qs('#login-btn').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await login(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
-  qs('#dev-bypass').addEventListener('click', async ()=>{ 
-    setText('#login-msg','🚧 Mode développement : connexion automatique...'); 
-    try{ 
-      await login('admin@example.com', 'Admin123!'); 
-      showDashboard(); 
-    } catch(e){ 
-      setText('#login-msg', '❌ Erreur bypass: ' + e.message); 
-    }
+  // Accès direct (sans authentification)
+  qs('#direct-access').addEventListener('click', async ()=> {
+    setText('#login-msg','Connexion...');
+    token = 'direct-access-mode'; // Token factice pour activer l'interface
+    localStorage.setItem('token', token);
+    showDashboard();
   });
-  qs('#bootstrap-admin').addEventListener('click', async ()=>{ setText('#login-msg',''); try{ await registerFirst(qs('#email').value.trim(), qs('#password').value); showDashboard(); }catch(e){ setText('#login-msg', e.message); }});
-  qs('#reset-admin').addEventListener('click', async ()=>{ 
+  
+  // Auth classique
+  qs('#login-btn').addEventListener('click', async ()=>{ 
     setText('#login-msg',''); 
     try{ 
-      const result = await resetAdminPassword();
-      setText('#login-msg', `✅ Nouveau mot de passe pour ${result.email}: ${result.newPassword}`);
-      qs('#email').value = result.email;
-      qs('#password').value = result.newPassword;
+      await login(qs('#email').value.trim(), qs('#password').value); 
+      showDashboard(); 
     } catch(e){ 
-      setText('#login-msg', '❌ ' + e.message);
+      setText('#login-msg', e.message); 
     }
   });
+  
+  qs('#bootstrap-admin').addEventListener('click', async ()=>{ 
+    setText('#login-msg',''); 
+    try{ 
+      await registerFirst(qs('#email').value.trim(), qs('#password').value); 
+      showDashboard(); 
+    } catch(e){ 
+      setText('#login-msg', e.message); 
+    }
+  });
+  
   qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
 
   // tabs

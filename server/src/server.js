@@ -28,18 +28,24 @@ if (!process.env.DATABASE_URL) {
 
 const app = express()
 
-// CORS restreint aux origines autorisées
+// CORS : autoriser same-origin + origines configurées
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : [];
 
 app.use(cors({ 
   origin: (origin, callback) => {
-    // Autoriser les requêtes same-origin (pas d'origin = frontend servi par Express)
+    // 1. Pas d'origin = requête same-origin (curl, mobile, même serveur)
     if (!origin) return callback(null, true);
     
-    // Si aucune origine configurée, accepter tout en développement
-    if (allowedOrigins.length === 0 && process.env.NODE_ENV !== 'production') {
+    // 2. En production sur Render, autoriser l'URL publique même si pas configurée
+    // (le frontend fetch depuis https://xxx.onrender.com vers /api sur le même domaine)
+    if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+      return callback(null, true);
+    }
+    
+    // 3. Développement : vérifier liste ou accepter tout si vide
+    if (allowedOrigins.length === 0) {
       return callback(null, true);
     }
     
