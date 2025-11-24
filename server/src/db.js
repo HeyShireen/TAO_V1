@@ -201,7 +201,7 @@ function defaultSchemaSQL() {
     id BIGSERIAL PRIMARY KEY,
     lot_id BIGINT NOT NULL REFERENCES public.lots(id) ON DELETE CASCADE,
     num TEXT,
-    designation TEXT NOT NULL,
+    designation TEXT,
     unit TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );

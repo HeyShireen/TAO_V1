@@ -273,24 +273,16 @@ router.post('/:id/save-grid', async (req, res) => {
     
     // 1. Séparer items existants vs nouveaux
     for (const r of rows) {
+      pos += 1;
+      
       const designation = (r.designation ?? '').trim();
       const num = r.num ?? null;
       const unit = r.unit ?? null;
-      
-      // Vérifier si la ligne a des données (designation OU données MOE/offres)
-      const hasMoeData = (r.moe?.qty != null && r.moe.qty !== '') || (r.moe?.pu != null && r.moe.pu !== '');
-      const hasOfferData = r.offers && Object.values(r.offers).some(v => 
-        (v?.qty != null && v.qty !== '') || (v?.pu != null && v.pu !== '') || (v?.u != null && v.u !== '')
-      );
-      
-      // Ignorer uniquement les lignes complètement vides
-      if (!designation && !num && !unit && !hasMoeData && !hasOfferData) continue;
-      
-      pos += 1;
       const itemId = r.item_id ? Number(r.item_id) : null;
       
-      // Utiliser une désignation par défaut si vide mais avec données
-      const finalDesignation = designation || '(sans désignation)';
+      // Sauvegarder toutes les lignes pour préserver l'ordre DPGF (même les vides)
+      // Utiliser un espace comme désignation minimale pour les lignes vides
+      const finalDesignation = designation || '';
 
       if (itemId) {
         itemsToUpdate.push({ id: itemId, num, designation: finalDesignation, unit, pos });

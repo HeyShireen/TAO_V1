@@ -624,9 +624,7 @@ async function saveGrid(){
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
 
-    // ignorer lignes totalement vides (pas de désignation)
-    if (!designation) continue;
-
+    // Sauvegarder toutes les lignes, même vides, pour préserver l'espacement DPGF
     const row = {
       item_id: sheetRows[r]?.item_id || null,
       num, designation, unit,
