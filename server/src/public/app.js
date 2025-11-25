@@ -257,27 +257,6 @@ function renderUsersTable(users) {
   }
 }
 
-async function createUser() {
-  const email = qs('#admin-new-email').value.trim();
-  const password = qs('#admin-new-password').value;
-  const role = qs('#admin-new-role').value;
-  
-  if (!email || !password) {
-    return alert('Email et mot de passe requis');
-  }
-  
-  try {
-    await api('/users', { method: 'POST', body: { email, password, role } });
-    qs('#admin-new-email').value = '';
-    qs('#admin-new-password').value = '';
-    qs('#admin-new-role').value = 'visionneur';
-    alert('Utilisateur créé avec succès');
-    loadUsers();
-  } catch (err) {
-    alert('Erreur: ' + err.message);
-  }
-}
-
 async function changeUserRole(userId) {
   const select = document.querySelector(`.user-role-select[data-user-id="${userId}"]`);
   if (!select) return;
@@ -395,6 +374,18 @@ function closeShareModal() {
 /* ================= Projets / Lots ================= */
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
+  
+  // Message si visionneur sans projets
+  if (isVisionneur() && list.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="6" style="text-align:center; padding:2rem; color:var(--muted);">
+      📭 Aucun projet partagé avec vous.<br>
+      <small>Contactez un responsable pour obtenir l'accès à un projet.</small>
+    </td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  
   for (const p of list){
     const tr = document.createElement('tr');
     const shareBtn = canShareProject() ? `<button class="btn ghost btn-sm" onclick="openShareModal(${p.id})">🔗 Partager</button>` : '';
@@ -1998,17 +1989,38 @@ function bindUI(){
   qs('#login-btn').addEventListener('click', async ()=>{ 
     setText('#login-msg',''); 
     try{ 
-      await login(qs('#email').value.trim(), qs('#password').value); 
+      await login(qs('#login-email').value.trim(), qs('#login-password').value); 
       showDashboard(); 
     } catch(e){ 
       setText('#login-msg', e.message); 
     }
   });
   
-  qs('#bootstrap-admin').addEventListener('click', async ()=>{ 
+  // Inscription publique
+  qs('#register-btn').addEventListener('click', async ()=>{ 
     setText('#login-msg',''); 
+    const email = qs('#register-email').value.trim();
+    const password = qs('#register-password').value;
+    const confirm = qs('#register-password-confirm').value;
+    
+    if (!email || !password) {
+      setText('#login-msg', 'Email et mot de passe requis');
+      return;
+    }
+    if (password.length < 8) {
+      setText('#login-msg', 'Le mot de passe doit contenir au moins 8 caractères');
+      return;
+    }
+    if (password !== confirm) {
+      setText('#login-msg', 'Les mots de passe ne correspondent pas');
+      return;
+    }
+    
     try{ 
-      await registerFirst(qs('#email').value.trim(), qs('#password').value); 
+      const data = await api('/auth/register', { method: 'POST', body: { email, password } });
+      token = data.token;
+      localStorage.setItem('token', token);
+      currentUser = data.user;
       showDashboard(); 
     } catch(e){ 
       setText('#login-msg', e.message); 
@@ -2097,7 +2109,6 @@ function bindUI(){
   });
   
   // Gestion des utilisateurs (admin)
-  qs('#admin-create-user')?.addEventListener('click', createUser);
   loadUsers();
   
   // Modal de partage

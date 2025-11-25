@@ -10,31 +10,20 @@ function sign(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
-// Register: allow if no users yet (premier = admin); otherwise admin-only
+// Register: auto-inscription publique (toujours visionneur sauf premier = admin)
 router.post('/register', async (req, res) => {
-  const { email, password, role = 'visionneur' } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+  const { email, password } = req.body;
+  
+  // Validation
+  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
+  if (password.length < 8) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Format d\'email invalide' });
 
   const usersCount = await query('SELECT COUNT(*) FROM users');
   const count = Number(usersCount.rows[0].count);
   
-  // Premier utilisateur devient automatiquement admin
-  let finalRole = role;
-  if (count === 0) {
-    finalRole = 'admin';
-  } else {
-    // Require admin token pour créer d'autres utilisateurs
-    const hdr = req.headers.authorization || '';
-    const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
-    try {
-      const payload = token ? jwt.verify(token, process.env.JWT_SECRET) : null;
-      if (!payload || payload.role !== 'admin') {
-        return res.status(403).json({ error: 'Only admin can create users' });
-      }
-    } catch (e) {
-      return res.status(403).json({ error: 'Only admin can create users' });
-    }
-  }
+  // Premier utilisateur devient automatiquement admin, tous les autres sont visionneurs
+  const finalRole = count === 0 ? 'admin' : 'visionneur';
 
   const password_hash = await hashPassword(password);
   try {
@@ -46,7 +35,7 @@ router.post('/register', async (req, res) => {
     return res.json({ user, token: sign(user) });
   } catch (e) {
     console.error(e);
-    return res.status(400).json({ error: 'User creation failed (email may already exist)' });
+    return res.status(400).json({ error: 'Cet email est déjà utilisé' });
   }
 });
 
