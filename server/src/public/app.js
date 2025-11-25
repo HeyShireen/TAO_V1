@@ -1067,7 +1067,7 @@ async function refreshCompare(){
     if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
     
     for (const c of r.companies){ 
-      tr += `<td>${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+      tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
       // Accumuler le total par entreprise
       if (c.mt != null) totalsByCompany[c.company_id] = (totalsByCompany[c.company_id] || 0) + parseNum(c.mt);
     }
@@ -1078,7 +1078,7 @@ async function refreshCompare(){
   let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
   for (const c of data.companies) {
     const companyTotal = totalsByCompany[c.id] || 0;
-    totalRow += `<td></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
+    totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
