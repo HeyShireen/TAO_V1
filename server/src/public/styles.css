@@ -464,20 +464,20 @@ tbody tr:hover td {
   background: rgba(255,140,66,0.03);
   border-color: rgba(255,140,66,0.2);
 }
+/* Conserver opacité totale pour colonnes figées afin d'éviter le bleed */
 tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2 {
-  background: rgba(255,140,66,0.08);
-  z-index: 7;
+  background: var(--sticky);
 }
 tbody tr:hover .sticky-col::after,
 tbody tr:hover .sticky-col2::after {
-  z-index: 8;
+  z-index: 40;
 }
 thead{ 
   background:var(--sticky); 
   position:sticky; 
   top:0; 
-  z-index:20;
+  z-index:50;
 }
 thead th{ 
   border-bottom:2px solid var(--accent);
@@ -579,15 +579,18 @@ thead th.sticky-col2::after{
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
-  z-index:25;
+  z-index:60;
 }
 thead .sticky-col::after, thead .sticky-col2::after{
-  z-index:26;
+  z-index:61;
 }
 thead .moe-col::after,
 thead .company-col::after{
-  z-index:21;
+  z-index:55;
 }
+/* Multi-lignes header sticky : la seconde ligne est décalée */
+thead tr.head-row-1 th { top:0; }
+thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 .delta-pos{ color:var(--success); font-weight:600 } 
 .delta-neg{ color:var(--danger); font-weight:600 }
 

@@ -1050,12 +1050,18 @@ async function refreshCompare(){
   const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
   const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
-  let h1 = `<tr><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
+  let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
-  let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; 
+  let h2 = `<tr class="head-row-2"><th>Qté</th><th>PU</th><th>Mt</th>`; 
   for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
   h2 += '</tr>';
   head.innerHTML = h1 + h2;
+
+  // Ajuster le décalage sticky de la deuxième ligne
+  const row1 = head.querySelector('tr.head-row-1');
+  const hRow1 = row1 ? row1.offsetHeight : 0;
+  head.style.setProperty('--head-row1-height', hRow1 + 'px');
+  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = hRow1 + 'px'; });
   
   // Calculer les totaux
   let totalMoe = 0;
