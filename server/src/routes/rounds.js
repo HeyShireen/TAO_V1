@@ -380,6 +380,8 @@ router.get('/project/:projectId/compare', async (req, res) => {
       
       // Montants par tour pour ce lot (somme de toutes les entreprises)
       const roundTotals = {};
+      const companiesByRound = {};
+      
       for (const round of rounds) {
         const roundResult = await query(
           `SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
@@ -389,6 +391,29 @@ router.get('/project/:projectId/compare', async (req, res) => {
           [lot.id, round.id]
         );
         roundTotals[round.id] = parseFloat(roundResult.rows[0].total);
+        
+        // Détails par entreprise pour ce tour et ce lot
+        const companiesResult = await query(
+          `SELECT 
+             c.id as company_id,
+             c.name as company_name,
+             COALESCE(SUM(o.qty * o.unit_price), 0) as total
+           FROM lot_companies lc
+           JOIN companies c ON c.id = lc.company_id
+           LEFT JOIN offers o ON o.company_id = c.id AND o.round_id = $2
+           LEFT JOIN items i ON i.id = o.item_id AND i.lot_id = $1
+           WHERE lc.lot_id = $1
+           GROUP BY c.id, c.name
+           HAVING COALESCE(SUM(o.qty * o.unit_price), 0) > 0
+           ORDER BY c.name`,
+          [lot.id, round.id]
+        );
+        
+        companiesByRound[round.id] = companiesResult.rows.map(row => ({
+          company_id: row.company_id,
+          company_name: row.company_name,
+          total: parseFloat(row.total)
+        }));
       }
       
       summary.push({
@@ -396,7 +421,8 @@ router.get('/project/:projectId/compare', async (req, res) => {
         lot_code: lot.code,
         lot_name: lot.name,
         moe_total: moeTotal,
-        round_totals: roundTotals
+        round_totals: roundTotals,
+        companies_by_round: companiesByRound
       });
     }
     

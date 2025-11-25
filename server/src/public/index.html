@@ -122,8 +122,26 @@
             <h4>📊 Comparaison des Tours</h4>
             <p class="muted">Évolution des montants entre les différents tours</p>
             
+            <!-- Sélecteurs de tours pour l'analyse -->
+            <div class="row gap" style="margin-top:16px;margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
+              <label style="font-weight:600">🔍 Analyser l'évolution entre :</label>
+              <div class="field" style="margin:0">
+                <label style="font-size:12px;color:var(--muted)">Tour de référence</label>
+                <select id="compare-round-from" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                  <option value="">Sélectionner un tour...</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0">
+                <label style="font-size:12px;color:var(--muted)">Tour à comparer</label>
+                <select id="compare-round-to" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                  <option value="">Sélectionner un tour...</option>
+                </select>
+              </div>
+              <button id="update-comparison" class="btn" style="align-self:flex-end">🔄 Mettre à jour</button>
+            </div>
+            
             <div style="margin-top:20px">
-              <div class="table-wrapper">
+              <div class="table-wrapper tall">
                 <table id="rounds-compare-table" class="summary-table">
                   <thead>
                     <!-- Les en-têtes seront ajoutés dynamiquement: Lot | MOE | Tour 1 | Tour 2 | ... -->

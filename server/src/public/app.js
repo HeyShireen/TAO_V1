@@ -562,24 +562,57 @@ async function loadRoundsComparison(){
       return;
     }
     
+    // Peupler les sélecteurs de tours
+    const selectFrom = qs('#compare-round-from');
+    const selectTo = qs('#compare-round-to');
+    selectFrom.innerHTML = '<option value="">Sélectionner un tour...</option>';
+    selectTo.innerHTML = '<option value="">Sélectionner un tour...</option>';
+    for (const round of rounds) {
+      selectFrom.innerHTML += `<option value="${round.id}">${round.name}</option>`;
+      selectTo.innerHTML += `<option value="${round.id}">${round.name}</option>`;
+    }
+    
     const table = qs('#rounds-compare-table');
     const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
     const tfoot = table.querySelector('tfoot');
     
-    // Construire les en-têtes: Lot | MOE | Tour 1 | Tour 2 | ...
+    // Récupérer les tours sélectionnés pour l'analyse
+    const roundFromId = selectFrom.value ? parseInt(selectFrom.value) : null;
+    const roundToId = selectTo.value ? parseInt(selectTo.value) : null;
+    const showAnalysis = roundFromId && roundToId && roundFromId !== roundToId;
+    
+    // Construire les en-têtes: Lot | MOE | Tour 1 | Tour 2 | ... | Analyse
     thead.innerHTML = '';
     const headerRow = document.createElement('tr');
-    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th>';
+    headerRow.innerHTML = '<th rowspan="2" class="sticky-col">Lot</th><th rowspan="2" class="amount">MOE (€)</th>';
     for (const round of rounds) {
       const th = document.createElement('th');
       th.className = 'amount';
       th.textContent = round.name;
+      if (!showAnalysis) {
+        th.rowSpan = 2;
+      }
       headerRow.appendChild(th);
+    }
+    if (showAnalysis) {
+      headerRow.innerHTML += '<th colspan="3" class="amount" style="background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)">🔍 Analyse</th>';
     }
     thead.appendChild(headerRow);
     
-    // Construire les lignes: une ligne par lot
+    // Deuxième ligne d'en-tête si analyse active
+    if (showAnalysis) {
+      const headerRow2 = document.createElement('tr');
+      for (const round of rounds) {
+        headerRow2.innerHTML += '<th class="amount" style="font-size:10px;padding:6px">Entreprises</th>';
+      }
+      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);border-left:2px solid var(--accent);font-size:10px">Δ Montant</th>';
+      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);font-size:10px">Δ %</th>';
+      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);font-size:10px">Tendance</th>';
+      thead.appendChild(headerRow2);
+    }
+    
+    // Construire les lignes: une ligne par lot avec détails entreprises
     tbody.innerHTML = '';
     let totalMoe = 0;
     const totalsByRound = {};
@@ -590,7 +623,7 @@ async function loadRoundsComparison(){
       
       // Colonne Lot
       const lotCell = document.createElement('td');
-      lotCell.className = 'lot-name-cell';
+      lotCell.className = 'lot-name-cell sticky-col';
       lotCell.innerHTML = lot.lot_code 
         ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>` 
         : `<strong>${lot.lot_name}</strong>`;
@@ -603,14 +636,63 @@ async function loadRoundsComparison(){
       row.appendChild(moeCell);
       totalMoe += lot.moe_total;
       
-      // Colonnes tours
+      // Colonnes tours avec détails entreprises
       for (const round of rounds) {
         const roundTotal = lot.round_totals[round.id] || 0;
+        const companies = lot.companies_by_round?.[round.id] || [];
+        
         const roundCell = document.createElement('td');
         roundCell.className = 'amount';
-        roundCell.textContent = fmtEuro(roundTotal);
+        
+        if (showAnalysis) {
+          // Afficher les entreprises sous le total
+          let html = `<div style="font-weight:600;margin-bottom:4px">${fmtEuro(roundTotal)}</div>`;
+          if (companies.length > 0) {
+            html += '<div style="font-size:11px;color:var(--muted);line-height:1.4">';
+            companies.forEach(c => {
+              html += `<div>${c.company_name}: ${fmtEuro(c.total)}</div>`;
+            });
+            html += '</div>';
+          }
+          roundCell.innerHTML = html;
+        } else {
+          roundCell.textContent = fmtEuro(roundTotal);
+        }
+        
         row.appendChild(roundCell);
         totalsByRound[round.id] += roundTotal;
+      }
+      
+      // Colonnes d'analyse si deux tours sélectionnés
+      if (showAnalysis) {
+        const fromTotal = lot.round_totals[roundFromId] || 0;
+        const toTotal = lot.round_totals[roundToId] || 0;
+        const delta = toTotal - fromTotal;
+        const deltaPct = fromTotal > 0 ? ((delta / fromTotal) * 100) : 0;
+        
+        // Δ Montant
+        const deltaCell = document.createElement('td');
+        deltaCell.className = 'amount';
+        deltaCell.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600';
+        deltaCell.style.color = delta < 0 ? 'var(--success)' : delta > 0 ? 'var(--danger)' : 'var(--fg)';
+        deltaCell.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
+        row.appendChild(deltaCell);
+        
+        // Δ %
+        const deltaPctCell = document.createElement('td');
+        deltaPctCell.className = 'amount';
+        deltaPctCell.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600';
+        deltaPctCell.style.color = deltaPct < 0 ? 'var(--success)' : deltaPct > 0 ? 'var(--danger)' : 'var(--fg)';
+        deltaPctCell.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
+        row.appendChild(deltaPctCell);
+        
+        // Tendance
+        const trendCell = document.createElement('td');
+        trendCell.className = 'amount';
+        trendCell.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px';
+        trendCell.textContent = delta < 0 ? '↓' : delta > 0 ? '↑' : '↔';
+        trendCell.style.color = delta < 0 ? 'var(--success)' : delta > 0 ? 'var(--danger)' : 'var(--muted)';
+        row.appendChild(trendCell);
       }
       
       tbody.appendChild(row);
@@ -1673,6 +1755,9 @@ function bindUI(){
 
   // Sous-onglets dans l'inventaire des tours (liste/comparaison)
   qsa('#tab-rounds .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateRoundsTab(b.dataset.roundsTab)));
+
+  // Bouton de mise à jour de la comparaison des tours
+  qs('#update-comparison')?.addEventListener('click', () => loadRoundsComparison());
 
   // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
   qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));

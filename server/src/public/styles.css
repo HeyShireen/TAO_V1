@@ -467,7 +467,7 @@ tbody tr:hover td {
 tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2 {
   background: rgba(255,140,66,0.08);
-  z-index: 4;
+  z-index: 6;
 }
 thead{ 
   background:var(--sticky); 
@@ -485,13 +485,29 @@ thead th{
   background:var(--sticky);
   position:sticky;
   top:0;
+  position: relative;
+}
+thead th::after{
+  content:'';
+  position:absolute;
+  top:0;
+  right:0;
+  width:1px;
+  height:100%;
+  background:var(--border);
+  z-index:1;
+}
+thead th.sticky-col::after,
+thead th.sticky-col2::after{
+  width:2px;
+  background:var(--accent);
 }
 .moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent); }
 .company-col{ background:rgba(31,111,235,0.03); }
 .sticky-col{ 
   position:sticky; 
   left:0; 
-  z-index:3; 
+  z-index:5; 
   background:var(--sticky); 
   min-width:120px; 
   width:120px; 
@@ -511,7 +527,7 @@ thead th{
 .sticky-col2{ 
   position:sticky; 
   left:120px; 
-  z-index:3; 
+  z-index:5; 
   background:var(--sticky); 
   min-width:320px; 
   max-width:520px; 
