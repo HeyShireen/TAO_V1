@@ -10,16 +10,20 @@ function sign(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
-// Register: allow if no users yet; otherwise admin-only
+// Register: allow if no users yet (premier = admin); otherwise admin-only
 router.post('/register', async (req, res) => {
-  const { email, password, role = 'user' } = req.body;
+  const { email, password, role = 'visionneur' } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
 
   const usersCount = await query('SELECT COUNT(*) FROM users');
   const count = Number(usersCount.rows[0].count);
-
-  if (count > 0) {
-    // Require admin token
+  
+  // Premier utilisateur devient automatiquement admin
+  let finalRole = role;
+  if (count === 0) {
+    finalRole = 'admin';
+  } else {
+    // Require admin token pour créer d'autres utilisateurs
     const hdr = req.headers.authorization || '';
     const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
     try {
@@ -36,7 +40,7 @@ router.post('/register', async (req, res) => {
   try {
     const result = await query(
       'INSERT INTO users (email, password_hash, role) VALUES ($1,$2,$3) RETURNING id, email, role',
-      [email, password_hash, role]
+      [email, password_hash, finalRole]
     );
     const user = result.rows[0];
     return res.json({ user, token: sign(user) });

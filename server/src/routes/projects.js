@@ -2,13 +2,15 @@ import express from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware.auth.js';
 import { validateRequired, validateMaxLength, ValidationError } from '../utils.validation.js';
+import { isResponsableOrAdmin } from '../middleware.roles.js';
+import { canViewProject, canEditProject, canDeleteProject, getVisibleProjects } from '../utils.permissions.js';
 
 const router = express.Router();
 
 router.use(requireAuth);
 
-// Create project
-router.post('/', async (req, res) => {
+// Create project (responsable ou admin uniquement)
+router.post('/', isResponsableOrAdmin, async (req, res) => {
   try {
     const { name, reference, client, location, study_phase, study_date } = req.body;
     
@@ -19,8 +21,8 @@ router.post('/', async (req, res) => {
     if (location) validateMaxLength(location, 200, 'La localisation');
     
     const r = await query(
-      `INSERT INTO projects (name, reference, client, location, study_phase, study_date, created_by) 
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO projects (name, reference, client, location, study_phase, study_date, created_by, owner_id) 
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [
         name.trim(), 
         reference ? reference.trim() : null, 
@@ -28,6 +30,7 @@ router.post('/', async (req, res) => {
         location ? location.trim() : null, 
         study_phase, 
         study_date, 
+        req.user?.id || null,
         req.user?.id || null
       ]
     );
@@ -39,26 +42,49 @@ router.post('/', async (req, res) => {
   }
 });
 
-// List projects
+// List projects (filtré selon le rôle)
 router.get('/', async (req, res) => {
-  const r = await query('SELECT * FROM projects ORDER BY created_at DESC');
-  res.json(r.rows);
+  try {
+    const projects = await getVisibleProjects(req.user.id, req.user.role);
+    res.json(projects);
+  } catch (err) {
+    console.error('Erreur liste projets:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les projets' });
+  }
 });
 
-// Get a project + lots
+// Get a project + lots (vérification permission)
 router.get('/:id', async (req, res) => {
-  const id = req.params.id;
-  const project = await query('SELECT * FROM projects WHERE id=$1', [id]);
-  if (project.rowCount === 0) return res.status(404).json({ error: 'Not found' });
-  const lots = await query('SELECT * FROM lots WHERE project_id=$1 ORDER BY id', [id]);
-  res.json({ project: project.rows[0], lots: lots.rows });
+  try {
+    const id = req.params.id;
+    
+    // Vérifier que l'utilisateur peut voir ce projet
+    const canView = await canViewProject(req.user.id, id, req.user.role);
+    if (!canView) {
+      return res.status(403).json({ error: 'Accès refusé à ce projet' });
+    }
+    
+    const project = await query('SELECT * FROM projects WHERE id=$1', [id]);
+    if (project.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    const lots = await query('SELECT * FROM lots WHERE project_id=$1 ORDER BY id', [id]);
+    res.json({ project: project.rows[0], lots: lots.rows });
+  } catch (err) {
+    console.error('Erreur récupération projet:', err);
+    res.status(500).json({ error: 'Impossible de récupérer le projet' });
+  }
 });
 
-// Create a lot in a project
-router.post('/:id/lots', async (req, res) => {
+// Create a lot in a project (responsable/admin + vérification permission)
+router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { code, name } = req.body;
+    
+    // Vérifier que l'utilisateur peut éditer ce projet
+    const canEdit = await canEditProject(req.user.id, id, req.user.role);
+    if (!canEdit) {
+      return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce projet' });
+    }
     
     validateRequired(name, 'Le nom du lot');
     validateMaxLength(name, 200, 'Le nom du lot');

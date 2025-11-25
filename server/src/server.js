@@ -13,6 +13,8 @@ import lotRoutes from './routes/lots.js'
 import roundRoutes from './routes/rounds.js'
 import questionRoutes from './routes/questions.js'
 import questionConfigRoutes from './routes/question-config.js'
+import userRoutes from './routes/users.js'
+import shareRoutes from './routes/shares.js'
 
 // Validation des variables d'environnement critiques
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me' || process.env.JWT_SECRET.length < 32) {
@@ -78,6 +80,8 @@ app.use('/api/auth', authRoutes)
 app.use('/api/projects', projectRoutes)
 app.use('/api/lots', lotRoutes)
 app.use('/api/rounds', roundRoutes)
+app.use('/api/users', userRoutes)
+app.use('/api/shares', shareRoutes)
 app.use('/api/questions', questionRoutes)
 app.use('/api/question-config', questionConfigRoutes)
 

@@ -377,6 +377,44 @@
 
       <!-- Onglet Paramètres -->
       <section id="tab-settings" class="tabpanel hidden">
+        
+        <!-- Section Admin (visible uniquement pour les admins) -->
+        <div id="admin-section" class="card hidden">
+          <h3>👥 Gestion des Utilisateurs (Admin)</h3>
+          
+          <div class="settings-section">
+            <h4>➕ Créer un utilisateur</h4>
+            <div class="grid grid-3 gap">
+              <input id="admin-new-email" type="email" placeholder="Email *" />
+              <input id="admin-new-password" type="password" placeholder="Mot de passe *" />
+              <select id="admin-new-role">
+                <option value="visionneur">Visionneur</option>
+                <option value="responsable">Responsable</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button id="admin-create-user" class="btn">Créer l'utilisateur</button>
+          </div>
+          
+          <div class="settings-section">
+            <h4>📋 Liste des utilisateurs</h4>
+            <div class="table-wrapper">
+              <table id="users-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Rôle</th>
+                    <th>Créé le</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
         <div class="card">
           <h3>⚙️ Paramètres Généraux</h3>
           

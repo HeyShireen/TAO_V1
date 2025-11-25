@@ -5,6 +5,7 @@ const API_BASE = API_ROOT + '/api';
 
 /* ====== Auth ================= */
 let token = localStorage.getItem('token') || null;
+let currentUser = null;     // {id, email, role}
 let currentProject = null;
 let currentRound = null;    // Tour/phase actuel
 let currentLot = null;
@@ -172,15 +173,136 @@ function activateSubtab(id){
 }
 
 /* ================= Auth ================= */
+function parseJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
+function updateCurrentUser() {
+  if (token) {
+    const payload = parseJwt(token);
+    if (payload) {
+      currentUser = { id: payload.id, email: payload.email, role: payload.role || 'visionneur' };
+    }
+  }
+}
+
 async function login(email, password){
   const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
-  token = j.token; localStorage.setItem('token', token); return j.user;
+  token = j.token; localStorage.setItem('token', token); 
+  updateCurrentUser();
+  return j.user;
 }
 async function registerFirst(email, password){
   const r = await fetch(API_BASE + '/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password, role:'admin' })});
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Création admin impossible');
-  token = j.token; localStorage.setItem('token', token); return j.user;
+  token = j.token; localStorage.setItem('token', token); 
+  updateCurrentUser();
+  return j.user;
+}
+
+/* ================= Permissions helpers ================= */
+function isAdmin() { return currentUser && currentUser.role === 'admin'; }
+function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
+function isVisionneur() { return currentUser && currentUser.role === 'visionneur'; }
+function canCreateProject() { return isAdmin() || isResponsable(); }
+function canEditProject() { return isAdmin() || isResponsable(); }
+function canShareProject() { return isAdmin() || isResponsable(); }
+
+/* ================= Admin - Gestion des utilisateurs ================= */
+async function loadUsers() {
+  if (!isAdmin()) return;
+  try {
+    const users = await api('/users');
+    renderUsersTable(users);
+  } catch (err) {
+    console.error('Erreur chargement users:', err);
+  }
+}
+
+function renderUsersTable(users) {
+  const tbody = qs('#users-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  
+  for (const user of users) {
+    const tr = document.createElement('tr');
+    const roleOptions = ['visionneur', 'responsable', 'admin'];
+    const roleSelect = roleOptions.map(r => 
+      `<option value="${r}" ${r === user.role ? 'selected' : ''}>${r.charAt(0).toUpperCase() + r.slice(1)}</option>`
+    ).join('');
+    
+    tr.innerHTML = `
+      <td>${user.id}</td>
+      <td>${user.email}</td>
+      <td>
+        <select class="user-role-select" data-user-id="${user.id}">
+          ${roleSelect}
+        </select>
+      </td>
+      <td>${new Date(user.created_at).toLocaleDateString()}</td>
+      <td>
+        <button class="btn ghost btn-sm" onclick="changeUserRole(${user.id})">Modifier</button>
+        <button class="btn ghost btn-sm" onclick="deleteUser(${user.id})">Supprimer</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function createUser() {
+  const email = qs('#admin-new-email').value.trim();
+  const password = qs('#admin-new-password').value;
+  const role = qs('#admin-new-role').value;
+  
+  if (!email || !password) {
+    return alert('Email et mot de passe requis');
+  }
+  
+  try {
+    await api('/users', { method: 'POST', body: { email, password, role } });
+    qs('#admin-new-email').value = '';
+    qs('#admin-new-password').value = '';
+    qs('#admin-new-role').value = 'visionneur';
+    alert('Utilisateur créé avec succès');
+    loadUsers();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+async function changeUserRole(userId) {
+  const select = document.querySelector(`.user-role-select[data-user-id="${userId}"]`);
+  if (!select) return;
+  
+  const newRole = select.value;
+  
+  try {
+    await api(`/users/${userId}/role`, { method: 'PATCH', body: { role: newRole } });
+    alert('Rôle modifié avec succès');
+    loadUsers();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+async function deleteUser(userId) {
+  if (!confirm('Êtes-vous sûr de vouloir supprimer cet utilisateur ?')) return;
+  
+  try {
+    await api(`/users/${userId}`, { method: 'DELETE' });
+    alert('Utilisateur supprimé');
+    loadUsers();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
 }
 
 /* ================= Projets / Lots ================= */
@@ -1746,14 +1868,41 @@ function renderSheetBindings(){
 }
 
 /* ================== INIT ================== */
-function showDashboard(){ hide('#login-view'); show('#dashboard'); activateTab('tab-projects'); refreshProjects(); }
+function showDashboard(){ 
+  hide('#login-view'); 
+  show('#dashboard'); 
+  updateUIForRole();
+  activateTab('tab-projects'); 
+  refreshProjects(); 
+}
+
+function updateUIForRole() {
+  // Masquer/afficher sections selon le rôle
+  if (isAdmin()) {
+    show('#admin-section');
+  } else {
+    hide('#admin-section');
+  }
+  
+  // Désactiver boutons selon le rôle
+  const createProjectBtn = qs('#create-project-btn');
+  if (createProjectBtn) {
+    if (canCreateProject()) {
+      createProjectBtn.disabled = false;
+    } else {
+      createProjectBtn.disabled = true;
+      createProjectBtn.title = 'Réservé aux responsables et admins';
+    }
+  }
+}
 
 function bindUI(){
   // Accès direct (sans authentification)
-  qs('#direct-access').addEventListener('click', async ()=> {
+  qs('#direct-access')?.addEventListener('click', async ()=> {
     setText('#login-msg','Connexion...');
     token = 'direct-access-mode'; // Token factice pour activer l'interface
     localStorage.setItem('token', token);
+    currentUser = { id: 1, email: 'demo@example.com', role: 'admin' };
     showDashboard();
   });
   
@@ -1778,7 +1927,11 @@ function bindUI(){
     }
   });
   
-  qs('#logout').addEventListener('click', ()=>{ localStorage.removeItem('token'); location.reload(); });
+  qs('#logout').addEventListener('click', ()=>{ 
+    localStorage.removeItem('token'); 
+    currentUser = null;
+    location.reload(); 
+  });
 
   // Navigation principale
   qsa('.nav-btn').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
@@ -1854,6 +2007,10 @@ function bindUI(){
       setTheme(theme);
     });
   });
+  
+  // Gestion des utilisateurs (admin)
+  qs('#admin-create-user')?.addEventListener('click', createUser);
+  loadUsers();
 }
 
 /* ================== THEME ================== */
@@ -1872,4 +2029,8 @@ function setTheme(theme) {
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => { bindUI(); if (token) showDashboard(); });
+document.addEventListener('DOMContentLoaded', () => { 
+  updateCurrentUser(); // Charger le rôle depuis le token au démarrage
+  bindUI(); 
+  if (token) showDashboard(); 
+});
