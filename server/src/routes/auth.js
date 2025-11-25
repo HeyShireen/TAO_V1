@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { query } from '../db.js';
 import { hashPassword, comparePassword } from '../utils.hash.js';
 import { sendVerificationEmail } from '../utils.email.js';
+import { emailRateLimiter, resetEmailAttempts } from '../middleware.security.js';
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ function sign(user) {
 }
 
 // Register: auto-inscription publique (toujours visionneur sauf premier = admin)
-router.post('/register', async (req, res) => {
+router.post('/register', emailRateLimiter, async (req, res) => {
   const { email, password } = req.body;
   
   // Validation
@@ -67,7 +68,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', emailRateLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   const r = await query('SELECT * FROM users WHERE email=$1', [email]);
@@ -83,6 +84,9 @@ router.post('/login', async (req, res) => {
       emailNotVerified: true
     });
   }
+  
+  // Login réussi: réinitialiser les tentatives
+  resetEmailAttempts(email);
   
   const token = sign(user);
   return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });

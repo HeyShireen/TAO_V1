@@ -80,7 +80,15 @@
 
       <!-- Onglet Projets -->
       <section id="tab-projects" class="tabpanel">
-        <div class="card">
+        <!-- Bouton demande d'accès (visionneur uniquement) -->
+        <div id="request-access-section" class="card hidden">
+          <h3>🔓 Demander l'accès à un projet</h3>
+          <p class="muted">Vous n'avez accès à aucun projet. Contactez un responsable ou faites une demande ci-dessous.</p>
+          <button id="open-access-request-modal" class="btn btn-primary">📩 Demander l'accès</button>
+        </div>
+
+        <!-- Création de projet (responsable/admin uniquement) -->
+        <div id="create-project-section" class="card hidden">
           <h3>➕ Nouveau projet</h3>
           <div class="grid grid-4 gap">
             <input id="proj-name" placeholder="Nom du projet *" />
@@ -91,7 +99,7 @@
           <div class="row"><button id="create-project" class="btn">Créer</button></div>
         </div>
 
-        <div class="card">
+        <div id="projects-table-container" class="card">
           <h3>📋 Liste des projets</h3>
           <div class="table-wrapper">
             <table id="projects-table">
@@ -128,6 +136,38 @@
               
               <h4>Partages existants</h4>
               <div id="existing-shares"></div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Modal de demande d'accès (visionneur) -->
+        <div id="access-request-modal" class="modal hidden">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>📩 Demander l'accès à un projet</h3>
+              <button id="close-access-request-modal" class="btn ghost">✕</button>
+            </div>
+            <div class="modal-body">
+              <p class="muted">Sélectionnez le projet auquel vous souhaitez accéder. Un responsable examinera votre demande.</p>
+              
+              <div class="field">
+                <label>Projet</label>
+                <select id="access-request-project-select">
+                  <option value="">-- Sélectionner un projet --</option>
+                </select>
+              </div>
+              
+              <div class="field">
+                <label>Message (optionnel)</label>
+                <textarea id="access-request-message" rows="4" placeholder="Expliquez pourquoi vous avez besoin d'accéder à ce projet..."></textarea>
+              </div>
+              
+              <button id="submit-access-request-btn" class="btn btn-primary">Envoyer la demande</button>
+              
+              <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
+              
+              <h4>Mes demandes en cours</h4>
+              <div id="my-access-requests"></div>
             </div>
           </div>
         </div>
@@ -417,6 +457,38 @@
 
       <!-- Onglet Paramètres -->
       <section id="tab-settings" class="tabpanel hidden">
+        
+        <!-- Section Demandes d'accès (responsable/admin) -->
+        <div id="access-requests-section" class="card hidden">
+          <h3>📩 Demandes d'accès aux projets</h3>
+          <p class="muted">Gérez les demandes d'accès soumises par les visionneurs.</p>
+          
+          <div class="field" style="margin-bottom: 1rem;">
+            <label>Filtrer par statut :</label>
+            <select id="filter-access-requests-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);">
+              <option value="">Toutes</option>
+              <option value="pending" selected>En attente</option>
+              <option value="approved">Approuvées</option>
+              <option value="rejected">Rejetées</option>
+            </select>
+          </div>
+          
+          <div class="table-wrapper">
+            <table id="access-requests-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Utilisateur</th>
+                  <th>Projet</th>
+                  <th>Message</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
         
         <!-- Section Admin (visible uniquement pour les admins) -->
         <div id="admin-section" class="card hidden">

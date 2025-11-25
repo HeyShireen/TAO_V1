@@ -3,10 +3,13 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { query, ensureSchema } from './db.js'
+import { sanitizeInput } from './middleware.security.js'
 import authRoutes from './routes/auth.js'
 import projectRoutes from './routes/projects.js'
 import lotRoutes from './routes/lots.js'
@@ -66,6 +69,52 @@ app.use(express.json({ limit: '10mb' }))
 app.use(morgan('dev'))
 app.disable('x-powered-by')
 
+// Sécurité: Headers HTTP avec Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline pour app.js inline
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+    },
+  },
+  hsts: {
+    maxAge: 31536000, // 1 an
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: { action: 'deny' }, // Anti-clickjacking
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}))
+
+// Rate Limiting Global: 100 requêtes / 15 min par IP
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limite par IP
+  message: { error: 'Trop de requêtes, réessayez dans 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false,
+})
+
+// Rate Limiting Auth: 5 tentatives / 15 min (login/register)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' },
+  skipSuccessfulRequests: true, // Ne compte que les échecs
+})
+
+// Appliquer le rate limiter global sur toutes les routes API
+app.use('/api/', globalLimiter)
+
+// Sanitizer global: nettoyer les inputs
+app.use(sanitizeInput)
+
 // API
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
 app.get('/api/healthz', async (_req, res) => {
@@ -77,7 +126,7 @@ app.get('/api/healthz', async (_req, res) => {
     res.status(500).json({ ok: false })
   }
 })
-app.use('/api/auth', authRoutes)
+app.use('/api/auth', authLimiter, authRoutes)
 app.use('/api/projects', projectRoutes)
 app.use('/api/lots', lotRoutes)
 app.use('/api/rounds', roundRoutes)

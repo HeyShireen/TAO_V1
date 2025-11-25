@@ -371,19 +371,178 @@ function closeShareModal() {
   currentShareProjectId = null;
 }
 
+/* ================= Demandes d'accès ================= */
+
+// Ouvrir la modal de demande d'accès
+async function openAccessRequestModal() {
+  try {
+    // Charger tous les projets disponibles
+    const projects = await api('/projects');
+    const select = qs('#access-request-project-select');
+    select.innerHTML = '<option value="">-- Sélectionner un projet --</option>';
+    
+    for (const proj of projects) {
+      const option = document.createElement('option');
+      option.value = proj.id;
+      option.textContent = `${proj.name}${proj.reference ? ' (' + proj.reference + ')' : ''}`;
+      select.appendChild(option);
+    }
+    
+    // Charger mes demandes en cours
+    await loadMyAccessRequests();
+    
+    show('#access-request-modal');
+  } catch (err) {
+    alert('Erreur lors du chargement des projets: ' + err.message);
+  }
+}
+
+// Charger mes demandes d'accès
+async function loadMyAccessRequests() {
+  try {
+    const requests = await api('/access-requests/my-requests');
+    const container = qs('#my-access-requests');
+    
+    if (requests.length === 0) {
+      container.innerHTML = '<p class="muted">Aucune demande en cours</p>';
+      return;
+    }
+    
+    container.innerHTML = requests.map(r => {
+      const statusBadge = r.status === 'pending' ? '🕐 En attente' 
+        : r.status === 'approved' ? '✅ Approuvée' 
+        : '❌ Rejetée';
+      
+      return `
+        <div class="share-item" style="margin-bottom: 10px; padding: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 5px;">
+          <strong>${r.project_name}</strong>
+          <span style="margin-left: 10px; font-size: 0.9em;">${statusBadge}</span>
+          <div style="font-size: 0.85em; color: var(--muted); margin-top: 5px;">
+            Demandé le ${new Date(r.created_at).toLocaleDateString()}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Erreur chargement demandes:', err);
+  }
+}
+
+// Soumettre une demande d'accès
+async function submitAccessRequest() {
+  const projectId = qs('#access-request-project-select').value;
+  const message = qs('#access-request-message').value.trim();
+  
+  if (!projectId) {
+    return alert('Veuillez sélectionner un projet');
+  }
+  
+  try {
+    await api('/access-requests', {
+      method: 'POST',
+      body: { projectId: parseInt(projectId), message }
+    });
+    
+    alert('✅ Demande envoyée ! Un responsable examinera votre demande.');
+    qs('#access-request-project-select').value = '';
+    qs('#access-request-message').value = '';
+    await loadMyAccessRequests();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+function closeAccessRequestModal() {
+  hide('#access-request-modal');
+}
+
+// Charger les demandes d'accès (responsable/admin)
+async function loadAccessRequests() {
+  try {
+    const status = qs('#filter-access-requests-status')?.value || '';
+    const params = status ? `?status=${status}` : '';
+    const requests = await api('/access-requests' + params);
+    
+    const tbody = qs('#access-requests-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    if (requests.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted);">Aucune demande</td></tr>';
+      return;
+    }
+    
+    for (const req of requests) {
+      const tr = document.createElement('tr');
+      
+      const statusBadge = req.status === 'pending' ? '<span style="color:#ffa500;">🕐 En attente</span>'
+        : req.status === 'approved' ? '<span style="color:#28a745;">✅ Approuvée</span>'
+        : '<span style="color:#dc3545;">❌ Rejetée</span>';
+      
+      const actions = req.status === 'pending' 
+        ? `<button class="btn btn-sm" onclick="approveAccessRequest(${req.id})">✅ Approuver</button>
+           <button class="btn ghost btn-sm" onclick="rejectAccessRequest(${req.id})">❌ Rejeter</button>`
+        : `<span class="muted">Par ${req.reviewed_by_email || 'N/A'}</span>`;
+      
+      tr.innerHTML = `
+        <td>${new Date(req.created_at).toLocaleDateString()}</td>
+        <td>${req.user_email}</td>
+        <td>${req.project_name}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;" title="${req.message || ''}">${req.message || '<em class="muted">Aucun message</em>'}</td>
+        <td>${statusBadge}</td>
+        <td>${actions}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (err) {
+    console.error('Erreur chargement demandes:', err);
+  }
+}
+
+// Approuver une demande
+async function approveAccessRequest(requestId) {
+  if (!confirm('Approuver cette demande d\'accès ?')) return;
+  
+  try {
+    await api(`/access-requests/${requestId}/approve`, { method: 'PATCH' });
+    alert('✅ Demande approuvée ! L\'utilisateur a été notifié par email.');
+    loadAccessRequests();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+// Rejeter une demande
+async function rejectAccessRequest(requestId) {
+  const reason = prompt('Raison du rejet (optionnel) :');
+  if (reason === null) return; // Annulé
+  
+  try {
+    await api(`/access-requests/${requestId}/reject`, { 
+      method: 'PATCH',
+      body: { reason }
+    });
+    alert('❌ Demande rejetée. L\'utilisateur a été notifié.');
+    loadAccessRequests();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
 /* ================= Projets / Lots ================= */
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   
-  // Message si visionneur sans projets
-  if (isVisionneur() && list.length === 0) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="6" style="text-align:center; padding:2rem; color:var(--muted);">
-      📭 Aucun projet partagé avec vous.<br>
-      <small>Contactez un responsable pour obtenir l'accès à un projet.</small>
-    </td>`;
-    tbody.appendChild(tr);
-    return;
+  // Afficher section demande d'accès pour visionneurs sans projets
+  if (isVisionneur()) {
+    if (list.length === 0) {
+      show('#request-access-section');
+      hide('#projects-table-container');
+      return;
+    } else {
+      hide('#request-access-section');
+      show('#projects-table-container');
+    }
   }
   
   for (const p of list){
@@ -1956,24 +2115,31 @@ function showDashboard(){
 }
 
 function updateUIForRole() {
-  // Masquer/afficher sections selon le rôle
+  // Sections admin
   if (isAdmin()) {
     show('#admin-section');
-    loadUsers(); // Charger les utilisateurs pour l'admin
+    loadUsers();
   } else {
     hide('#admin-section');
   }
   
-  // Désactiver boutons selon le rôle
-  const createProjectBtn = qs('#create-project-btn');
-  if (createProjectBtn) {
-    if (canCreateProject()) {
-      createProjectBtn.disabled = false;
-    } else {
-      createProjectBtn.disabled = true;
-      createProjectBtn.title = 'Réservé aux responsables et admins';
-    }
+  // Section demandes d'accès (responsable/admin)
+  if (isResponsableOrAdmin()) {
+    show('#access-requests-section');
+    loadAccessRequests();
+  } else {
+    hide('#access-requests-section');
   }
+  
+  // Section création de projet (responsable/admin)
+  if (canCreateProject()) {
+    show('#create-project-section');
+  } else {
+    hide('#create-project-section');
+  }
+  
+  // Section demande d'accès (visionneur sans projets)
+  // Sera affiché dynamiquement dans renderProjects() si liste vide
 }
 
 function bindUI(){
@@ -2131,6 +2297,17 @@ function bindUI(){
   qs('#share-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'share-modal') closeShareModal();
   });
+  
+  // Modal demande d'accès (visionneur)
+  qs('#open-access-request-modal')?.addEventListener('click', openAccessRequestModal);
+  qs('#close-access-request-modal')?.addEventListener('click', closeAccessRequestModal);
+  qs('#submit-access-request-btn')?.addEventListener('click', submitAccessRequest);
+  qs('#access-request-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'access-request-modal') closeAccessRequestModal();
+  });
+  
+  // Gestion demandes d'accès (responsable/admin)
+  qs('#filter-access-requests-status')?.addEventListener('change', loadAccessRequests);
 }
 
 /* ================== THEME ================== */
