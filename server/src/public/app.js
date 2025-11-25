@@ -19,8 +19,8 @@ const redoStack = [];
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
 const qsa = (s) => Array.from(document.querySelectorAll(s));
-const show = (sel) => qs(sel).classList.remove('hidden');
-const hide = (sel) => qs(sel).classList.add('hidden');
+const show = (sel) => { const el = qs(sel); if (el) el.classList.remove('hidden'); };
+const hide = (sel) => { const el = qs(sel); if (el) el.classList.add('hidden'); };
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 
 /* ====== Num parse/format (FR friendly) ====== */
@@ -2136,10 +2136,13 @@ function updateUIForRole() {
   }
   
   // Bouton demande d'accès (visionneur uniquement)
-  if (isVisionneur()) {
-    show('#open-access-request-modal');
-  } else {
-    hide('#open-access-request-modal');
+  const accessBtn = qs('#open-access-request-modal');
+  if (accessBtn) {
+    if (isVisionneur()) {
+      accessBtn.classList.remove('hidden');
+    } else {
+      accessBtn.classList.add('hidden');
+    }
   }
 }
 
