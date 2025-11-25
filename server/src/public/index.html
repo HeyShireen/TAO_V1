@@ -25,31 +25,31 @@
       <div class="login-options">
         <details class="auth-details" open>
           <summary>Se connecter avec un compte</summary>
-          <div class="auth-form">
-            <label class="field"><span>Email</span><input id="login-email" type="email" placeholder="vous@exemple.fr"/></label>
-            <label class="field"><span>Mot de passe</span><input id="login-password" type="password" placeholder="••••••••"/></label>
+          <form class="auth-form" onsubmit="return false;">
+            <label class="field"><span>Email</span><input id="login-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
+            <label class="field"><span>Mot de passe</span><input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password"/></label>
             <div class="row gap">
-              <button id="login-btn" class="btn">Se connecter</button>
+              <button id="login-btn" type="button" class="btn">Se connecter</button>
             </div>
             <p class="muted" style="margin-top:0.5rem; font-size:0.85em;">
               <a href="#" id="reset-admin-link" style="color:var(--primary);">Mot de passe admin oublié ?</a>
             </p>
-          </div>
+          </form>
         </details>
         
         <details class="auth-details">
           <summary>Créer un compte</summary>
-          <div class="auth-form">
-            <label class="field"><span>Email</span><input id="register-email" type="email" placeholder="vous@exemple.fr"/></label>
-            <label class="field"><span>Mot de passe</span><input id="register-password" type="password" placeholder="Min. 8 caractères"/></label>
-            <label class="field"><span>Confirmer</span><input id="register-password-confirm" type="password" placeholder="Répétez le mot de passe"/></label>
+          <form class="auth-form" onsubmit="return false;">
+            <label class="field"><span>Email</span><input id="register-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
+            <label class="field"><span>Mot de passe</span><input id="register-password" type="password" placeholder="Min. 8 caractères" autocomplete="new-password"/></label>
+            <label class="field"><span>Confirmer</span><input id="register-password-confirm" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password"/></label>
             <div class="row gap">
-              <button id="register-btn" class="btn btn-primary">S'inscrire</button>
+              <button id="register-btn" type="button" class="btn btn-primary">S'inscrire</button>
             </div>
             <p class="muted" style="font-size: 0.85em; margin-top: 0.5rem;">
               Votre compte sera créé avec un accès "visionneur". Un responsable devra vous partager des projets.
             </p>
-          </div>
+          </form>
         </details>
       </div>
       
@@ -539,19 +539,21 @@
           
           <div class="settings-section">
             <h4>👤 Compte</h4>
-            <div class="field">
-              <label>Email</label>
-              <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled />
-            </div>
-            <div class="field">
-              <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label>
-              <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" />
-            </div>
-            <div class="field">
+            <form onsubmit="return false;">
+              <div class="field">
+                <label>Email</label>
+                <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled autocomplete="email" />
+              </div>
+              <div class="field">
+                <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label>
+                <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
+              </div>
+              <div class="field">
               <label>Confirmer le mot de passe</label>
-              <input id="settings-confirm-password" type="password" placeholder="Confirmer" />
+              <input id="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
             </div>
-            <button id="save-settings" class="btn">💾 Sauvegarder</button>
+            <button id="save-settings" type="button" class="btn">Enregistrer</button>
+            </form>
           </div>
 
           <div class="settings-section">

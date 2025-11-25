@@ -2137,12 +2137,17 @@ function updateUIForRole() {
   
   // Bouton demande d'accès (visionneur uniquement)
   const accessBtn = qs('#open-access-request-modal');
+  console.log('🔍 Access button:', accessBtn, 'isVisionneur:', isVisionneur(), 'user:', currentUser);
   if (accessBtn) {
     if (isVisionneur()) {
+      console.log('✅ Showing access request button');
       accessBtn.classList.remove('hidden');
     } else {
+      console.log('❌ Hiding access request button');
       accessBtn.classList.add('hidden');
     }
+  } else {
+    console.error('⚠️ Access request button not found in DOM');
   }
 }
 
