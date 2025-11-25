@@ -1052,7 +1052,9 @@ async function refreshCompare(){
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
   let h1 = `<tr><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
-  let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; for (let i=0;i<data.companies.length;i++) h2 += '<th>Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; h2 += '</tr>';
+  let h2 = `<tr><th>Qté</th><th>PU</th><th>Mt</th>`; 
+  for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
+  h2 += '</tr>';
   head.innerHTML = h1 + h2;
   
   // Calculer les totaux

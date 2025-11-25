@@ -477,7 +477,7 @@ thead{
   background:var(--sticky); 
   position:sticky; 
   top:0; 
-  z-index:10;
+  z-index:20;
 }
 thead th{ 
   border-bottom:2px solid var(--accent);
@@ -579,10 +579,14 @@ thead th.sticky-col2::after{
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
-  z-index:12;
+  z-index:25;
 }
 thead .sticky-col::after, thead .sticky-col2::after{
-  z-index:13;
+  z-index:26;
+}
+thead .moe-col::after,
+thead .company-col::after{
+  z-index:21;
 }
 .delta-pos{ color:var(--success); font-weight:600 } 
 .delta-neg{ color:var(--danger); font-weight:600 }
