@@ -35,6 +35,12 @@ if (!process.env.DATABASE_URL) {
 
 const app = express()
 
+// Trust proxy: nécessaire pour Render et autres hébergeurs derrière un proxy
+// Permet de récupérer la vraie IP client via X-Forwarded-For
+if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // CORS : autoriser same-origin + origines configurées
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())

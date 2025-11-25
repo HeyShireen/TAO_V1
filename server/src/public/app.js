@@ -187,9 +187,13 @@ function parseJwt(token) {
 function updateCurrentUser() {
   if (token) {
     const payload = parseJwt(token);
+    console.log('🔐 JWT Payload:', payload);
     if (payload) {
       currentUser = { id: payload.id, email: payload.email, role: payload.role || 'visionneur' };
+      console.log('👤 Current user updated:', currentUser);
     }
+  } else {
+    console.warn('⚠️ No token found');
   }
 }
 
@@ -2106,9 +2110,12 @@ function renderSheetBindings(){
 function showDashboard(){ 
   hide('#login-view'); 
   show('#dashboard'); 
-  updateUIForRole();
   activateTab('tab-projects'); 
-  refreshProjects(); 
+  refreshProjects();
+  // Appeler updateUIForRole après un court délai pour s'assurer que le DOM est prêt
+  setTimeout(() => {
+    updateUIForRole();
+  }, 100);
 }
 
 function updateUIForRole() {
