@@ -151,6 +151,20 @@ function activateTourTab(id){
   }
 }
 
+function disableTourTabs(tabIds){
+  tabIds.forEach(id => {
+    const btn = qs(`[data-tour-tab="${id}"]`);
+    if (btn) btn.disabled = true;
+  });
+}
+
+function enableTourTabs(tabIds){
+  tabIds.forEach(id => {
+    const btn = qs(`[data-tour-tab="${id}"]`);
+    if (btn) btn.disabled = false;
+  });
+}
+
 /* ================= Sous-onglets pour les lots ================= */
 function activateSubtab(id){
   qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
@@ -333,6 +347,9 @@ async function selectRound(round, cardElement = null){
   activateTourTab('tour-lots');
   setText('#current-round-name', `${round.name}`);
   
+  // Désactiver Config Questions et Fiches Questions jusqu'à la sélection d'un lot
+  disableTourTabs(['tour-config', 'tour-questions']);
+  
   // Charger les lots pour ce tour
   await loadLotsForRound();
 }
@@ -349,6 +366,9 @@ async function selectRoundFromTab(round){
   activateTab('round-content');
   activateTourTab('tour-summary');
   setText('#current-round-name', `${round.name}`);
+  
+  // Désactiver Config Questions et Fiches Questions jusqu'à la sélection d'un lot
+  disableTourTabs(['tour-config', 'tour-questions']);
   
   // Charger le récapitulatif par défaut
   await loadRoundSummary();
@@ -733,6 +753,9 @@ async function openLot(id, lotMeta){
   
   // Activer l'onglet Fiches Questions
   enableTab('tab-lot-questions', true);
+  
+  // Activer les onglets Config Questions et Fiches Questions du tour
+  enableTourTabs(['tour-config', 'tour-questions']);
   
   // Charger les seuils et questions
   await loadLotThresholds();

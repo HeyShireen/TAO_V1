@@ -216,7 +216,7 @@ h1,h2{
   display:flex; 
   gap:2px; 
   padding:12px 20px; 
-  background:rgba(13,17,23,0.6); 
+  background:rgba(var(--bg-rgb),0.6); 
   border-bottom:1px solid var(--border);
   position: relative;
 }
@@ -267,6 +267,17 @@ h1,h2{
 .tour-tab-btn.active::before {
   opacity: 1;
   left: 4px;
+}
+.tour-tab-btn:disabled{
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--muted);
+}
+.tour-tab-btn:disabled:hover{
+  padding-left: 8px;
+}
+.tour-tab-btn:disabled:hover::before{
+  opacity: 0;
 }
 .tour-tabpanel{ 
   display:block;
@@ -453,6 +464,11 @@ tbody tr:hover td {
   background: rgba(255,140,66,0.03);
   border-color: rgba(255,140,66,0.2);
 }
+tbody tr:hover .sticky-col,
+tbody tr:hover .sticky-col2 {
+  background: rgba(255,140,66,0.08);
+  z-index: 4;
+}
 thead{ 
   background:var(--sticky); 
   position:sticky; 
@@ -510,7 +526,13 @@ thead th{
   background:var(--accent);
   z-index:1;
 }
-thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
+thead .sticky-col, thead .sticky-col2{ 
+  background:var(--sticky);
+  z-index:4;
+}
+thead .sticky-col::after, thead .sticky-col2::after{
+  z-index:5;
+}
 .delta-pos{ color:var(--success); font-weight:600 } 
 .delta-neg{ color:var(--danger); font-weight:600 }
 
