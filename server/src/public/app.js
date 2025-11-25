@@ -533,16 +533,13 @@ async function rejectAccessRequest(requestId) {
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   
-  // Afficher section demande d'accès pour visionneurs sans projets
-  if (isVisionneur()) {
-    if (list.length === 0) {
-      show('#request-access-section');
-      hide('#projects-table-container');
-      return;
-    } else {
-      hide('#request-access-section');
-      show('#projects-table-container');
-    }
+  // Les visionneurs ne voient que leurs projets partagés
+  if (isVisionneur() && list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--muted);">
+      📭 Aucun projet partagé avec vous.<br>
+      <small>Allez dans l'onglet Paramètres pour demander l'accès à un projet.</small>
+    </td></tr>`;
+    return;
   }
   
   for (const p of list){
@@ -2138,8 +2135,19 @@ function updateUIForRole() {
     hide('#create-project-section');
   }
   
-  // Section demande d'accès (visionneur sans projets)
-  // Sera affiché dynamiquement dans renderProjects() si liste vide
+  // Section demande d'accès (visionneur)
+  if (isVisionneur()) {
+    show('#request-access-section');
+  } else {
+    hide('#request-access-section');
+  }
+  
+  // Cacher complètement l'onglet Projets pour les visionneurs sans projets
+  if (isVisionneur()) {
+    hide('#projects-table-container');
+  } else {
+    show('#projects-table-container');
+  }
 }
 
 function bindUI(){

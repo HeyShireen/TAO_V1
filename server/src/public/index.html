@@ -80,13 +80,6 @@
 
       <!-- Onglet Projets -->
       <section id="tab-projects" class="tabpanel">
-        <!-- Bouton demande d'accès (visionneur uniquement) -->
-        <div id="request-access-section" class="card hidden">
-          <h3>🔓 Demander l'accès à un projet</h3>
-          <p class="muted">Vous n'avez accès à aucun projet. Contactez un responsable ou faites une demande ci-dessous.</p>
-          <button id="open-access-request-modal" class="btn btn-primary">📩 Demander l'accès</button>
-        </div>
-
         <!-- Création de projet (responsable/admin uniquement) -->
         <div id="create-project-section" class="card hidden">
           <h3>➕ Nouveau projet</h3>
@@ -457,6 +450,13 @@
 
       <!-- Onglet Paramètres -->
       <section id="tab-settings" class="tabpanel hidden">
+        
+        <!-- Bouton demande d'accès (visionneur uniquement) -->
+        <div id="request-access-section" class="card hidden">
+          <h3>🔓 Demander l'accès à un projet</h3>
+          <p class="muted">Vous pouvez demander l'accès à un projet existant. Un responsable examinera votre demande.</p>
+          <button id="open-access-request-modal" class="btn btn-primary">📩 Demander l'accès à un projet</button>
+        </div>
         
         <!-- Section Demandes d'accès (responsable/admin) -->
         <div id="access-requests-section" class="card hidden">
