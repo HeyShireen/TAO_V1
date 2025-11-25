@@ -467,7 +467,11 @@ tbody tr:hover td {
 tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2 {
   background: rgba(255,140,66,0.08);
-  z-index: 6;
+  z-index: 7;
+}
+tbody tr:hover .sticky-col::after,
+tbody tr:hover .sticky-col2::after {
+  z-index: 8;
 }
 thead{ 
   background:var(--sticky); 
@@ -507,7 +511,7 @@ thead th.sticky-col2::after{
 .sticky-col{ 
   position:sticky; 
   left:0; 
-  z-index:5; 
+  z-index:7; 
   background:var(--sticky); 
   min-width:120px; 
   width:120px; 
@@ -522,12 +526,12 @@ thead th.sticky-col2::after{
   width:2px;
   height:100%;
   background:var(--accent);
-  z-index:1;
+  z-index:8;
 }
 .sticky-col2{ 
   position:sticky; 
   left:120px; 
-  z-index:5; 
+  z-index:7; 
   background:var(--sticky); 
   min-width:320px; 
   max-width:520px; 
@@ -543,7 +547,7 @@ thead th.sticky-col2::after{
   width:2px;
   height:100%;
   background:var(--accent);
-  z-index:1;
+  z-index:8;
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
