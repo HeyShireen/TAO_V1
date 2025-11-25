@@ -512,29 +512,9 @@ thead th.sticky-col2::after{
   border-left:2px solid var(--blueprint);
   position: relative;
 }
-.company-col::after{
-  content:'';
-  position:absolute;
-  top:0;
-  left:0;
-  width:2px;
-  height:100%;
-  background:var(--blueprint);
-  z-index:8;
-}
 .company-border{
   border-left:2px solid var(--blueprint);
   position: relative;
-}
-.company-border::after{
-  content:'';
-  position:absolute;
-  top:0;
-  left:0;
-  width:2px;
-  height:100%;
-  background:var(--blueprint);
-  z-index:8;
 }
 .sticky-col{ 
   position:sticky; 

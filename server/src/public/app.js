@@ -1056,12 +1056,7 @@ async function refreshCompare(){
   for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
   h2 += '</tr>';
   head.innerHTML = h1 + h2;
-
-  // Ajuster le décalage sticky de la deuxième ligne
-  const row1 = head.querySelector('tr.head-row-1');
-  const hRow1 = row1 ? row1.offsetHeight : 0;
-  head.style.setProperty('--head-row1-height', hRow1 + 'px');
-  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = hRow1 + 'px'; });
+  recalcCompareHeaderOffsets();
   
   // Calculer les totaux
   let totalMoe = 0;
@@ -1091,6 +1086,25 @@ async function refreshCompare(){
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
 }
+
+function recalcCompareHeaderOffsets(){
+  const head = qs('#compare-head');
+  if (!head) return;
+  const row1 = head.querySelector('tr.head-row-1');
+  if (!row1) return;
+  // Mesurer la hauteur réelle de la première ligne (max des th)
+  const ths = Array.from(row1.querySelectorAll('th'));
+  const hRow1 = ths.length ? Math.max(...ths.map(th => th.getBoundingClientRect().height)) : row1.getBoundingClientRect().height;
+  // Corriger l'offset pour éviter l'écart dû à la bordure (1px)
+  const offset = Math.max(0, Math.round(hRow1) - 1);
+  head.style.setProperty('--head-row1-height', offset + 'px');
+  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = offset + 'px'; });
+}
+
+window.addEventListener('resize', () => {
+  // Recalcule l'offset en cas de changement de taille/zoom
+  recalcCompareHeaderOffsets();
+});
 
 /* ================= Tableur (édition) ================= */
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
