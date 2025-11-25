@@ -1959,6 +1959,7 @@ function updateUIForRole() {
   // Masquer/afficher sections selon le rôle
   if (isAdmin()) {
     show('#admin-section');
+    loadUsers(); // Charger les utilisateurs pour l'admin
   } else {
     hide('#admin-section');
   }
