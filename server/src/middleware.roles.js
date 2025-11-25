@@ -68,7 +68,7 @@ function isResponsableOrAdmin(req, res, next) {
   return requireRole([ROLES.ADMIN, ROLES.RESPONSABLE])(req, res, next);
 }
 
-module.exports = {
+export {
   ROLES,
   requireRole,
   hasRoleLevel,

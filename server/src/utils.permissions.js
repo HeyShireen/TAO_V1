@@ -1,7 +1,7 @@
 // server/src/utils.permissions.js
 // Helpers pour vérifier les permissions sur les projets
 
-const db = require('./db');
+import { query } from './db.js';
 
 /**
  * Vérifier si un utilisateur peut voir un projet
@@ -16,7 +16,7 @@ async function canViewProject(userId, projectId, userRole) {
   }
 
   // Visionneur: vérifier si le projet est partagé avec lui
-  const share = await db.query(
+  const share = await query(
     `SELECT id FROM project_shares 
      WHERE project_id = $1 AND shared_with_user_id = $2 AND can_view = true`,
     [projectId, userId]
@@ -38,7 +38,7 @@ async function canEditProject(userId, projectId, userRole) {
   }
 
   // Visionneur: vérifier si le projet est partagé avec can_edit
-  const share = await db.query(
+  const share = await query(
     `SELECT id FROM project_shares 
      WHERE project_id = $1 AND shared_with_user_id = $2 AND can_edit = true`,
     [projectId, userId]
@@ -60,7 +60,7 @@ async function canDeleteProject(userId, projectId, userRole) {
 
   if (userRole === 'responsable') {
     // Vérifier que le responsable est le propriétaire
-    const project = await db.query(
+    const project = await query(
       'SELECT owner_id FROM projects WHERE id = $1',
       [projectId]
     );
@@ -88,14 +88,14 @@ function canShareProject(userRole) {
 async function getVisibleProjects(userId, userRole) {
   // Admin et responsable voient tout
   if (userRole === 'admin' || userRole === 'responsable') {
-    const result = await db.query(
+    const result = await query(
       'SELECT * FROM projects ORDER BY created_at DESC'
     );
     return result.rows;
   }
 
   // Visionneur: seulement les projets partagés
-  const result = await db.query(
+  const result = await query(
     `SELECT p.* FROM projects p
      INNER JOIN project_shares ps ON p.id = ps.project_id
      WHERE ps.shared_with_user_id = $1 AND ps.can_view = true
@@ -106,7 +106,7 @@ async function getVisibleProjects(userId, userRole) {
   return result.rows;
 }
 
-module.exports = {
+export {
   canViewProject,
   canEditProject,
   canDeleteProject,
