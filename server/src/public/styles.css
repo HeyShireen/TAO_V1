@@ -502,10 +502,7 @@ thead th::after{
   z-index:1;
 }
 thead th.sticky-col::after,
-thead th.sticky-col2::after{
-  width:2px;
-  background:var(--accent);
-}
+thead th.sticky-col2::after{ content:none }
 .moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent); }
 .company-col{ 
   background:rgba(31,111,235,0.03); 
@@ -525,16 +522,7 @@ thead th.sticky-col2::after{
   width:120px; 
   max-width:120px;
   font-weight: 500;
-}
-.sticky-col::after{
-  content:'';
-  position:absolute;
-  top:0;
-  right:0;
-  width:2px;
-  height:100%;
-  background:var(--accent);
-  z-index:8;
+  border-right:2px solid var(--accent);
 }
 .sticky-col2{ 
   position:sticky; 
@@ -546,23 +534,11 @@ thead th.sticky-col2::after{
   white-space:normal; 
   word-wrap:break-word;
   font-weight: 400;
-}
-.sticky-col2::after{
-  content:'';
-  position:absolute;
-  top:0;
-  right:0;
-  width:2px;
-  height:100%;
-  background:var(--accent);
-  z-index:8;
+  border-right:2px solid var(--accent);
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
   z-index:60;
-}
-thead .sticky-col::after, thead .sticky-col2::after{
-  z-index:61;
 }
 thead .moe-col::after,
 thead .company-col::after{

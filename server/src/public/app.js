@@ -1091,20 +1091,27 @@ function recalcCompareHeaderOffsets(){
   const head = qs('#compare-head');
   if (!head) return;
   const row1 = head.querySelector('tr.head-row-1');
-  if (!row1) return;
-  // Mesurer la hauteur réelle de la première ligne (max des th)
-  const ths = Array.from(row1.querySelectorAll('th'));
-  const hRow1 = ths.length ? Math.max(...ths.map(th => th.getBoundingClientRect().height)) : row1.getBoundingClientRect().height;
-  // Corriger l'offset pour éviter l'écart dû à la bordure (1px)
-  const offset = Math.max(0, Math.round(hRow1) - 1);
-  head.style.setProperty('--head-row1-height', offset + 'px');
-  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = offset + 'px'; });
+  const row2 = head.querySelector('tr.head-row-2');
+  if (!row1 || !row2) return;
+  // Reset top to measure natural layout
+  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = '0px'; });
+  const setFromMeasure = () => {
+    const headRect = head.getBoundingClientRect();
+    const row2Rect = row2.getBoundingClientRect();
+    const offset = Math.max(0, Math.round(row2Rect.top - headRect.top));
+    head.style.setProperty('--head-row1-height', offset + 'px');
+    head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = offset + 'px'; });
+  };
+  setFromMeasure();
+  // Re-mesure au frame suivant pour tenir compte des polices/zoom
+  if (window.requestAnimationFrame) requestAnimationFrame(setFromMeasure);
 }
 
 window.addEventListener('resize', () => {
   // Recalcule l'offset en cas de changement de taille/zoom
   recalcCompareHeaderOffsets();
 });
+window.addEventListener('load', recalcCompareHeaderOffsets);
 
 /* ================= Tableur (édition) ================= */
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
