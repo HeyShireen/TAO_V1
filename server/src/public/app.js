@@ -216,6 +216,8 @@ async function registerFirst(email, password){
 function isAdmin() { return currentUser && currentUser.role === 'admin'; }
 function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
 function isVisionneur() { return currentUser && currentUser.role === 'visionneur'; }
+function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
+function isResponsableOrAdmin() { return isAdmin() || isResponsable(); }
 function canCreateProject() { return isAdmin() || isResponsable(); }
 function canEditProject() { return isAdmin() || isResponsable(); }
 function canShareProject() { return isAdmin() || isResponsable(); }
