@@ -444,7 +444,7 @@ input:focus,textarea:focus,select:focus{
   background:var(--card);
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-.table-wrapper.tall{ max-height:60vh }
+.table-wrapper.tall{ max-height:75vh }
 table{ 
   width:100%; 
   border-collapse:collapse;
@@ -473,7 +473,7 @@ thead{
   background:var(--sticky); 
   position:sticky; 
   top:0; 
-  z-index:2;
+  z-index:10;
 }
 thead th{ 
   border-bottom:2px solid var(--accent);
@@ -482,6 +482,9 @@ thead th{
   letter-spacing: 0.08em;
   color: var(--copper);
   font-weight: 600;
+  background:var(--sticky);
+  position:sticky;
+  top:0;
 }
 .moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent); }
 .company-col{ background:rgba(31,111,235,0.03); }
@@ -528,10 +531,10 @@ thead th{
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
-  z-index:4;
+  z-index:12;
 }
 thead .sticky-col::after, thead .sticky-col2::after{
-  z-index:5;
+  z-index:13;
 }
 .delta-pos{ color:var(--success); font-weight:600 } 
 .delta-neg{ color:var(--danger); font-weight:600 }
