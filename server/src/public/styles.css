@@ -447,24 +447,26 @@ input:focus,textarea:focus,select:focus{
 .table-wrapper.tall{ max-height:75vh }
 table{ 
   width:100%; 
-  border-collapse:collapse;
+  border-collapse:separate;
+  border-spacing:0;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 13px;
 }
 th,td{ 
   padding:10px 14px; 
-  border:1px solid var(--border); 
+  border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border); 
   vertical-align:top; 
   text-align:left; 
   white-space:nowrap; 
   direction:ltr;
   transition: all 0.2s;
 }
+thead tr:first-child th{ border-top:1px solid var(--border); }
+th:first-child, td:first-child{ border-left:1px solid var(--border); }
 tbody tr:hover td {
   background: rgba(255,140,66,0.03);
-  border-color: rgba(255,140,66,0.2);
 }
-/* Conserver opacité totale pour colonnes figées afin d'éviter le bleed */
 tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2 {
   background: var(--sticky);
@@ -485,45 +487,43 @@ thead th{
   background:var(--sticky);
   position:sticky;
   top:0;
-  position: relative;
+  z-index:50;
 }
-.moe-border{ border-left:2px solid var(--accent); }
-.moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent); }
+.moe-border{ border-left:2px solid var(--accent) !important; }
+.moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent) !important; }
 .company-col{ 
   background:rgba(31,111,235,0.03); 
-  border-left:2px solid var(--blueprint);
-  position: relative;
+  border-left:2px solid var(--blueprint) !important;
 }
 .company-border{
-  border-left:2px solid var(--blueprint);
-  position: relative;
+  border-left:2px solid var(--blueprint) !important;
 }
 .sticky-col{ 
   position:sticky; 
   left:0; 
-  z-index:7; 
+  z-index:40; 
   background:var(--sticky); 
   min-width:120px; 
   width:120px; 
   max-width:120px;
   font-weight: 500;
-  border-right:2px solid var(--accent);
+  border-right:2px solid var(--accent) !important;
 }
 .sticky-col2{ 
   position:sticky; 
   left:120px; 
-  z-index:7; 
+  z-index:40; 
   background:var(--sticky); 
   min-width:320px; 
   max-width:520px; 
   white-space:normal; 
   word-wrap:break-word;
   font-weight: 400;
-  border-right:2px solid var(--accent);
+  border-right:2px solid var(--accent) !important;
 }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
-  z-index:60;
+  z-index:100;
 }
 /* Multi-lignes header sticky : la seconde ligne est décalée */
 thead tr.head-row-1 th { top:0; }
