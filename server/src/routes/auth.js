@@ -80,8 +80,10 @@ router.post('/login', emailRateLimiter, async (req, res) => {
   // Vérifier que l'email est confirmé
   if (!user.email_verified) {
     return res.status(403).json({ 
-      error: 'Veuillez confirmer votre adresse email avant de vous connecter. Consultez votre boîte mail.',
-      emailNotVerified: true
+      error: 'Votre email n\'est pas encore vérifié.',
+      emailNotVerified: true,
+      userId: user.id,
+      email: user.email
     });
   }
   
@@ -90,6 +92,70 @@ router.post('/login', emailRateLimiter, async (req, res) => {
   
   const token = sign(user);
   return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+});
+
+// Renvoyer l'email de vérification (avec cooldown)
+router.post('/resend-verification', emailRateLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email requis' });
+    
+    // Vérifier que l'utilisateur existe et n'est pas vérifié
+    const userResult = await query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    }
+    
+    const user = userResult.rows[0];
+    if (user.email_verified) {
+      return res.status(400).json({ error: 'Cet email est déjà vérifié' });
+    }
+    
+    // Vérifier le cooldown (dernier email envoyé il y a moins de 5 minutes)
+    const lastVerification = await query(
+      'SELECT created_at FROM email_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [user.id]
+    );
+    
+    if (lastVerification.rowCount > 0) {
+      const lastSent = new Date(lastVerification.rows[0].created_at);
+      const now = new Date();
+      const diffMinutes = (now - lastSent) / 1000 / 60;
+      
+      if (diffMinutes < 5) {
+        const waitTime = Math.ceil(5 - diffMinutes);
+        return res.status(429).json({ 
+          error: `Veuillez patienter ${waitTime} minute(s) avant de renvoyer un email.`,
+          cooldown: true,
+          waitMinutes: waitTime
+        });
+      }
+    }
+    
+    // Générer un nouveau token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+    
+    // Supprimer les anciens tokens non utilisés
+    await query('DELETE FROM email_verifications WHERE user_id = $1', [user.id]);
+    
+    // Créer le nouveau token
+    await query(
+      'INSERT INTO email_verifications (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [user.id, verificationToken, expiresAt]
+    );
+    
+    // Envoyer l'email
+    await sendVerificationEmail(user.email, verificationToken);
+    
+    return res.json({ 
+      message: 'Email de vérification envoyé. Consultez votre boîte mail.',
+      emailSent: true
+    });
+  } catch (err) {
+    console.error('Erreur renvoi email:', err);
+    return res.status(500).json({ error: 'Impossible d\'envoyer l\'email. Réessayez plus tard.' });
+  }
 });
 
 // Vérifier l'email via le token reçu par mail

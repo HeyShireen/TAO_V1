@@ -199,7 +199,13 @@ function updateCurrentUser() {
 
 async function login(email, password){
   const r = await fetch(API_BASE + '/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password })});
-  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Identifiants invalides');
+  const j = await r.json(); 
+  if (!r.ok) {
+    // Préserver les propriétés additionnelles pour les cas spéciaux (email non vérifié, etc.)
+    const error = new Error(j.error || 'Identifiants invalides');
+    Object.assign(error, j); // Copier toutes les propriétés (emailNotVerified, userId, etc.)
+    throw error;
+  }
   token = j.token; localStorage.setItem('token', token); 
   updateCurrentUser();
   return j.user;
@@ -255,10 +261,22 @@ function renderUsersTable(users) {
       </td>
       <td>${new Date(user.created_at).toLocaleDateString()}</td>
       <td>
-        <button class="btn ghost btn-sm" onclick="changeUserRole(${user.id})">Modifier</button>
-        <button class="btn ghost btn-sm" onclick="deleteUser(${user.id})">Supprimer</button>
+        <button class="btn ghost btn-sm" data-change-role="${user.id}">Modifier</button>
+        <button class="btn ghost btn-sm" data-delete-user="${user.id}">Supprimer</button>
       </td>
     `;
+    
+    // Event listeners pour les boutons
+    const changeBtn = tr.querySelector(`[data-change-role="${user.id}"]`);
+    const deleteBtn = tr.querySelector(`[data-delete-user="${user.id}"]`);
+    
+    if (changeBtn) {
+      changeBtn.addEventListener('click', () => changeUserRole(user.id));
+    }
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => deleteUser(user.id));
+    }
+    
     tbody.appendChild(tr);
   }
 }
@@ -486,8 +504,8 @@ async function loadAccessRequests() {
         : '<span style="color:#dc3545;">❌ Rejetée</span>';
       
       const actions = req.status === 'pending' 
-        ? `<button class="btn btn-sm" onclick="approveAccessRequest(${req.id})">✅ Approuver</button>
-           <button class="btn ghost btn-sm" onclick="rejectAccessRequest(${req.id})">❌ Rejeter</button>`
+        ? `<button class="btn btn-sm" data-approve-id="${req.id}">✅ Approuver</button>
+           <button class="btn ghost btn-sm" data-reject-id="${req.id}">❌ Rejeter</button>`
         : `<span class="muted">Par ${req.reviewed_by_email || 'N/A'}</span>`;
       
       tr.innerHTML = `
@@ -498,6 +516,18 @@ async function loadAccessRequests() {
         <td>${statusBadge}</td>
         <td>${actions}</td>
       `;
+      
+      // Event listeners pour Approuver/Rejeter
+      const approveBtn = tr.querySelector('[data-approve-id]');
+      const rejectBtn = tr.querySelector('[data-reject-id]');
+      
+      if (approveBtn) {
+        approveBtn.addEventListener('click', () => approveAccessRequest(req.id));
+      }
+      if (rejectBtn) {
+        rejectBtn.addEventListener('click', () => rejectAccessRequest(req.id));
+      }
+      
       tbody.appendChild(tr);
     }
   } catch (err) {
@@ -550,9 +580,16 @@ function renderProjects(list){
   
   for (const p of list){
     const tr = document.createElement('tr');
-    const shareBtn = canShareProject() ? `<button class="btn ghost btn-sm" onclick="openShareModal(${p.id})">🔗 Partager</button>` : '';
+    const shareBtn = canShareProject() ? `<button class="btn ghost btn-sm" data-share-id="${p.id}">🔗 Partager</button>` : '';
     tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.reference||''}</td><td>${p.client||''}</td><td>${new Date(p.created_at).toLocaleString()}</td><td><button class="btn btn-sm">Ouvrir</button> ${shareBtn}</td>`;
     tr.querySelector('button.btn:not(.ghost)').addEventListener('click', () => openProject(p.id));
+    
+    // Event listener pour le bouton Partager
+    const shareBtnEl = tr.querySelector('[data-share-id]');
+    if (shareBtnEl) {
+      shareBtnEl.addEventListener('click', () => openShareModal(p.id));
+    }
+    
     tbody.appendChild(tr);
   }
 }
@@ -2163,12 +2200,46 @@ function updateUIForRole() {
 function bindUI(){
   // Auth classique
   qs('#login-btn').addEventListener('click', async ()=>{ 
+    const msgEl = qs('#login-msg');
     setText('#login-msg',''); 
+    const email = qs('#login-email').value.trim();
+    const password = qs('#login-password').value;
+    
     try{ 
-      await login(qs('#login-email').value.trim(), qs('#login-password').value); 
+      await login(email, password); 
       showDashboard(); 
     } catch(e){ 
-      setText('#login-msg', e.message); 
+      // Si email non vérifié, proposer de renvoyer
+      if (e.emailNotVerified) {
+        msgEl.innerHTML = `
+          <div style="background: #fff3cd; padding: 1rem; border-radius: 8px; border: 1px solid #ffc107;">
+            <p style="margin: 0 0 0.5rem 0; color: #856404;">⚠️ ${e.message}</p>
+            <button id="resend-verification-btn" class="btn btn-sm" style="background: #ffc107; color: #000;">📧 Renvoyer l'email de vérification</button>
+          </div>
+        `;
+        
+        // Ajouter l'événement au bouton
+        qs('#resend-verification-btn')?.addEventListener('click', async () => {
+          const btn = qs('#resend-verification-btn');
+          btn.disabled = true;
+          btn.textContent = 'Envoi...';
+          
+          try {
+            const res = await api('/auth/resend-verification', { method: 'POST', body: { email } });
+            msgEl.innerHTML = `<p style="color: #28a745;">✅ ${res.message}</p>`;
+          } catch (err) {
+            if (err.cooldown) {
+              msgEl.innerHTML = `<p style="color: #dc3545;">⏰ ${err.message}</p>`;
+            } else {
+              msgEl.innerHTML = `<p style="color: #dc3545;">❌ ${err.message}</p>`;
+            }
+            btn.disabled = false;
+            btn.textContent = '📧 Renvoyer l\'email';
+          }
+        });
+      } else {
+        setText('#login-msg', '❌ ' + e.message); 
+      }
     }
   });
   
@@ -2197,7 +2268,18 @@ function bindUI(){
       
       // Si email de vérification envoyé
       if (data.emailSent) {
-        setText('#login-msg', `✅ ${data.message || 'Un email de confirmation a été envoyé à'} ${email}. Consultez votre boîte mail.`);
+        const msgEl = qs('#login-msg');
+        msgEl.innerHTML = `
+          <div style="background: #d4edda; padding: 1.5rem; border-radius: 8px; border: 2px solid #28a745; text-align: center;">
+            <div style="font-size: 3rem; margin-bottom: 0.5rem;">📧</div>
+            <h3 style="color: #155724; margin: 0 0 0.5rem 0;">✅ Compte créé avec succès!</h3>
+            <p style="color: #155724; margin: 0;">
+              Un email de vérification a été envoyé à <strong>${email}</strong>.<br>
+              <strong>Consultez votre boîte mail</strong> et cliquez sur le lien pour activer votre compte.
+            </p>
+          </div>
+        `;
+        
         // Vider les champs
         qs('#register-email').value = '';
         qs('#register-password').value = '';
@@ -2210,7 +2292,7 @@ function bindUI(){
         showDashboard(); 
       }
     } catch(e){ 
-      setText('#login-msg', e.message); 
+      setText('#login-msg', '❌ ' + e.message); 
     }
   });
   
