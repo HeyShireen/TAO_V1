@@ -2010,12 +2010,37 @@ function bindUI(){
     
     try{ 
       const data = await api('/auth/register', { method: 'POST', body: { email, password } });
-      token = data.token;
-      localStorage.setItem('token', token);
-      currentUser = data.user;
-      showDashboard(); 
+      
+      // Si email de vérification envoyé
+      if (data.emailSent) {
+        setText('#login-msg', `✅ ${data.message || 'Un email de confirmation a été envoyé à'} ${email}. Consultez votre boîte mail.`);
+        // Vider les champs
+        qs('#register-email').value = '';
+        qs('#register-password').value = '';
+        qs('#register-password-confirm').value = '';
+      } else {
+        // Admin auto-connecté
+        token = data.token;
+        localStorage.setItem('token', token);
+        currentUser = data.user;
+        showDashboard(); 
+      }
     } catch(e){ 
       setText('#login-msg', e.message); 
+    }
+  });
+  
+  // Réinitialisation du mot de passe admin
+  qs('#reset-admin-link')?.addEventListener('click', async (e)=> {
+    e.preventDefault();
+    if (!confirm('Réinitialiser le mot de passe admin avec celui du fichier .env ?')) return;
+    
+    setText('#login-msg', 'Réinitialisation...');
+    try {
+      await api('/auth/reset-admin', { method: 'POST' });
+      setText('#login-msg', '✅ Mot de passe admin réinitialisé ! Utilisez admin@example.com / Admin123!');
+    } catch(e) {
+      setText('#login-msg', '❌ ' + e.message);
     }
   });
   
