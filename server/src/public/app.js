@@ -1707,6 +1707,31 @@ function bindUI(){
   qs('#filter-status').addEventListener('change', refreshQuestions);
 
   renderSheetBindings();
+  
+  // Gestion du thème
+  initTheme();
+  qsa('.theme-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.theme;
+      setTheme(theme);
+    });
+  });
+}
+
+/* ================== THEME ================== */
+function initTheme() {
+  const savedTheme = localStorage.getItem('theme') || 'dark';
+  setTheme(savedTheme);
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+  
+  // Mettre à jour les boutons
+  qsa('.theme-option').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === theme);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => { bindUI(); if (token) showDashboard(); });
