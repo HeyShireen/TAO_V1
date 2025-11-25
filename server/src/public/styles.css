@@ -493,10 +493,10 @@ thead th{
 .moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent) !important; }
 .company-col{ 
   background:rgba(31,111,235,0.03); 
-  border-left:2px solid var(--blueprint) !important;
+  border-left:2px solid var(--accent) !important;
 }
 .company-border{
-  border-left:2px solid var(--blueprint) !important;
+  border-left:2px solid var(--accent) !important;
 }
 .sticky-col{ 
   position:sticky; 
