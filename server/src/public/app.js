@@ -533,12 +533,12 @@ async function rejectAccessRequest(requestId) {
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   
-  // Les visionneurs ne voient que leurs projets partagés
-  if (isVisionneur() && list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--muted);">
-      📭 Aucun projet partagé avec vous.<br>
-      <small>Allez dans l'onglet Paramètres pour demander l'accès à un projet.</small>
-    </td></tr>`;
+  // Message si aucun projet
+  if (list.length === 0) {
+    const message = isVisionneur() 
+      ? '📭 Aucun projet partagé avec vous.<br><small>Cliquez sur "Demander l\'accès" ci-dessus pour faire une demande.</small>'
+      : '📭 Aucun projet créé.<br><small>Créez votre premier projet ci-dessus.</small>';
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--muted);">${message}</td></tr>`;
     return;
   }
   
@@ -2135,18 +2135,11 @@ function updateUIForRole() {
     hide('#create-project-section');
   }
   
-  // Section demande d'accès (visionneur)
+  // Bouton demande d'accès (visionneur uniquement)
   if (isVisionneur()) {
-    show('#request-access-section');
+    show('#open-access-request-modal');
   } else {
-    hide('#request-access-section');
-  }
-  
-  // Cacher complètement l'onglet Projets pour les visionneurs sans projets
-  if (isVisionneur()) {
-    hide('#projects-table-container');
-  } else {
-    show('#projects-table-container');
+    hide('#open-access-request-modal');
   }
 }
 

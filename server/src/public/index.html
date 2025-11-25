@@ -93,7 +93,11 @@
         </div>
 
         <div id="projects-table-container" class="card">
-          <h3>📋 Liste des projets</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3>📋 Liste des projets</h3>
+            <!-- Bouton demande d'accès (visionneur uniquement) -->
+            <button id="open-access-request-modal" class="btn btn-primary hidden">📩 Demander l'accès</button>
+          </div>
           <div class="table-wrapper">
             <table id="projects-table">
               <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th>Actions</th></tr></thead>
@@ -450,13 +454,6 @@
 
       <!-- Onglet Paramètres -->
       <section id="tab-settings" class="tabpanel hidden">
-        
-        <!-- Bouton demande d'accès (visionneur uniquement) -->
-        <div id="request-access-section" class="card hidden">
-          <h3>🔓 Demander l'accès à un projet</h3>
-          <p class="muted">Vous pouvez demander l'accès à un projet existant. Un responsable examinera votre demande.</p>
-          <button id="open-access-request-modal" class="btn btn-primary">📩 Demander l'accès à un projet</button>
-        </div>
         
         <!-- Section Demandes d'accès (responsable/admin) -->
         <div id="access-requests-section" class="card hidden">
