@@ -469,10 +469,6 @@ tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2 {
   background: var(--sticky);
 }
-tbody tr:hover .sticky-col::after,
-tbody tr:hover .sticky-col2::after {
-  z-index: 40;
-}
 thead{ 
   background:var(--sticky); 
   position:sticky; 
@@ -491,18 +487,7 @@ thead th{
   top:0;
   position: relative;
 }
-thead th::after{
-  content:'';
-  position:absolute;
-  top:0;
-  right:0;
-  width:1px;
-  height:100%;
-  background:var(--border);
-  z-index:1;
-}
-thead th.sticky-col::after,
-thead th.sticky-col2::after{ content:none }
+.moe-border{ border-left:2px solid var(--accent); }
 .moe-col{ background:rgba(255,140,66,0.05); border-left:2px solid var(--accent); }
 .company-col{ 
   background:rgba(31,111,235,0.03); 
@@ -539,10 +524,6 @@ thead th.sticky-col2::after{ content:none }
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
   z-index:60;
-}
-thead .moe-col::after,
-thead .company-col::after{
-  z-index:55;
 }
 /* Multi-lignes header sticky : la seconde ligne est décalée */
 thead tr.head-row-1 th { top:0; }

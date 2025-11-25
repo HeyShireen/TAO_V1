@@ -1052,7 +1052,7 @@ async function refreshCompare(){
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
   let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
   for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
-  let h2 = `<tr class="head-row-2"><th>Qté</th><th>PU</th><th>Mt</th>`; 
+  let h2 = `<tr class="head-row-2"><th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`; 
   for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
   h2 += '</tr>';
   head.innerHTML = h1 + h2;
@@ -1064,7 +1064,7 @@ async function refreshCompare(){
   data.companies.forEach(c => totalsByCompany[c.id] = 0);
   
   for (const r of data.rows){
-    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td>${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
+    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td class="moe-border">${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
     
     // Accumuler le total MOE
     if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
@@ -1078,7 +1078,7 @@ async function refreshCompare(){
   }
   
   // Ajouter la ligne de totaux
-  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
   for (const c of data.companies) {
     const companyTotal = totalsByCompany[c.id] || 0;
     totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
@@ -1098,7 +1098,8 @@ function recalcCompareHeaderOffsets(){
   const setFromMeasure = () => {
     const headRect = head.getBoundingClientRect();
     const row2Rect = row2.getBoundingClientRect();
-    const offset = Math.max(0, Math.round(row2Rect.top - headRect.top));
+    // Remonter la 2e ligne d'1px pour coller visuellement
+    const offset = Math.max(0, Math.round(row2Rect.top - headRect.top) - 1);
     head.style.setProperty('--head-row1-height', offset + 'px');
     head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = offset + 'px'; });
   };
