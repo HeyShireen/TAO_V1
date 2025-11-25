@@ -1977,15 +1977,6 @@ function updateUIForRole() {
 }
 
 function bindUI(){
-  // Accès direct (sans authentification)
-  qs('#direct-access')?.addEventListener('click', async ()=> {
-    setText('#login-msg','Connexion...');
-    token = 'direct-access-mode'; // Token factice pour activer l'interface
-    localStorage.setItem('token', token);
-    currentUser = { id: 1, email: 'demo@example.com', role: 'admin' };
-    showDashboard();
-  });
-  
   // Auth classique
   qs('#login-btn').addEventListener('click', async ()=>{ 
     setText('#login-msg',''); 
@@ -2108,9 +2099,6 @@ function bindUI(){
       setTheme(theme);
     });
   });
-  
-  // Gestion des utilisateurs (admin)
-  loadUsers();
   
   // Modal de partage
   qs('#close-share-modal')?.addEventListener('click', closeShareModal);
