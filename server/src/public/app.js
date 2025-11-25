@@ -305,13 +305,101 @@ async function deleteUser(userId) {
   }
 }
 
+/* ================= Partage de projets ================= */
+let currentShareProjectId = null;
+
+async function openShareModal(projectId) {
+  currentShareProjectId = projectId;
+  show('#share-modal');
+  
+  // Charger la liste des visionneurs disponibles
+  try {
+    const viewers = await api('/shares/available-viewers');
+    const select = qs('#share-viewer-select');
+    select.innerHTML = '<option value="">-- Sélectionner un visionneur --</option>';
+    viewers.forEach(v => {
+      select.innerHTML += `<option value="${v.id}">${v.email}</option>`;
+    });
+    
+    // Charger les partages existants
+    loadExistingShares(projectId);
+  } catch (err) {
+    console.error('Erreur chargement visionneurs:', err);
+  }
+}
+
+async function loadExistingShares(projectId) {
+  try {
+    const shares = await api(`/shares/projects/${projectId}`);
+    const container = qs('#existing-shares');
+    
+    if (shares.length === 0) {
+      container.innerHTML = '<p class="muted">Aucun partage pour l\'instant</p>';
+      return;
+    }
+    
+    container.innerHTML = shares.map(s => `
+      <div class="share-item">
+        <div class="share-item-info">
+          <div class="share-item-email">${s.shared_with_email}</div>
+          <div class="share-item-perms">${s.can_edit ? 'Lecture + Modification' : 'Lecture seule'}</div>
+        </div>
+        <button class="btn ghost btn-sm" onclick="removeShare(${projectId}, ${s.shared_with_user_id})">Retirer</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('Erreur chargement partages:', err);
+  }
+}
+
+async function shareProject() {
+  const viewerId = qs('#share-viewer-select').value;
+  const canEdit = qs('#share-can-edit').checked;
+  
+  if (!viewerId) {
+    return alert('Sélectionnez un visionneur');
+  }
+  
+  try {
+    await api(`/shares/projects/${currentShareProjectId}`, {
+      method: 'POST',
+      body: { userId: viewerId, canView: true, canEdit }
+    });
+    
+    alert('Projet partagé avec succès');
+    qs('#share-viewer-select').value = '';
+    qs('#share-can-edit').checked = false;
+    loadExistingShares(currentShareProjectId);
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+async function removeShare(projectId, userId) {
+  if (!confirm('Retirer ce partage ?')) return;
+  
+  try {
+    await api(`/shares/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
+    alert('Partage retiré');
+    loadExistingShares(projectId);
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  }
+}
+
+function closeShareModal() {
+  hide('#share-modal');
+  currentShareProjectId = null;
+}
+
 /* ================= Projets / Lots ================= */
 function renderProjects(list){
   const tbody = qs('#projects-table tbody'); tbody.innerHTML='';
   for (const p of list){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.reference||''}</td><td>${p.client||''}</td><td>${new Date(p.created_at).toLocaleString()}</td><td><button class="btn">Ouvrir</button></td>`;
-    tr.querySelector('button').addEventListener('click', () => openProject(p.id));
+    const shareBtn = canShareProject() ? `<button class="btn ghost btn-sm" onclick="openShareModal(${p.id})">🔗 Partager</button>` : '';
+    tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.reference||''}</td><td>${p.client||''}</td><td>${new Date(p.created_at).toLocaleString()}</td><td><button class="btn btn-sm">Ouvrir</button> ${shareBtn}</td>`;
+    tr.querySelector('button.btn:not(.ghost)').addEventListener('click', () => openProject(p.id));
     tbody.appendChild(tr);
   }
 }
@@ -2011,6 +2099,13 @@ function bindUI(){
   // Gestion des utilisateurs (admin)
   qs('#admin-create-user')?.addEventListener('click', createUser);
   loadUsers();
+  
+  // Modal de partage
+  qs('#close-share-modal')?.addEventListener('click', closeShareModal);
+  qs('#share-project-btn')?.addEventListener('click', shareProject);
+  qs('#share-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'share-modal') closeShareModal();
+  });
 }
 
 /* ================== THEME ================== */

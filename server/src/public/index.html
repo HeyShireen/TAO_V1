@@ -86,9 +86,40 @@
           <h3>📋 Liste des projets</h3>
           <div class="table-wrapper">
             <table id="projects-table">
-              <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>Nom</th><th>Réf</th><th>Client</th><th>Créé</th><th>Actions</th></tr></thead>
               <tbody></tbody>
             </table>
+          </div>
+        </div>
+        
+        <!-- Modal de partage (responsable/admin) -->
+        <div id="share-modal" class="modal hidden">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>🔗 Partager le projet</h3>
+              <button id="close-share-modal" class="btn ghost">✕</button>
+            </div>
+            <div class="modal-body">
+              <p class="muted">Sélectionnez les visionneurs avec qui partager ce projet</p>
+              <div class="field">
+                <label>Visionneur</label>
+                <select id="share-viewer-select">
+                  <option value="">-- Sélectionner un visionneur --</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>
+                  <input type="checkbox" id="share-can-edit" />
+                  Autoriser la modification (en plus de la lecture)
+                </label>
+              </div>
+              <button id="share-project-btn" class="btn">Partager</button>
+              
+              <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
+              
+              <h4>Partages existants</h4>
+              <div id="existing-shares"></div>
+            </div>
           </div>
         </div>
       </section>
