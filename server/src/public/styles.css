@@ -3,6 +3,7 @@
 /* Thème sombre (par défaut) */
 :root, [data-theme="dark"]{
   --bg:#0a0e14; 
+  --bg-rgb:10,14,20;
   --bg-pattern:#0d1117;
   --fg:#e1e4e8; 
   --muted:#8b949e; 
@@ -17,11 +18,13 @@
   --warning:#d29922;
   --blueprint:#1f6feb;
   --copper:#ff8c42;
+  --input-bg:#0d1117;
 }
 
 /* Thème clair */
 [data-theme="light"]{
   --bg:#f6f8fa; 
+  --bg-rgb:246,248,250;
   --bg-pattern:#e1e4e8;
   --fg:#24292f; 
   --muted:#57606a; 
@@ -36,6 +39,7 @@
   --warning:#9a6700;
   --blueprint:#0969da;
   --copper:#d97636;
+  --input-bg:#ffffff;
 }
 
 *{ box-sizing:border-box } 
@@ -67,7 +71,7 @@ h1,h2{
 
 .btn{ 
   background:var(--accent); 
-  color:#0a0e14; 
+  color:var(--bg); 
   border:none; 
   border-radius:2px; 
   padding:10px 18px; 
@@ -131,10 +135,10 @@ h1,h2{
   top:0; 
   z-index:5; 
   padding:12px 20px; 
-  background:rgba(10,14,20,0.95); 
+  background:rgba(var(--bg-rgb),0.95); 
   backdrop-filter: blur(12px);
   border-bottom:2px solid var(--border);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
 }
 .header-top{ display:flex; align-items:center; gap:16px }
 .header-top h1{ 
@@ -198,13 +202,13 @@ h1,h2{
 .nav-btn:disabled{ opacity:.3; cursor:not-allowed }
 
 /* Sous-navigation pour les tours */
-.subnav{ background:#0e1218; border-bottom:1px solid var(--border); padding:6px 12px }
+.subnav{ background:var(--input-bg); border-bottom:1px solid var(--border); padding:6px 12px }
 .subnav-header{ display:flex; align-items:center; gap:8px; margin-bottom:6px }
 .subnav-header h3{ margin:0; flex:1; font-size:14px }
 .subnav-tabs{ display:flex; gap:6px; overflow-x:auto; padding:2px 0 }
-.subnav-tabs button{ background:#151a22; color:var(--muted); border:1px solid var(--border); 
+.subnav-tabs button{ background:var(--card-bg); color:var(--muted); border:1px solid var(--border); 
   border-radius:6px; padding:5px 12px; cursor:pointer; transition:all .2s; font-size:12px; white-space:nowrap }
-.subnav-tabs button:hover{ background:#1a2028; border-color:#35507a; color:var(--fg) }
+.subnav-tabs button:hover{ background:var(--accent-ghost); border-color:var(--accent); color:var(--fg) }
 .subnav-tabs button.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
 
 /* Sous-onglets pour un tour spécifique */
@@ -282,7 +286,7 @@ h1,h2{
 }
 
 /* Breadcrumb */
-.breadcrumb{ padding:4px 12px; background:#0e1218; font-size:12px; color:var(--muted) }
+.breadcrumb{ padding:4px 12px; background:var(--input-bg); font-size:12px; color:var(--muted) }
 
 /* Sous-panels */
 .subtabpanel{ display:block }
@@ -344,7 +348,7 @@ h1,h2{
 }
 .round-card.active .round-number{ 
   background:var(--accent); 
-  color:#0a0e14;
+  color:var(--bg);
   transform: rotate(5deg);
 }
 .round-name{ 
@@ -390,19 +394,32 @@ h1,h2{
 
 .field{ display:flex; flex-direction:column; gap:6px; margin-top:10px }
 .field>span{ color:var(--muted); font-size:12px }
-input{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#0e1218; color:var(--fg) }
-input:focus{ border-color:#35507a; box-shadow:0 0 0 3px rgba(77,163,255,.12) }
+input,textarea,select{ 
+  width:100%; 
+  padding:10px 12px; 
+  border-radius:2px; 
+  border:1px solid var(--border); 
+  background:var(--input-bg); 
+  color:var(--fg);
+  font:inherit;
+  transition:all .2s;
+}
+input:focus,textarea:focus,select:focus{ 
+  border-color:var(--accent); 
+  box-shadow:0 0 0 3px rgba(255,140,66,.15);
+  outline:none;
+}
 
 /* Anciens tabs (deprecated mais gardés pour compatibilité) */
 .tabs{ display:flex; gap:8px; margin-left:16px }
-.tab{ background:#0e1218; color:var(--fg); border:1px solid var(--border); border-radius:10px; padding:8px 12px; cursor:pointer }
-.tab.active{ background:var(--accent-ghost); border-color:#35507a }
+.tab{ background:var(--input-bg); color:var(--fg); border:1px solid var(--border); border-radius:10px; padding:8px 12px; cursor:pointer }
+.tab.active{ background:var(--accent-ghost); border-color:var(--accent) }
 .tab:disabled{ opacity:.5; cursor:not-allowed }
 .tabpanel{ margin:0 8px }
 
 /* Chips entreprises */
 .chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
-.chip{ background:#0e1218; border:1px solid var(--border); color:var(--fg);
+.chip{ background:var(--input-bg); border:1px solid var(--border); color:var(--fg);
        padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
 .chip button{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; }
 .chip button:hover{ color:#fff }
@@ -457,23 +474,41 @@ thead th{
   left:0; 
   z-index:3; 
   background:var(--sticky); 
-  border-right:2px solid var(--accent); 
   min-width:120px; 
   width:120px; 
   max-width:120px;
   font-weight: 500;
+}
+.sticky-col::after{
+  content:'';
+  position:absolute;
+  top:0;
+  right:0;
+  width:2px;
+  height:100%;
+  background:var(--accent);
+  z-index:1;
 }
 .sticky-col2{ 
   position:sticky; 
   left:120px; 
   z-index:3; 
   background:var(--sticky); 
-  border-right:2px solid var(--accent); 
   min-width:320px; 
   max-width:520px; 
   white-space:normal; 
   word-wrap:break-word;
   font-weight: 400;
+}
+.sticky-col2::after{
+  content:'';
+  position:absolute;
+  top:0;
+  right:0;
+  width:2px;
+  height:100%;
+  background:var(--accent);
+  z-index:1;
 }
 thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 .delta-pos{ color:var(--success); font-weight:600 } 
@@ -511,7 +546,7 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 .cell-readonly{ color:var(--muted) }
 
 .icon-btn{
-  background:#0e1218;
+  background:var(--input-bg);
   border:1px solid var(--border);
   color:var(--fg);
   border-radius:10px;
@@ -523,7 +558,7 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 /* Bouton avec changements non sauvegardés */
 .btn-unsaved{ 
   background:var(--warning); 
-  color:#0a0e14; 
+  color:var(--bg); 
   animation:pulseWarning 2s ease-in-out infinite;
   box-shadow: 0 0 20px rgba(210,153,34,0.4);
 }
@@ -665,7 +700,7 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
   font-size:11px; 
   font-weight:600; 
   margin-right:10px; 
-  color:#0a0e14; 
+  color:var(--bg); 
   border:none;
   font-family: 'IBM Plex Mono', monospace;
   letter-spacing: 0.05em;
@@ -682,7 +717,7 @@ thead .sticky-col, thead .sticky-col2{ background:var(--sticky) }
 
 .auth-details{ margin-top:8px }
 .auth-details summary{ cursor:pointer; padding:12px; background:var(--card); border:1px solid var(--border); 
-  border-radius:10px; list-style:none; text-align:center; color:var(--muted); transition:all .2s }
+  border-radius:2px; list-style:none; text-align:center; color:var(--muted); transition:all .2s }
 .auth-details summary:hover{ background:var(--accent-ghost); color:var(--fg) }
 .auth-details summary::-webkit-details-marker{ display:none }
 .auth-form{ margin-top:16px; padding-top:16px; border-top:1px solid var(--border) }
