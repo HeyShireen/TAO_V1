@@ -26,11 +26,11 @@ router.get('/:id', async (req, res) => {
         l.id as lot_id, l.code, l.name as lot_name, l.project_id,
         i.id as item_id, i.num, i.designation, i.unit, i.position,
         m.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,
-        json_agg(DISTINCT jsonb_build_object(
-          'id', c.id, 
-          'name', c.name
-        )) FILTER (WHERE c.id IS NOT NULL) as companies,
-        json_agg(DISTINCT jsonb_build_object(
+        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name) ORDER BY lc2.created_at, c2.id)
+         FROM lot_companies lc2
+         JOIN companies c2 ON c2.id = lc2.company_id
+         WHERE lc2.lot_id = l.id) as companies,
+        json_agg(jsonb_build_object(
           'item_id', o.item_id,
           'company_id', o.company_id,
           'unit', o.unit,
@@ -41,8 +41,6 @@ router.get('/:id', async (req, res) => {
       FROM lots l
       LEFT JOIN items i ON i.lot_id = l.id
       LEFT JOIN moe_items m ON m.item_id = i.id
-      LEFT JOIN lot_companies lc ON lc.lot_id = l.id
-      LEFT JOIN companies c ON c.id = lc.company_id
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
       WHERE l.id = $1
       GROUP BY l.id, i.id, m.item_id
@@ -62,14 +60,8 @@ router.get('/:id', async (req, res) => {
       project_id: firstRow.project_id
     };
 
-    // Extraire les entreprises uniques
-    const companiesSet = new Map();
-    result.rows.forEach(row => {
-      if (row.companies) {
-        row.companies.forEach(c => companiesSet.set(c.id, c));
-      }
-    });
-    const companies = Array.from(companiesSet.values()).sort((a, b) => a.name.localeCompare(b.name));
+    // Extraire les entreprises (déjà triées par created_at dans la sous-requête)
+    const companies = firstRow.companies || [];
 
     // Extraire items avec leurs données MOE
     const itemsMap = new Map();
@@ -188,7 +180,7 @@ router.get('/:id/table', async (req, res) => {
 router.get('/:id/companies', async (req, res) => {
   const id = Number(req.params.id);
   const r = await query(
-    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY c.name',
+    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
     [id]
   );
   res.json(r.rows);

@@ -98,10 +98,14 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }))
 
-// Rate Limiting Global: 100 requêtes / 15 min par IP
+// Rate Limiting Global: adaptatif selon environnement
+// Dev: 10000 req/15min (quasi illimité), Prod: 2000 req/15min (usage intensif OK)
+// Note: 2000 req/15min = ~2 req/sec soutenu par utilisateur, largement suffisant
+// Un serveur moyen (4 CPU, 4GB RAM) peut gérer 500+ req/sec total
+const isDev = process.env.NODE_ENV === 'development';
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limite par IP
+  max: isDev ? 10000 : 2000, // Dev: quasi illimité, Prod: usage intensif supporté
   message: { error: 'Trop de requêtes, réessayez dans 15 minutes' },
   standardHeaders: true,
   legacyHeaders: false,

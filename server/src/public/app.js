@@ -211,9 +211,8 @@ function updateCurrentUser() {
       currentUser = { id: payload.id, email: payload.email, role: payload.role || 'visionneur' };
       console.log('👤 Current user updated:', currentUser);
     }
-  } else {
-    console.warn('⚠️ No token found');
   }
+  // Pas de warning si pas de token : c'est normal avant connexion
 }
 
 async function login(email, password){
@@ -274,7 +273,7 @@ function renderUsersTable(users) {
       <td>${user.id}</td>
       <td>${user.email}</td>
       <td>
-        <select class="user-role-select" data-user-id="${user.id}">
+        <select class="user-role-select" id="user-role-${user.id}" name="user-role-${user.id}" data-user-id="${user.id}">
           ${roleSelect}
         </select>
       </td>
@@ -366,9 +365,18 @@ async function loadExistingShares(projectId) {
           <div class="share-item-email">${s.shared_with_email}</div>
           <div class="share-item-perms">${s.can_edit ? 'Lecture + Modification' : 'Lecture seule'}</div>
         </div>
-        <button class="btn ghost btn-sm" onclick="removeShare(${projectId}, ${s.shared_with_user_id})">Retirer</button>
+        <button class="btn ghost btn-sm remove-share-btn" data-project-id="${projectId}" data-user-id="${s.shared_with_user_id}">Retirer</button>
       </div>
     `).join('');
+    
+    // Attacher les événements de suppression
+    container.querySelectorAll('.remove-share-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const projId = btn.dataset.projectId;
+        const usrId = btn.dataset.userId;
+        removeShare(projId, usrId);
+      });
+    });
   } catch (err) {
     console.error('Erreur chargement partages:', err);
   }
@@ -547,24 +555,22 @@ async function loadAccessRequests() {
 let approveState = { requestId: null, projects: [], filtered: [], selectedProjectId: null };
 
 async function openApproveAccessModal(requestId) {
-  console.log('[Approve] Ouverture modal pour demande', requestId);
-  approveState = { requestId, projects: [], filtered: [], selectedProjectId: null };
+  approveState = { requestId, projects: [], filtered: [], selectedProjectId: [] };
   const contextEl = qs('#approve-access-context');
   const selectedEl = qs('#approve-selected');
   const confirmBtn = qs('#approve-confirm-btn');
   const searchInput = qs('#approve-search');
   if (!contextEl || !selectedEl || !confirmBtn) {
-    console.error('[Approve] Elements modal manquants');
     return alert('Erreur interface: éléments modal introuvables');
   }
   selectedEl.textContent = 'Chargement des projets...';
   confirmBtn.disabled = true;
   if (searchInput) searchInput.value = '';
   contextEl.innerHTML = `Demande #${requestId} — sélectionner un projet à partager`;
-  show('#approve-access-modal'); // Afficher immédiatement
+  show('#approve-access-modal');
+  
   try {
     const projects = await api('/projects');
-    console.log('[Approve] Projets chargés:', projects.length);
     approveState.projects = projects;
     approveState.filtered = projects;
     if (projects.length === 0) {
@@ -572,9 +578,9 @@ async function openApproveAccessModal(requestId) {
       return;
     }
     selectedEl.textContent = 'Aucun projet sélectionné.';
+    initApproveProjectSelection();
     renderApproveProjects();
   } catch(err) {
-    console.error('[Approve] Erreur chargement projets:', err);
     selectedEl.textContent = 'Erreur lors du chargement des projets.';
     contextEl.innerHTML += '<br><span style="color:#dc3545;">Impossible de charger les projets.</span>';
   }
@@ -584,27 +590,84 @@ function renderApproveProjects() {
   const tbody = qs('#approve-projects-tbody');
   if (!tbody) return;
   const list = approveState.filtered;
+  
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="padding:8px;">Aucun projet trouvé</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:12px;text-align:center;color:var(--muted);">Aucun projet trouvé</td></tr>';
     return;
   }
   tbody.innerHTML = list.map(p => {
-    const selected = p.id === approveState.selectedProjectId;
-    return `<tr data-project-id="${p.id}" style="background:${selected ? 'var(--accent-subtle)' : 'transparent'};">
-      <td style="padding:4px 8px;">${p.name}</td>
-      <td style="padding:4px 8px;">${p.reference || ''}</td>
-      <td style="padding:4px 8px;">${p.client || ''}</td>
-      <td style="padding:4px 8px;"><button class="btn btn-sm" data-select-project="${p.id}">${selected ? '✓' : 'Choisir'}</button></td>
+    const selected = Array.isArray(approveState.selectedProjectId) 
+      ? approveState.selectedProjectId.includes(Number(p.id))
+      : approveState.selectedProjectId === Number(p.id);
+    return `<tr data-project-id="${p.id}" class="approve-project-row" style="cursor:pointer;">
+      <td style="padding:10px 12px;text-align:center;"><input type="checkbox" value="${p.id}" ${selected?'checked':''} data-select-project="${p.id}" /></td>
+      <td style="padding:10px 12px;font-weight:${selected?'600':'400'};">${p.name}</td>
+      <td style="padding:10px 12px;">${p.reference || '—'}</td>
+      <td style="padding:10px 12px;">${p.client || '—'}</td>
     </tr>`;
   }).join('');
-  // Attach listeners
-  qsa('[data-select-project]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      approveState.selectedProjectId = parseInt(btn.dataset.selectProject);
-      setText('#approve-selected', 'Projet sélectionné: ' + (approveState.projects.find(p=>p.id===approveState.selectedProjectId)?.name || '')); 
+}
+
+// Event delegation pour la sélection de projet (initialisé une seule fois)
+function initApproveProjectSelection() {
+  const tbody = qs('#approve-projects-tbody');
+  if (!tbody || tbody.dataset.listenerAttached) return;
+  tbody.dataset.listenerAttached = 'true';
+  
+  tbody.addEventListener('change', (e) => {
+    const checkbox = e.target;
+    
+    if (checkbox.type !== 'checkbox') return;
+    
+    const projectId = parseInt(checkbox.value);
+    
+    // Initialiser comme tableau si nécessaire
+    if (!Array.isArray(approveState.selectedProjectId)) {
+      approveState.selectedProjectId = approveState.selectedProjectId ? [approveState.selectedProjectId] : [];
+    }
+    
+    if (checkbox.checked) {
+      // Ajouter à la sélection
+      if (!approveState.selectedProjectId.includes(projectId)) {
+        approveState.selectedProjectId.push(projectId);
+      }
+    } else {
+      // Retirer de la sélection
+      approveState.selectedProjectId = approveState.selectedProjectId.filter(id => id !== projectId);
+    }
+    
+    // Mettre à jour l'affichage - chercher dans projects ou filtered
+    let selectedProjects = approveState.projects.filter(p => approveState.selectedProjectId.includes(p.id));
+    if (selectedProjects.length === 0) {
+      selectedProjects = approveState.filtered.filter(p => approveState.selectedProjectId.includes(p.id));
+    }
+    
+    // Activer le bouton dès qu'il y a des IDs, même si on ne trouve pas les noms
+    if (approveState.selectedProjectId.length === 0) {
+      setText('#approve-selected', 'Cliquez sur un projet pour le sélectionner');
+      qs('#approve-confirm-btn').disabled = true;
+    } else if (selectedProjects.length === 1) {
+      setText('#approve-selected', `✅ ${selectedProjects[0].name}`);
       qs('#approve-confirm-btn').disabled = false;
-      renderApproveProjects();
-    });
+    } else if (selectedProjects.length > 1) {
+      setText('#approve-selected', `✅ ${selectedProjects.length} projets sélectionnés`);
+      qs('#approve-confirm-btn').disabled = false;
+    } else {
+      // Fallback: on a des IDs mais pas les objets projet - activer quand même
+      setText('#approve-selected', `✅ ${approveState.selectedProjectId.length} projet(s) sélectionné(s)`);
+      qs('#approve-confirm-btn').disabled = false;
+    }
+    
+    renderApproveProjects();
+  });
+  
+  // Permettre le clic sur la ligne entière
+  tbody.addEventListener('click', (e) => {
+    const row = e.target.closest('.approve-project-row');
+    if (!row || e.target.type === 'checkbox') return;
+    
+    const checkbox = row.querySelector('input[type="checkbox"]');
+    if (checkbox) checkbox.click();
   });
 }
 
@@ -617,15 +680,24 @@ function filterApproveProjects(term) {
 }
 
 async function confirmApproveAccess() {
-  if (!approveState.selectedProjectId) return;
+  const selectedIds = Array.isArray(approveState.selectedProjectId) 
+    ? approveState.selectedProjectId 
+    : (approveState.selectedProjectId ? [approveState.selectedProjectId] : []);
+  
+  if (selectedIds.length === 0) return;
+  
   const canEdit = qs('#approve-can-edit').checked;
+  
   try {
-    await api(`/access-requests/${approveState.requestId}/approve`, {
-      method: 'PATCH',
-      body: { projectId: approveState.selectedProjectId, canEdit }
-    });
+    // Approuver pour chaque projet sélectionné
+    for (const projectId of selectedIds) {
+      await api(`/access-requests/${approveState.requestId}/approve`, {
+        method: 'PATCH',
+        body: { projectId, canEdit }
+      });
+    }
     hide('#approve-access-modal');
-    alert('✅ Demande approuvée et projet partagé');
+    alert(`✅ Demande approuvée et ${selectedIds.length} projet(s) partagé(s)`);
     loadAccessRequests();
   } catch(err) {
     alert('Erreur approbation: ' + err.message);
@@ -724,13 +796,17 @@ async function loadRounds(){
       const card = document.createElement('div');
       card.className = 'round-card';
       card.dataset.roundId = round.id;
+      const actionsHTML = isVisionneur() ? '' : `
+            <button class="edit-round" title="Modifier">✏️</button>
+            <button class="duplicate-round" title="Dupliquer">📋</button>
+            <button class="delete-round" title="Supprimer">🗑️</button>
+          `;
+      
       card.innerHTML = `
         <div class="round-card-header">
           <span class="round-number">${round.round_number}</span>
           <div class="round-actions">
-            <button class="edit-round" title="Modifier">✏️</button>
-            <button class="duplicate-round" title="Dupliquer">📋</button>
-            <button class="delete-round" title="Supprimer">🗑️</button>
+            ${actionsHTML}
           </div>
         </div>
         <div class="round-name" contenteditable="false">${round.name}</div>
@@ -758,53 +834,66 @@ async function loadRounds(){
       
       const nameEl = card.querySelector('.round-name');
       
-      card.querySelector('.edit-round').addEventListener('click', (e) => {
-        e.stopPropagation();
-        nameEl.setAttribute('contenteditable', 'true');
-        nameEl.focus();
-        // Sélectionner tout le texte
-        const range = document.createRange();
-        range.selectNodeContents(nameEl);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-      });
-      
-      nameEl.addEventListener('blur', async () => {
-        nameEl.setAttribute('contenteditable', 'false');
-        const newName = nameEl.textContent.trim();
-        if (newName && newName !== round.name) {
-          try {
-            await api(`/rounds/${round.id}`, {
-              method: 'PUT',
-              body: { name: newName, description: round.description, status: round.status }
-            });
-            round.name = newName; // Mettre à jour localement
-          } catch (err) {
-            alert('Erreur: ' + err.message);
-            nameEl.textContent = round.name; // Restaurer l'ancien nom
+      // Empêcher l'édition pour les visionneurs
+      if (!isVisionneur()) {
+        const editBtn = card.querySelector('.edit-round');
+        if (editBtn) {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            nameEl.setAttribute('contenteditable', 'true');
+            nameEl.focus();
+            // Sélectionner tout le texte
+            const range = document.createRange();
+            range.selectNodeContents(nameEl);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          });
+        }
+        
+        nameEl.addEventListener('blur', async () => {
+          nameEl.setAttribute('contenteditable', 'false');
+          const newName = nameEl.textContent.trim();
+          if (newName && newName !== round.name) {
+            try {
+              await api(`/rounds/${round.id}`, {
+                method: 'PUT',
+                body: { name: newName, description: round.description, status: round.status }
+              });
+              round.name = newName; // Mettre à jour localement
+            } catch (err) {
+              alert('Erreur: ' + err.message);
+              nameEl.textContent = round.name; // Restaurer l'ancien nom
+            }
           }
+        });
+        
+        nameEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            nameEl.blur();
+          } else if (e.key === 'Escape') {
+            nameEl.textContent = round.name;
+            nameEl.blur();
+          }
+        });
+        
+        const duplicateBtn = card.querySelector('.duplicate-round');
+        if (duplicateBtn) {
+          duplicateBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            duplicateRound(round.id);
+          });
         }
-      });
-      
-      nameEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          nameEl.blur();
-        } else if (e.key === 'Escape') {
-          nameEl.textContent = round.name;
-          nameEl.blur();
+        
+        const deleteBtn = card.querySelector('.delete-round');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteRound(round.id);
+          });
         }
-      });
-      
-      card.querySelector('.duplicate-round').addEventListener('click', (e) => {
-        e.stopPropagation();
-        duplicateRound(round.id);
-      });
-      card.querySelector('.delete-round').addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteRound(round.id);
-      });
+      }
       
       container.appendChild(card);
     }
@@ -871,7 +960,7 @@ async function loadLotsForRound(){
   
   for (const l of lots){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${l.id}</td><td>${l.code||''}</td><td>${l.name}</td><td><button class="btn">Ouvrir</button></td>`;
+    tr.innerHTML = `<td>${l.id}</td><td>${l.code||''}</td><td>${l.name}</td><td><button class="btn">${isVisionneur() ? '👁️ Voir' : 'Ouvrir'}</button></td>`;
     tr.querySelector('button').addEventListener('click', () => openLot(l.id, l));
     tbody.appendChild(tr);
   }
@@ -1317,6 +1406,20 @@ async function openLot(id, lotMeta){
   await refreshCompare();
   hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
   qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
+  
+  // Visionneurs: masquer le bouton Édition
+  if (isVisionneur()) {
+    const modeEditBtn = qs('#mode-edit');
+    if (modeEditBtn) modeEditBtn.style.display = 'none';
+    // Masquer complètement le panneau de configuration des seuils
+    const configDetails = qs('.config-details');
+    if (configDetails) configDetails.style.display = 'none';
+  } else {
+    const modeEditBtn = qs('#mode-edit');
+    if (modeEditBtn) modeEditBtn.style.display = '';
+    const configDetails = qs('.config-details');
+    if (configDetails) configDetails.style.display = '';
+  }
 
   // Chips entreprises
   renderLotCompanies();
@@ -1377,6 +1480,7 @@ async function loadLotThresholds(){
 }
 
 async function saveLotThresholds(){
+  if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas modifier les seuils.');
   if (!currentLot) return;
   try {
     const body = {
@@ -1393,6 +1497,7 @@ async function saveLotThresholds(){
 }
 
 async function generateQuestions(){
+  if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas générer de fiches questions.');
   if (!currentLot || !currentRound) return;
   try {
     const result = await api(`/question-config/lot/${currentLot.id}/generate`, { 
@@ -1494,25 +1599,36 @@ async function refreshQuestions(){
     html += '</tbody></table>';
     listDiv.innerHTML = html;
     
-    // Bind actions
-    qsa('.btn-answer, .btn-dismiss').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const qid = e.target.dataset.qid;
-        const status = e.target.dataset.status;
-        const textarea = qs(`textarea[data-qid="${qid}"]`);
-        const answer = textarea ? textarea.value.trim() : '';
-        
-        try {
-          await api(`/question-config/question/${qid}`, {
-            method: 'PUT',
-            body: { answer, status }
-          });
-          await refreshQuestions();
-        } catch (err) {
-          alert('❌ Erreur: ' + err.message);
-        }
+    // Visionneurs: rendre les textareas en lecture seule
+    if (isVisionneur()) {
+      qsa('textarea[data-qid]').forEach(ta => {
+        ta.disabled = true;
+        ta.style.backgroundColor = 'var(--input-bg)';
+        ta.style.opacity = '0.7';
       });
-    });
+      // Masquer les boutons d'actions
+      qsa('.btn-answer, .btn-dismiss').forEach(btn => btn.style.display = 'none');
+    } else {
+      // Bind actions pour les non-visionneurs
+      qsa('.btn-answer, .btn-dismiss').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const qid = e.target.dataset.qid;
+          const status = e.target.dataset.status;
+          const textarea = qs(`textarea[data-qid="${qid}"]`);
+          const answer = textarea ? textarea.value.trim() : '';
+          
+          try {
+            await api(`/question-config/question/${qid}`, {
+              method: 'PUT',
+              body: { answer, status }
+            });
+            await refreshQuestions();
+          } catch (err) {
+            alert('❌ Erreur: ' + err.message);
+          }
+        });
+      });
+    }
   } catch (err) {
     console.error('Erreur chargement questions:', err);
     alert('❌ Erreur: ' + err.message);
@@ -1636,8 +1752,11 @@ function buildSheetModel(raw){
     return row;
   });
 
-  if (sheetRows.length === 0)
-    sheetRows.push({ item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} });
+  if (sheetRows.length === 0) {
+    const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+    sheetRows.push(blank);
+  }
 
   buildColModel();
   renderSheetInitial();
@@ -2199,6 +2318,10 @@ function renderSheetBindings(){
     qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
   });
   qs('#mode-edit').addEventListener('click', () => {
+    if (isVisionneur()) {
+      alert('Accès non autorisé : vous ne pouvez consulter que le comparatif.');
+      return;
+    }
     show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
     qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
   });
@@ -2267,6 +2390,60 @@ function updateUIForRole() {
     show('#create-project-section');
   } else {
     hide('#create-project-section');
+  }
+  
+  // Masquer le bouton d'ajout de tour pour les visionneurs
+  const addRoundBtn = qs('#add-round');
+  if (addRoundBtn) {
+    if (isVisionneur()) {
+      addRoundBtn.style.display = 'none';
+    } else {
+      addRoundBtn.style.display = '';
+    }
+  }
+  
+  // Masquer le bouton d'ajout de lot et l'onglet lots pour les visionneurs
+  const addLotBtn = qs('#add-lot');
+  if (addLotBtn) {
+    if (isVisionneur()) {
+      addLotBtn.style.display = 'none';
+    } else {
+      addLotBtn.style.display = '';
+    }
+  }
+  
+  const tourLotsTab = qs('[data-tour-tab="tour-lots"]');
+  if (tourLotsTab) {
+    if (isVisionneur()) {
+      tourLotsTab.style.display = 'none';
+    } else {
+      tourLotsTab.style.display = '';
+    }
+  }
+  
+  // Masquer le bouton de sauvegarde config questions projet pour les visionneurs
+  const saveProjectQuestions = qs('#save-project-questions');
+  if (saveProjectQuestions) {
+    if (isVisionneur()) {
+      saveProjectQuestions.style.display = 'none';
+    } else {
+      saveProjectQuestions.style.display = '';
+    }
+  }
+  
+  // Masquer l'onglet "Liste des Tours" pour les visionneurs
+  const roundsListTab = qs('[data-rounds-tab="rounds-list-view"]');
+  if (roundsListTab) {
+    if (isVisionneur()) {
+      roundsListTab.style.display = 'none';
+      // Activer par défaut l'onglet comparaison pour les visionneurs
+      const compareTab = qs('[data-rounds-tab="rounds-compare-view"]');
+      if (compareTab) {
+        compareTab.click();
+      }
+    } else {
+      roundsListTab.style.display = '';
+    }
   }
   
   // Bouton demande d'accès (visionneur uniquement)
@@ -2452,6 +2629,7 @@ function bindUI(){
   qs('#add-round')?.addEventListener('click', createRound);
 
   qs('#add-lot').addEventListener('click', async ()=>{ try{
+    if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas ajouter de lots.');
     if(!currentProject) return alert('Ouvrir un projet');
     if(!currentRound) return alert('Sélectionner un tour d\'abord');
     const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim();
@@ -2499,9 +2677,17 @@ function bindUI(){
   });
 
   // Modal approbation d'accès (responsable/admin)
+  const approveConfirmBtn = qs('#approve-confirm-btn');
+  
   qs('#close-approve-access-modal')?.addEventListener('click', cancelApproveAccessModal);
   qs('#approve-cancel-btn')?.addEventListener('click', cancelApproveAccessModal);
-  qs('#approve-confirm-btn')?.addEventListener('click', confirmApproveAccess);
+  
+  if (approveConfirmBtn) {
+    approveConfirmBtn.addEventListener('click', () => {
+      confirmApproveAccess();
+    });
+  }
+  
   qs('#approve-search')?.addEventListener('input', (e) => filterApproveProjects(e.target.value));
   qs('#approve-access-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'approve-access-modal') cancelApproveAccessModal();

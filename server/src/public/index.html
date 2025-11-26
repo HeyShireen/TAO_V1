@@ -119,14 +119,14 @@
             <div class="modal-body">
               <p class="muted">Sélectionnez les visionneurs avec qui partager ce projet</p>
               <div class="field">
-                <label>Visionneur</label>
-                <select id="share-viewer-select">
+                <label for="share-viewer-select">Visionneur</label>
+                <select id="share-viewer-select" name="share-viewer-select">
                   <option value="">-- Sélectionner un visionneur --</option>
                 </select>
               </div>
               <div class="field">
                 <label>
-                  <input type="checkbox" id="share-can-edit" />
+                  <input type="checkbox" id="share-can-edit" name="share-can-edit" />
                   Autoriser la modification (en plus de la lecture)
                 </label>
               </div>
@@ -136,74 +136,6 @@
               
               <h4>Partages existants</h4>
               <div id="existing-shares"></div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Modal de demande d'accès (visionneur) -->
-        <div id="access-request-modal" class="modal hidden">
-          <div class="modal-content">
-            <div class="modal-header">
-              <h3>📩 Demander l'accès à un projet</h3>
-              <button id="close-access-request-modal" class="btn ghost">✕</button>
-            </div>
-            <div class="modal-body">
-              <p class="muted">Indiquez le nom du projet auquel vous souhaitez accéder. Un responsable ou administrateur examinera votre demande.</p>
-              
-              <div class="field">
-                <label>Nom du projet *</label>
-                <input type="text" id="access-request-project-name" placeholder="Ex: Rénovation École Primaire" required />
-                <small class="muted">Saisissez le nom exact ou une description du projet</small>
-              </div>
-              
-              <div class="field">
-                <label>Message (optionnel)</label>
-                <textarea id="access-request-message" rows="4" placeholder="Expliquez pourquoi vous avez besoin d'accéder à ce projet..."></textarea>
-              </div>
-              
-              <button id="submit-access-request-btn" class="btn btn-primary">Envoyer la demande</button>
-              
-              <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
-              
-              <h4>Mes demandes en cours</h4>
-              <div id="my-access-requests"></div>
-            </div>
-          </div>
-        </div>
-        <!-- Modal d'approbation de demande d'accès (responsable/admin) -->
-        <div id="approve-access-modal" class="modal hidden">
-          <div class="modal-content" style="max-width:560px;">
-            <div class="modal-header">
-              <h3>✅ Approuver une demande d'accès</h3>
-              <button id="close-approve-access-modal" class="btn ghost">✕</button>
-            </div>
-            <div class="modal-body">
-              <div id="approve-access-context" class="muted" style="margin-bottom:1rem;font-size:0.9em;"></div>
-              <div class="field">
-                <label for="approve-search">Rechercher un projet</label>
-                <input type="text" id="approve-search" placeholder="Tapez pour filtrer les projets..." autocomplete="off" />
-              </div>
-              <div class="field" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;">
-                <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
-                  <thead>
-                    <tr style="background:var(--card);">
-                      <th style="text-align:left;padding:6px 8px;">Nom</th>
-                      <th style="text-align:left;padding:6px 8px;">Référence</th>
-                      <th style="text-align:left;padding:6px 8px;">Client</th>
-                      <th style="text-align:left;padding:6px 8px;">Sélection</th>
-                    </tr>
-                  </thead>
-                  <tbody id="approve-projects-tbody"></tbody>
-                </table>
-              </div>
-              <div class="field" style="margin-top:1rem;">
-                <label><input type="checkbox" id="approve-can-edit" /> Donner aussi l'accès édition</label>
-              </div>
-              <div id="approve-selected" class="muted" style="margin:8px 0 12px 0;font-size:0.85em;">Aucun projet sélectionné.</div>
-              <div class="row gap" style="justify-content:flex-end;">
-                <button id="approve-confirm-btn" class="btn btn-primary" disabled>Approuver</button>
-                <button id="approve-cancel-btn" class="btn ghost">Annuler</button>
-              </div>
             </div>
           </div>
         </div>
@@ -240,16 +172,16 @@
             
             <!-- Sélecteurs de tours pour l'analyse -->
             <div class="row gap" style="margin-top:16px;margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
-              <label style="font-weight:600">🔍 Analyser l'évolution entre :</label>
+              <span style="font-weight:600">🔍 Analyser l'évolution entre :</span>
               <div class="field" style="margin:0">
-                <label style="font-size:12px;color:var(--muted)">Tour de référence</label>
-                <select id="compare-round-from" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <label for="compare-round-from" style="font-size:12px;color:var(--muted)">Tour de référence</label>
+                <select id="compare-round-from" name="compare-round-from" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
                   <option value="">Sélectionner un tour...</option>
                 </select>
               </div>
               <div class="field" style="margin:0">
-                <label style="font-size:12px;color:var(--muted)">Tour à comparer</label>
-                <select id="compare-round-to" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <label for="compare-round-to" style="font-size:12px;color:var(--muted)">Tour à comparer</label>
+                <select id="compare-round-to" name="compare-round-to" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
                   <option value="">Sélectionner un tour...</option>
                 </select>
               </div>
@@ -411,22 +343,22 @@
             <p class="muted">Questions automatiques selon les écarts détectés</p>
           
           <div class="field">
-            <label><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
+            <label for="q-qty-low"><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
             <textarea id="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
-            <label><strong>Question si quantité HAUTE (supérieure à MOE)</strong></label>
+            <label for="q-qty-high"><strong>Question si quantité HAUTE (supérieure à MOE)</strong></label>
             <textarea id="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
-            <label><strong>Question si prix unitaire FAIBLE (inférieur à MOE)</strong></label>
+            <label for="q-price-low"><strong>Question si prix unitaire FAIBLE (inférieur à MOE)</strong></label>
             <textarea id="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
-            <label><strong>Question si prix unitaire HAUT (supérieur à MOE)</strong></label>
+            <label for="q-price-high"><strong>Question si prix unitaire HAUT (supérieur à MOE)</strong></label>
             <textarea id="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
@@ -444,19 +376,19 @@
             <summary style="cursor:pointer;font-weight:600;padding:8px">⚙️ Paramètres des seuils</summary>
             <div class="grid grid-4 gap" style="margin-top:16px">
               <div class="field">
-                <label>Seuil Qté Basse (%)</label>
+                <label for="threshold-qty-low">Seuil Qté Basse (%)</label>
                 <input id="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
-                <label>Seuil Qté Haute (%)</label>
+                <label for="threshold-qty-high">Seuil Qté Haute (%)</label>
                 <input id="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
-                <label>Seuil Prix Bas (%)</label>
+                <label for="threshold-price-low">Seuil Prix Bas (%)</label>
                 <input id="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
-                <label>Seuil Prix Haut (%)</label>
+                <label for="threshold-price-high">Seuil Prix Haut (%)</label>
                 <input id="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
               </div>
             </div>
@@ -468,11 +400,11 @@
           
           <!-- Filtre par entreprise -->
           <div class="row gap" style="margin-bottom:16px">
-            <label>Filtrer par entreprise :</label>
+            <label for="filter-company">Filtrer par entreprise :</label>
             <select id="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Toutes les entreprises</option>
             </select>
-            <label>Statut :</label>
+            <label for="filter-status">Statut :</label>
             <select id="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Tous</option>
               <option value="pending">En attente</option>
@@ -500,8 +432,8 @@
           <p class="muted">Gérez les demandes d'accès soumises par les visionneurs.</p>
           
           <div class="field" style="margin-bottom: 1rem;">
-            <label>Filtrer par statut :</label>
-            <select id="filter-access-requests-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);">
+            <label for="filter-access-requests-status">Filtrer par statut :</label>
+            <select id="filter-access-requests-status" name="filter-access-requests-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);">
               <option value="">Toutes</option>
               <option value="pending" selected>En attente</option>
               <option value="approved">Approuvées</option>
@@ -559,7 +491,7 @@
           <div class="settings-section">
             <h4>🎨 Apparence</h4>
             <div class="field">
-              <label>Thème de l'interface</label>
+              <div style="font-weight:500;margin-bottom:0.5rem;">Thème de l'interface</div>
               <div class="theme-selector">
                 <button id="theme-dark" class="theme-option active" data-theme="dark">
                   <span class="theme-preview dark-preview"></span>
@@ -577,15 +509,15 @@
             <h4>👤 Compte</h4>
             <form onsubmit="return false;">
               <div class="field">
-                <label>Email</label>
+                <label for="settings-email">Email</label>
                 <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled autocomplete="email" />
               </div>
               <div class="field">
-                <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label>
+                <label for="settings-new-password">Nouveau mot de passe (laisser vide pour ne pas changer)</label>
                 <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
               </div>
               <div class="field">
-              <label>Confirmer le mot de passe</label>
+              <label for="settings-confirm-password">Confirmer le mot de passe</label>
               <input id="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
             </div>
             <button id="save-settings" type="button" class="btn">Enregistrer</button>
@@ -603,6 +535,76 @@
 
     </section>
 
+  </div>
+
+  <!-- Modals (en dehors des sections pour toujours être accessibles) -->
+  <!-- Modal de demande d'accès (visionneur) -->
+  <div id="access-request-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>📩 Demander l'accès à un projet</h3>
+        <button id="close-access-request-modal" class="btn ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">Indiquez le nom du projet auquel vous souhaitez accéder. Un responsable ou administrateur examinera votre demande.</p>
+        
+        <div class="field">
+          <label for="access-request-project-name">Nom du projet *</label>
+          <input type="text" id="access-request-project-name" name="project-name" placeholder="Ex: Rénovation École Primaire" required />
+          <small class="muted">Saisissez le nom exact ou une description du projet</small>
+        </div>
+        
+        <div class="field">
+          <label for="access-request-message">Message (optionnel)</label>
+          <textarea id="access-request-message" rows="4" placeholder="Expliquez pourquoi vous avez besoin d'accéder à ce projet..."></textarea>
+        </div>
+        
+        <button id="submit-access-request-btn" class="btn btn-primary">Envoyer la demande</button>
+        
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
+        
+        <h4>Mes demandes en cours</h4>
+        <div id="my-access-requests"></div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal d'approbation de demande d'accès (responsable/admin) -->
+  <div id="approve-access-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:560px;">
+      <div class="modal-header">
+        <h3>✅ Approuver une demande d'accès</h3>
+        <button id="close-approve-access-modal" class="btn ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="approve-access-context" class="muted" style="margin-bottom:1rem;font-size:0.9em;"></div>
+        <div class="field">
+          <label for="approve-search">Rechercher un projet</label>
+          <input type="text" id="approve-search" name="project-search" placeholder="Tapez pour filtrer les projets..." autocomplete="off" />
+        </div>
+        <div class="field" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
+            <thead>
+              <tr style="background:var(--card);">
+                <th style="text-align:center;padding:10px 12px;font-weight:600;width:50px;"></th>
+                <th style="text-align:left;padding:10px 12px;font-weight:600;">Projet</th>
+                <th style="text-align:left;padding:10px 12px;font-weight:600;">Référence</th>
+                <th style="text-align:left;padding:10px 12px;font-weight:600;">Client</th>
+              </tr>
+            </thead>
+            <tbody id="approve-projects-tbody"></tbody>
+          </table>
+        </div>
+        <div id="approve-selected" style="margin:12px 0;padding:10px;background:var(--card);border-radius:6px;font-size:0.9em;font-weight:500;text-align:center;color:var(--muted);">Cliquez sur un projet pour le sélectionner</div>
+        <div class="field" style="margin-top:0.5rem;">
+          <label><input type="checkbox" id="approve-can-edit" name="approve-can-edit" /> Donner aussi l'accès édition</label>
+        </div>
+        <div class="row gap" style="justify-content:flex-end;margin-top:1rem;">
+          <button id="approve-cancel-btn" class="btn ghost">Annuler</button>
+          <button id="approve-confirm-btn" class="btn btn-primary" disabled>Approuver</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="./app.js"></script>

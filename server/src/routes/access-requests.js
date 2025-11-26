@@ -116,17 +116,17 @@ router.patch('/:id/approve', isResponsableOrAdmin, async (req, res) => {
     }
     const project = projectResult.rows[0];
     
-    // Récupérer la demande
+    // Récupérer la demande (accepter aussi les demandes déjà approuvées pour multi-projet)
     const requestResult = await query(
       `SELECT ar.*, u.email as user_email
        FROM access_requests ar
        JOIN users u ON ar.user_id = u.id
-       WHERE ar.id = $1 AND ar.status = 'pending'`,
+       WHERE ar.id = $1 AND ar.status IN ('pending', 'approved')`,
       [id]
     );
     
     if (requestResult.rowCount === 0) {
-      return res.status(404).json({ error: 'Demande introuvable ou déjà traitée' });
+      return res.status(404).json({ error: 'Demande introuvable ou rejetée' });
     }
     
     const request = requestResult.rows[0];
@@ -140,10 +140,15 @@ router.patch('/:id/approve', isResponsableOrAdmin, async (req, res) => {
       [projectId, request.user_id, canEdit, req.user.id]
     );
     
-    // Mettre à jour la demande avec le project_id et marquer comme approuvée
+    // Mettre à jour la demande avec le project_id et marquer comme approuvée (seulement si pending)
     await query(
-      'UPDATE access_requests SET status = $1, reviewed_by = $2, reviewed_at = now(), project_id = $3 WHERE id = $4',
-      ['approved', req.user.id, projectId, id]
+      `UPDATE access_requests 
+       SET status = 'approved', 
+           reviewed_by = COALESCE(reviewed_by, $1), 
+           reviewed_at = COALESCE(reviewed_at, now()), 
+           project_id = $2 
+       WHERE id = $3`,
+      [req.user.id, projectId, id]
     );
     
     // Notifier le visionneur
