@@ -1721,7 +1721,7 @@ window.addEventListener('load', recalcCompareHeaderOffsets);
 /* ================= Tableur (édition) ================= */
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
-  const moeByItem = new Map(raw.moe.map(m => [m.item_id, m]));
+  const moeByItem = new Map(raw.moe.map(m => [Number(m.item_id), m]));
   const offersByItem = new Map();
   for (const o of raw.offers) {
     if (!offersByItem.has(o.item_id)) offersByItem.set(o.item_id, new Map());
@@ -1729,9 +1729,10 @@ function buildSheetModel(raw){
   }
 
   sheetRows = raw.items.map((it) => {
-    const moe = moeByItem.get(it.id) || {};
+    const itemId = Number(it.id);
+    const moe = moeByItem.get(itemId) || {};
     const row = {
-      item_id: it.id,
+      item_id: itemId,
       num: it.num || '',
       designation: it.designation || '',
       unit: it.unit || '',
@@ -1742,8 +1743,9 @@ function buildSheetModel(raw){
       offers: {}
     };
     for (const c of lotCompanies) {
-      const o = offersByItem.get(it.id)?.get(c.id) || {};
-      row.offers[c.id] = { 
+      const companyId = Number(c.id);
+      const o = offersByItem.get(itemId)?.get(companyId) || {};
+      row.offers[companyId] = { 
         u: o.unit ?? '', 
         qty: o.qty != null ? String(o.qty) : '', 
         pu: o.unit_price != null ? String(o.unit_price) : '' 
