@@ -6,7 +6,7 @@ services:
     region: frankfurt  # ou oregon, singapore selon votre localisation
     plan: free  # ou starter pour production
     buildCommand: cd server && npm install
-    startCommand: cd server && npm run dev
+    startCommand: cd server && node src/server.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -16,8 +16,14 @@ services:
         fromDatabase:
           name: tao-db
           property: connectionString
+      - key: APP_URL
+        sync: false  # URL de votre app Render (ex: https://tao-app.onrender.com)
+      - key: EMAIL_USER
+        sync: false  # alban.michaud65@gmail.com
+      - key: EMAIL_PASS
+        sync: false  # App password Gmail
       - key: ALLOWED_ORIGINS
-        sync: false  # À configurer manuellement
+        sync: false  # À configurer manuellement si besoin
 
 databases:
   # Base de données PostgreSQL

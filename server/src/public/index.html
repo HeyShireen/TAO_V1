@@ -32,7 +32,7 @@
               <button id="login-btn" type="button" class="btn">Se connecter</button>
             </div>
             <p class="muted" style="margin-top:0.5rem; font-size:0.85em;">
-              <a href="#" id="reset-admin-link" style="color:var(--primary);">Mot de passe admin oublié ?</a>
+              <a href="#" id="forgot-password-link" style="color:var(--primary);">Mot de passe oublié ?</a>
             </p>
           </form>
         </details>
@@ -148,13 +148,12 @@
               <button id="close-access-request-modal" class="btn ghost">✕</button>
             </div>
             <div class="modal-body">
-              <p class="muted">Sélectionnez le projet auquel vous souhaitez accéder. Un responsable examinera votre demande.</p>
+              <p class="muted">Indiquez le nom du projet auquel vous souhaitez accéder. Un responsable ou administrateur examinera votre demande.</p>
               
               <div class="field">
-                <label>Projet</label>
-                <select id="access-request-project-select">
-                  <option value="">-- Sélectionner un projet --</option>
-                </select>
+                <label>Nom du projet *</label>
+                <input type="text" id="access-request-project-name" placeholder="Ex: Rénovation École Primaire" required />
+                <small class="muted">Saisissez le nom exact ou une description du projet</small>
               </div>
               
               <div class="field">
@@ -168,6 +167,43 @@
               
               <h4>Mes demandes en cours</h4>
               <div id="my-access-requests"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Modal d'approbation de demande d'accès (responsable/admin) -->
+        <div id="approve-access-modal" class="modal hidden">
+          <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header">
+              <h3>✅ Approuver une demande d'accès</h3>
+              <button id="close-approve-access-modal" class="btn ghost">✕</button>
+            </div>
+            <div class="modal-body">
+              <div id="approve-access-context" class="muted" style="margin-bottom:1rem;font-size:0.9em;"></div>
+              <div class="field">
+                <label for="approve-search">Rechercher un projet</label>
+                <input type="text" id="approve-search" placeholder="Tapez pour filtrer les projets..." autocomplete="off" />
+              </div>
+              <div class="field" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
+                  <thead>
+                    <tr style="background:var(--card);">
+                      <th style="text-align:left;padding:6px 8px;">Nom</th>
+                      <th style="text-align:left;padding:6px 8px;">Référence</th>
+                      <th style="text-align:left;padding:6px 8px;">Client</th>
+                      <th style="text-align:left;padding:6px 8px;">Sélection</th>
+                    </tr>
+                  </thead>
+                  <tbody id="approve-projects-tbody"></tbody>
+                </table>
+              </div>
+              <div class="field" style="margin-top:1rem;">
+                <label><input type="checkbox" id="approve-can-edit" /> Donner aussi l'accès édition</label>
+              </div>
+              <div id="approve-selected" class="muted" style="margin:8px 0 12px 0;font-size:0.85em;">Aucun projet sélectionné.</div>
+              <div class="row gap" style="justify-content:flex-end;">
+                <button id="approve-confirm-btn" class="btn btn-primary" disabled>Approuver</button>
+                <button id="approve-cancel-btn" class="btn ghost">Annuler</button>
+              </div>
             </div>
           </div>
         </div>

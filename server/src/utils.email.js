@@ -171,3 +171,47 @@ export async function sendAccessRejectedEmail(visionneurEmail, projectName, reas
     console.error('❌ Erreur envoi email:', error);
   }
 }
+
+/**
+ * Envoyer un email de réinitialisation de mot de passe
+ */
+export async function sendPasswordResetEmail(email, token) {
+  const resetUrl = `${process.env.APP_URL || 'http://localhost:4000'}/api/auth/reset-password/${token}`;
+  
+  const mailOptions = {
+    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: 'Réinitialisation de votre mot de passe - TAO',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #0066cc;">🔐 Réinitialisation de mot de passe</h2>
+        <p>Vous avez demandé à réinitialiser votre mot de passe sur <strong>TAO Comparateur</strong>.</p>
+        
+        <p>Cliquez sur le bouton ci-dessous pour créer un nouveau mot de passe :</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetUrl}" 
+             style="background: #0066cc; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+            Réinitialiser mon mot de passe
+          </a>
+        </div>
+        
+        <p style="color: #666; font-size: 0.9em;">
+          Ce lien est valable pendant <strong>1 heure</strong>.
+        </p>
+        
+        <p style="color: #999; font-size: 0.85em; border-top: 1px solid #eee; padding-top: 15px; margin-top: 30px;">
+          Si vous n'avez pas demandé cette réinitialisation, ignorez cet email. Votre mot de passe actuel reste inchangé.
+        </p>
+      </div>
+    `,
+  };
+
+  try {
+    await getTransporter().sendMail(mailOptions);
+    console.log('✅ Email de réinitialisation envoyé à', email);
+  } catch (error) {
+    console.error('❌ Erreur envoi email:', error);
+    throw error;
+  }
+}

@@ -19,8 +19,27 @@ const redoStack = [];
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
 const qsa = (s) => Array.from(document.querySelectorAll(s));
-const show = (sel) => { const el = qs(sel); if (el) el.classList.remove('hidden'); };
-const hide = (sel) => { const el = qs(sel); if (el) el.classList.add('hidden'); };
+const show = (sel) => {
+  const el = qs(sel);
+  if (!el) return;
+  el.classList.remove('hidden');
+  // Fallback: si un modal reste display:none (cascade CSS), forcer flex
+  if (el.classList.contains('modal')) {
+    const cs = window.getComputedStyle(el);
+    if (cs.display === 'none') {
+      el.style.display = 'flex';
+    }
+  }
+};
+const hide = (sel) => {
+  const el = qs(sel);
+  if (!el) return;
+  el.classList.add('hidden');
+  if (el.classList.contains('modal')) {
+    // Nettoyage inline éventuel pour permettre re-hide correct
+    el.style.display = 'none';
+  }
+};
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 
 /* ====== Num parse/format (FR friendly) ====== */
@@ -400,18 +419,6 @@ function closeShareModal() {
 // Ouvrir la modal de demande d'accès
 async function openAccessRequestModal() {
   try {
-    // Charger tous les projets disponibles
-    const projects = await api('/projects');
-    const select = qs('#access-request-project-select');
-    select.innerHTML = '<option value="">-- Sélectionner un projet --</option>';
-    
-    for (const proj of projects) {
-      const option = document.createElement('option');
-      option.value = proj.id;
-      option.textContent = `${proj.name}${proj.reference ? ' (' + proj.reference + ')' : ''}`;
-      select.appendChild(option);
-    }
-    
     // Charger mes demandes en cours
     await loadMyAccessRequests();
     
@@ -454,21 +461,21 @@ async function loadMyAccessRequests() {
 
 // Soumettre une demande d'accès
 async function submitAccessRequest() {
-  const projectId = qs('#access-request-project-select').value;
+  const projectName = qs('#access-request-project-name').value.trim();
   const message = qs('#access-request-message').value.trim();
   
-  if (!projectId) {
-    return alert('Veuillez sélectionner un projet');
+  if (!projectName) {
+    return alert('Veuillez indiquer le nom du projet');
   }
   
   try {
     await api('/access-requests', {
       method: 'POST',
-      body: { projectId: parseInt(projectId), message }
+      body: { projectName, message }
     });
     
     alert('✅ Demande envoyée ! Un responsable examinera votre demande.');
-    qs('#access-request-project-select').value = '';
+    qs('#access-request-project-name').value = '';
     qs('#access-request-message').value = '';
     await loadMyAccessRequests();
   } catch (err) {
@@ -522,7 +529,7 @@ async function loadAccessRequests() {
       const rejectBtn = tr.querySelector('[data-reject-id]');
       
       if (approveBtn) {
-        approveBtn.addEventListener('click', () => approveAccessRequest(req.id));
+        approveBtn.addEventListener('click', () => openApproveAccessModal(req.id));
       }
       if (rejectBtn) {
         rejectBtn.addEventListener('click', () => rejectAccessRequest(req.id));
@@ -536,16 +543,97 @@ async function loadAccessRequests() {
 }
 
 // Approuver une demande
-async function approveAccessRequest(requestId) {
-  if (!confirm('Approuver cette demande d\'accès ?')) return;
-  
-  try {
-    await api(`/access-requests/${requestId}/approve`, { method: 'PATCH' });
-    alert('✅ Demande approuvée ! L\'utilisateur a été notifié par email.');
-    loadAccessRequests();
-  } catch (err) {
-    alert('Erreur: ' + err.message);
+// Nouvelle logique d'approbation via modal
+let approveState = { requestId: null, projects: [], filtered: [], selectedProjectId: null };
+
+async function openApproveAccessModal(requestId) {
+  console.log('[Approve] Ouverture modal pour demande', requestId);
+  approveState = { requestId, projects: [], filtered: [], selectedProjectId: null };
+  const contextEl = qs('#approve-access-context');
+  const selectedEl = qs('#approve-selected');
+  const confirmBtn = qs('#approve-confirm-btn');
+  const searchInput = qs('#approve-search');
+  if (!contextEl || !selectedEl || !confirmBtn) {
+    console.error('[Approve] Elements modal manquants');
+    return alert('Erreur interface: éléments modal introuvables');
   }
+  selectedEl.textContent = 'Chargement des projets...';
+  confirmBtn.disabled = true;
+  if (searchInput) searchInput.value = '';
+  contextEl.innerHTML = `Demande #${requestId} — sélectionner un projet à partager`;
+  show('#approve-access-modal'); // Afficher immédiatement
+  try {
+    const projects = await api('/projects');
+    console.log('[Approve] Projets chargés:', projects.length);
+    approveState.projects = projects;
+    approveState.filtered = projects;
+    if (projects.length === 0) {
+      selectedEl.textContent = 'Aucun projet disponible. Créez un projet d\'abord.';
+      return;
+    }
+    selectedEl.textContent = 'Aucun projet sélectionné.';
+    renderApproveProjects();
+  } catch(err) {
+    console.error('[Approve] Erreur chargement projets:', err);
+    selectedEl.textContent = 'Erreur lors du chargement des projets.';
+    contextEl.innerHTML += '<br><span style="color:#dc3545;">Impossible de charger les projets.</span>';
+  }
+}
+
+function renderApproveProjects() {
+  const tbody = qs('#approve-projects-tbody');
+  if (!tbody) return;
+  const list = approveState.filtered;
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:8px;">Aucun projet trouvé</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(p => {
+    const selected = p.id === approveState.selectedProjectId;
+    return `<tr data-project-id="${p.id}" style="background:${selected ? 'var(--accent-subtle)' : 'transparent'};">
+      <td style="padding:4px 8px;">${p.name}</td>
+      <td style="padding:4px 8px;">${p.reference || ''}</td>
+      <td style="padding:4px 8px;">${p.client || ''}</td>
+      <td style="padding:4px 8px;"><button class="btn btn-sm" data-select-project="${p.id}">${selected ? '✓' : 'Choisir'}</button></td>
+    </tr>`;
+  }).join('');
+  // Attach listeners
+  qsa('[data-select-project]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      approveState.selectedProjectId = parseInt(btn.dataset.selectProject);
+      setText('#approve-selected', 'Projet sélectionné: ' + (approveState.projects.find(p=>p.id===approveState.selectedProjectId)?.name || '')); 
+      qs('#approve-confirm-btn').disabled = false;
+      renderApproveProjects();
+    });
+  });
+}
+
+function filterApproveProjects(term) {
+  const t = term.trim().toLowerCase();
+  approveState.filtered = approveState.projects.filter(p => {
+    return p.name.toLowerCase().includes(t) || (p.reference||'').toLowerCase().includes(t) || (p.client||'').toLowerCase().includes(t);
+  });
+  renderApproveProjects();
+}
+
+async function confirmApproveAccess() {
+  if (!approveState.selectedProjectId) return;
+  const canEdit = qs('#approve-can-edit').checked;
+  try {
+    await api(`/access-requests/${approveState.requestId}/approve`, {
+      method: 'PATCH',
+      body: { projectId: approveState.selectedProjectId, canEdit }
+    });
+    hide('#approve-access-modal');
+    alert('✅ Demande approuvée et projet partagé');
+    loadAccessRequests();
+  } catch(err) {
+    alert('Erreur approbation: ' + err.message);
+  }
+}
+
+function cancelApproveAccessModal() {
+  hide('#approve-access-modal');
 }
 
 // Rejeter une demande
@@ -2296,15 +2384,19 @@ function bindUI(){
     }
   });
   
-  // Réinitialisation du mot de passe admin
-  qs('#reset-admin-link')?.addEventListener('click', async (e)=> {
+  // Mot de passe oublié
+  qs('#forgot-password-link')?.addEventListener('click', async (e)=> {
     e.preventDefault();
-    if (!confirm('Réinitialiser le mot de passe admin avec celui du fichier .env ?')) return;
+    const email = prompt('Entrez votre adresse email pour recevoir un lien de réinitialisation :');
+    if (!email) return;
     
-    setText('#login-msg', 'Réinitialisation...');
+    setText('#login-msg', 'Envoi de l\'email...');
     try {
-      await api('/auth/reset-admin', { method: 'POST' });
-      setText('#login-msg', '✅ Mot de passe admin réinitialisé ! Utilisez admin@example.com / Admin123!');
+      const result = await api('/auth/forgot-password', { 
+        method: 'POST',
+        body: { email }
+      });
+      setText('#login-msg', '✅ ' + result.message);
     } catch(e) {
       setText('#login-msg', '❌ ' + e.message);
     }
@@ -2404,6 +2496,15 @@ function bindUI(){
   qs('#submit-access-request-btn')?.addEventListener('click', submitAccessRequest);
   qs('#access-request-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'access-request-modal') closeAccessRequestModal();
+  });
+
+  // Modal approbation d'accès (responsable/admin)
+  qs('#close-approve-access-modal')?.addEventListener('click', cancelApproveAccessModal);
+  qs('#approve-cancel-btn')?.addEventListener('click', cancelApproveAccessModal);
+  qs('#approve-confirm-btn')?.addEventListener('click', confirmApproveAccess);
+  qs('#approve-search')?.addEventListener('input', (e) => filterApproveProjects(e.target.value));
+  qs('#approve-access-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'approve-access-modal') cancelApproveAccessModal();
   });
   
   // Gestion demandes d'accès (responsable/admin)

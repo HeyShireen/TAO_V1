@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { query } from '../db.js';
 import { hashPassword, comparePassword } from '../utils.hash.js';
-import { sendVerificationEmail } from '../utils.email.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../utils.email.js';
 import { emailRateLimiter, resetEmailAttempts } from '../middleware.security.js';
 
 const router = express.Router();
@@ -217,36 +217,219 @@ router.get('/verify-email/:token', async (req, res) => {
   }
 });
 
-// Reset admin password - ONLY if no admin can login
-router.post('/reset-admin', async (req, res) => {
+// Demande de réinitialisation de mot de passe (envoie un email)
+router.post('/forgot-password', emailRateLimiter, async (req, res) => {
   try {
-    // 1. Vérifier s'il existe des admins
-    const admins = await query('SELECT COUNT(*) FROM users WHERE role = $1', ['admin']);
-    if (admins.rows[0].count === '0') {
-      return res.status(400).json({ error: 'Aucun compte admin trouvé.' });
-    }
-
-    // 2. Utiliser le mot de passe du .env ou en générer un aléatoire
-    const newPassword = process.env.ADMIN_PASSWORD || 'admin' + Math.random().toString(36).slice(-4);
-    const password_hash = await hashPassword(newPassword);
+    const { email } = req.body;
     
-    const updated = await query(`
-      UPDATE users 
-      SET password_hash = $1
-      WHERE id = (SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1)
-      RETURNING email
-    `, [password_hash]);
+    if (!email) {
+      return res.status(400).json({ error: 'Email requis' });
+    }
+    
+    // Chercher l'utilisateur (silencieux si pas trouvé pour éviter l'énumération)
+    const result = await query('SELECT id, email FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    
+    // Toujours retourner succès même si l'email n'existe pas (sécurité)
+    if (result.rows.length === 0) {
+      return res.json({ 
+        message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.',
+        emailSent: true
+      });
+    }
+    
+    const user = result.rows[0];
+    
+    // Générer un token de réinitialisation
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
+    
+    // Supprimer les anciens tokens non utilisés pour cet user
+    await query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [user.id]);
+    
+    // Créer le nouveau token
+    await query(
+      'INSERT INTO password_resets (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [user.id, resetToken, expiresAt]
+    );
+    
+    // Envoyer l'email
+    await sendPasswordResetEmail(user.email, resetToken);
+    
+    return res.json({ 
+      message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.',
+      emailSent: true
+    });
+    
+  } catch (err) {
+    console.error('Erreur forgot password:', err);
+    return res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email' });
+  }
+});
 
-    // 3. Retourner le résultat
-    res.json({ 
-      message: 'Mot de passe admin réinitialisé',
-      email: updated.rows[0].email,
+// Afficher le formulaire de réinitialisation (HTML)
+router.get('/reset-password/:token', async (req, res) => {
+  const { token } = req.params;
+  
+  try {
+    // Vérifier que le token existe et n'est pas expiré
+    const result = await query(`
+      SELECT pr.id, pr.user_id, pr.used_at, u.email
+      FROM password_resets pr
+      JOIN users u ON u.id = pr.user_id
+      WHERE pr.token = $1 AND pr.expires_at > NOW()
+    `, [token]);
+    
+    if (result.rows.length === 0) {
+      return res.status(400).send(`
+        <html><body style="font-family:Arial;text-align:center;padding:50px;">
+          <h2 style="color:#dc3545;">❌ Lien invalide</h2>
+          <p>Ce lien de réinitialisation est invalide ou a expiré.</p>
+          <a href="/" style="color:#0066cc;">Retour à la page de connexion</a>
+        </body></html>
+      `);
+    }
+    
+    const reset = result.rows[0];
+    
+    if (reset.used_at) {
+      return res.status(400).send(`
+        <html><body style="font-family:Arial;text-align:center;padding:50px;">
+          <h2 style="color:#dc3545;">❌ Lien déjà utilisé</h2>
+          <p>Ce lien a déjà été utilisé pour réinitialiser votre mot de passe.</p>
+          <a href="/" style="color:#0066cc;">Retour à la page de connexion</a>
+        </body></html>
+      `);
+    }
+    
+    // Afficher le formulaire
+    return res.send(`
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Réinitialiser le mot de passe</title>
+        <style>
+          body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 50px; text-align: center; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h2 { color: #333; margin-bottom: 20px; }
+          input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+          button { width: 100%; padding: 12px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+          button:hover { background: #0052a3; }
+          .error { color: #dc3545; margin-top: 10px; }
+          .success { color: #28a745; margin-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h2>🔐 Nouveau mot de passe</h2>
+          <p style="color:#666; margin-bottom:20px;">Compte : <strong>${reset.email}</strong></p>
+          <form id="resetForm">
+            <input type="password" id="password" placeholder="Nouveau mot de passe (min. 8 caractères)" required minlength="8">
+            <input type="password" id="confirmPassword" placeholder="Confirmer le mot de passe" required minlength="8">
+            <button type="submit">Réinitialiser le mot de passe</button>
+          </form>
+          <div id="message"></div>
+        </div>
+        <script>
+          document.getElementById('resetForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const message = document.getElementById('message');
+            
+            if (password !== confirmPassword) {
+              message.innerHTML = '<p class="error">Les mots de passe ne correspondent pas</p>';
+              return;
+            }
+            
+            if (password.length < 8) {
+              message.innerHTML = '<p class="error">Le mot de passe doit contenir au moins 8 caractères</p>';
+              return;
+            }
+            
+            try {
+              const response = await fetch('/api/auth/reset-password/${token}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+              });
+              
+              const data = await response.json();
+              
+              if (response.ok) {
+                message.innerHTML = '<p class="success">✅ ' + data.message + '</p>';
+                setTimeout(() => { window.location.href = '/'; }, 2000);
+              } else {
+                message.innerHTML = '<p class="error">❌ ' + data.error + '</p>';
+              }
+            } catch (error) {
+              message.innerHTML = '<p class="error">❌ Erreur réseau</p>';
+            }
+          });
+        </script>
+      </body>
+      </html>
+    `);
+    
+  } catch (err) {
+    console.error('Erreur affichage reset form:', err);
+    return res.status(500).send(`
+      <html><body style="font-family:Arial;text-align:center;padding:50px;">
+        <h2 style="color:#dc3545;">Erreur</h2>
+        <p>Une erreur est survenue.</p>
+        <a href="/" style="color:#0066cc;">Retour à la page de connexion</a>
+      </body></html>
+    `);
+  }
+});
+
+// Réinitialiser le mot de passe (POST)
+router.post('/reset-password/:token', async (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
+  
+  try {
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+    }
+    
+    // Vérifier le token
+    const result = await query(`
+      SELECT pr.id, pr.user_id, pr.used_at, u.email
+      FROM password_resets pr
+      JOIN users u ON u.id = pr.user_id
+      WHERE pr.token = $1 AND pr.expires_at > NOW()
+    `, [token]);
+    
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Lien invalide ou expiré' });
+    }
+    
+    const reset = result.rows[0];
+    
+    if (reset.used_at) {
+      return res.status(400).json({ error: 'Ce lien a déjà été utilisé' });
+    }
+    
+    // Hasher le nouveau mot de passe
+    const password_hash = await hashPassword(password);
+    
+    // Mettre à jour le mot de passe
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [password_hash, reset.user_id]);
+    
+    // Marquer le token comme utilisé
+    await query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [reset.id]);
+    
+    // Réinitialiser les tentatives de login
+    resetEmailAttempts(reset.email);
+    
+    return res.json({ 
+      message: 'Mot de passe réinitialisé avec succès ! Vous pouvez maintenant vous connecter.',
       success: true
     });
-
+    
   } catch (err) {
-    console.error('Reset password error:', err);
-    res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
+    console.error('Erreur reset password:', err);
+    return res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
   }
 });
 
