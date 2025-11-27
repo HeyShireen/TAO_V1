@@ -51,3 +51,26 @@ export function sanitizeString(value) {
   if (typeof value !== 'string') return value;
   return value.trim();
 }
+
+export function validatePassword(password) {
+  if (!password || password.length < 8) {
+    throw new ValidationError('Le mot de passe doit contenir au moins 8 caractères');
+  }
+  
+  // Vérifier la présence d'au moins une majuscule
+  if (!/[A-Z]/.test(password)) {
+    throw new ValidationError('Le mot de passe doit contenir au moins une lettre majuscule');
+  }
+  
+  // Vérifier la présence d'au moins un chiffre
+  if (!/[0-9]/.test(password)) {
+    throw new ValidationError('Le mot de passe doit contenir au moins un chiffre');
+  }
+  
+  // Vérifier la présence d'au moins un caractère spécial (.!:?,)
+  if (!/[.!:?,]/.test(password)) {
+    throw new ValidationError('Le mot de passe doit contenir au moins un caractère spécial (.!:?,)');
+  }
+  
+  return true;
+}

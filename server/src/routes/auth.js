@@ -5,6 +5,8 @@ import { query } from '../db.js';
 import { hashPassword, comparePassword } from '../utils.hash.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils.email.js';
 import { emailRateLimiter, resetEmailAttempts } from '../middleware.security.js';
+import { requireAuth } from '../middleware.auth.js';
+import { validatePassword } from '../utils.validation.js';
 
 const router = express.Router();
 
@@ -19,8 +21,14 @@ router.post('/register', emailRateLimiter, async (req, res) => {
   
   // Validation
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-  if (password.length < 8) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Format d\'email invalide' });
+  
+  // Validation du mot de passe avec critères de sécurité
+  try {
+    validatePassword(password);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const usersCount = await query('SELECT COUNT(*) FROM users');
   const count = Number(usersCount.rows[0].count);
@@ -388,8 +396,11 @@ router.post('/reset-password/:token', async (req, res) => {
   const { password } = req.body;
   
   try {
-    if (!password || password.length < 8) {
-      return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+    // Validation du mot de passe avec critères de sécurité
+    try {
+      validatePassword(password);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
     
     // Vérifier le token
@@ -430,6 +441,54 @@ router.post('/reset-password/:token', async (req, res) => {
   } catch (err) {
     console.error('Erreur reset password:', err);
     return res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
+  }
+});
+
+// Changer son propre mot de passe (authentifié)
+router.post('/change-password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Non authentifié' });
+    }
+    
+    // Validation
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Mots de passe requis' });
+    }
+    
+    // Validation du nouveau mot de passe
+    try {
+      validatePassword(newPassword);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    
+    // Vérifier l'ancien mot de passe
+    const userResult = await query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    }
+    
+    const isValid = await comparePassword(currentPassword, userResult.rows[0].password_hash);
+    if (!isValid) {
+      return res.status(400).json({ error: 'Mot de passe actuel incorrect' });
+    }
+    
+    // Hasher et mettre à jour le nouveau mot de passe
+    const newPasswordHash = await hashPassword(newPassword);
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [newPasswordHash, userId]);
+    
+    return res.json({ 
+      message: 'Mot de passe modifié avec succès',
+      success: true
+    });
+    
+  } catch (err) {
+    console.error('Erreur changement mot de passe:', err);
+    res.status(500).json({ error: 'Impossible de changer le mot de passe' });
   }
 });
 

@@ -353,8 +353,8 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     const { lotId } = req.params;
     const { status, company_id, round_id } = req.query;
     
-    // Import dynamique de xlsx
-    const xlsx = await import('xlsx');
+    // Import dynamique de exceljs pour une meilleure mise en forme
+    const ExcelJS = (await import('exceljs')).default;
     
     // Récupérer les données
     let sql = `
@@ -397,8 +397,48 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       return res.status(404).json({ error: 'Aucune fiche question à exporter' });
     }
     
-    // Préparer les données pour Excel
-    const excelData = questions.map(q => {
+    // Créer le workbook avec ExcelJS
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Fiches Questions');
+    
+    // Définir les colonnes avec largeurs
+    worksheet.columns = [
+      { header: 'Projet', key: 'project', width: 20 },
+      { header: 'Lot', key: 'lot', width: 15 },
+      { header: 'Entreprise', key: 'company', width: 20 },
+      { header: 'Article N°', key: 'num', width: 12 },
+      { header: 'Désignation', key: 'designation', width: 40 },
+      { header: 'Unité', key: 'unit', width: 10 },
+      { header: 'Type', key: 'type', width: 18 },
+      { header: 'Question', key: 'question', width: 50 },
+      { header: 'Écart (%)', key: 'deviation', width: 12 },
+      { header: 'Valeur MOE', key: 'moe_value', width: 14 },
+      { header: 'Valeur Offre', key: 'offer_value', width: 14 },
+      { header: 'Réponse', key: 'answer', width: 40 },
+      { header: 'Statut', key: 'status', width: 14 },
+      { header: 'Créée le', key: 'created', width: 18 },
+      { header: 'Répondue le', key: 'answered', width: 18 }
+    ];
+    
+    // Styliser l'en-tête
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 25;
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4472C4' }
+    };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    headerRow.border = {
+      top: { style: 'thin' },
+      bottom: { style: 'thin' },
+      left: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    
+    // Ajouter les données
+    questions.forEach(q => {
       const typeLabel = {
         'qty_low': 'Quantité Basse',
         'qty_high': 'Quantité Haute',
@@ -412,145 +452,94 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         'dismissed': 'Ignorée'
       }[q.status] || q.status;
       
-      return {
-        'Projet': q.project_name,
-        'Lot': q.lot_name,
-        'Entreprise': q.company_name,
-        'Article N°': q.num || '',
-        'Désignation': q.designation || '',
-        'Unité': q.unit || '',
-        'Type': typeLabel,
-        'Question': q.question_text,
-        'Écart (%)': q.deviation_pct ? Number(q.deviation_pct).toFixed(2) : '',
-        'Valeur MOE': q.moe_value || '',
-        'Valeur Offre': q.offer_value || '',
-        'Réponse': q.answer || '',
-        'Statut': statusLabel,
-        'Créée le': q.created_at ? new Date(q.created_at).toLocaleString('fr-FR') : '',
-        'Répondue le': q.answered_at ? new Date(q.answered_at).toLocaleString('fr-FR') : ''
-      };
-    });
-    
-    // Créer le workbook
-    const ws = xlsx.utils.json_to_sheet(excelData);
-    
-    // Ajuster la largeur des colonnes
-    const colWidths = [
-      { wch: 20 }, // Projet
-      { wch: 15 }, // Lot
-      { wch: 20 }, // Entreprise
-      { wch: 10 }, // Article N°
-      { wch: 40 }, // Désignation
-      { wch: 10 }, // Unité
-      { wch: 15 }, // Type
-      { wch: 50 }, // Question
-      { wch: 12 }, // Écart
-      { wch: 12 }, // Valeur MOE
-      { wch: 12 }, // Valeur Offre
-      { wch: 40 }, // Réponse
-      { wch: 12 }, // Statut
-      { wch: 18 }, // Créée le
-      { wch: 18 }  // Répondue le
-    ];
-    ws['!cols'] = colWidths;
-    
-    // Styliser les en-têtes (première ligne)
-    const range = xlsx.utils.decode_range(ws['!ref']);
-    for (let col = range.s.c; col <= range.e.c; col++) {
-      const cellAddress = xlsx.utils.encode_cell({ r: 0, c: col });
-      if (!ws[cellAddress]) continue;
+      const row = worksheet.addRow({
+        project: q.project_name,
+        lot: q.lot_name,
+        company: q.company_name,
+        num: q.num || '',
+        designation: q.designation || '',
+        unit: q.unit || '',
+        type: typeLabel,
+        question: q.question_text,
+        deviation: q.deviation_pct ? Number(q.deviation_pct) : null,
+        moe_value: q.moe_value || '',
+        offer_value: q.offer_value || '',
+        answer: q.answer || '',
+        status: statusLabel,
+        created: q.created_at ? new Date(q.created_at) : '',
+        answered: q.answered_at ? new Date(q.answered_at) : ''
+      });
       
-      ws[cellAddress].s = {
-        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
-        fill: { fgColor: { rgb: "4472C4" } },
-        alignment: { horizontal: "center", vertical: "center", wrapText: true },
-        border: {
-          top: { style: "thin", color: { rgb: "000000" } },
-          bottom: { style: "thin", color: { rgb: "000000" } },
-          left: { style: "thin", color: { rgb: "000000" } },
-          right: { style: "thin", color: { rgb: "000000" } }
-        }
+      // Appliquer les styles de base
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.border = {
+        top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+        bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+        left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+        right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
       };
-    }
-    
-    // Formater les cellules de données
-    for (let row = range.s.r + 1; row <= range.e.r; row++) {
-      for (let col = range.s.c; col <= range.e.c; col++) {
-        const cellAddress = xlsx.utils.encode_cell({ r: row, c: col });
-        if (!ws[cellAddress]) continue;
-        
-        // Bordures pour toutes les cellules
-        ws[cellAddress].s = {
-          border: {
-            top: { style: "thin", color: { rgb: "D3D3D3" } },
-            bottom: { style: "thin", color: { rgb: "D3D3D3" } },
-            left: { style: "thin", color: { rgb: "D3D3D3" } },
-            right: { style: "thin", color: { rgb: "D3D3D3" } }
-          },
-          alignment: { vertical: "top", wrapText: true }
-        };
-        
-        // Format numérique pour les colonnes de valeurs
-        if (col === 8) { // Écart %
-          ws[cellAddress].z = '0.00"%"';
-          ws[cellAddress].s.alignment.horizontal = "right";
-        } else if (col === 9 || col === 10) { // Valeur MOE / Offre
-          ws[cellAddress].z = '#,##0.00';
-          ws[cellAddress].s.alignment.horizontal = "right";
-        }
-        
-        // Coloration selon le statut (colonne 12)
-        if (col === 12) {
-          const status = ws[cellAddress].v;
-          if (status === 'En attente') {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "FFF3CD" } }; // Jaune
-          } else if (status === 'Répondue') {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "D1E7DD" } }; // Vert
-          } else if (status === 'Ignorée') {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "F8D7DA" } }; // Rouge
-          }
-        }
-        
-        // Coloration selon l'écart (colonne 8)
-        if (col === 8 && ws[cellAddress].v) {
-          const ecartValue = parseFloat(ws[cellAddress].v);
-          const ecartAbs = Math.abs(ecartValue);
-          if (ecartAbs > 20) {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "FFCCCC" } }; // Rouge clair
-            ws[cellAddress].s.font = { color: { rgb: "CC0000" }, bold: true };
-          } else if (ecartAbs > 10) {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "FFE5CC" } }; // Orange clair
-            ws[cellAddress].s.font = { color: { rgb: "CC6600" } };
-          }
-        }
-        
-        // Coloration selon le type (colonne 6)
-        if (col === 6) {
-          const type = ws[cellAddress].v;
-          if (type === 'Quantité Basse' || type === 'Quantité Haute') {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "E7F3FF" } }; // Bleu clair
-          } else if (type === 'Prix Bas' || type === 'Prix Haut') {
-            ws[cellAddress].s.fill = { fgColor: { rgb: "FFF0E7" } }; // Orange très clair
-          }
+      
+      // Colonne Écart (%) - Format et coloration selon la valeur
+      const deviationCell = row.getCell(9);
+      if (q.deviation_pct) {
+        deviationCell.numFmt = '0.00"%"';
+        deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
+        const ecartAbs = Math.abs(Number(q.deviation_pct));
+        if (ecartAbs > 20) {
+          deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
+          deviationCell.font = { color: { argb: 'FFCC0000' }, bold: true };
+        } else if (ecartAbs > 10) {
+          deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE5CC' } };
+          deviationCell.font = { color: { argb: 'FFCC6600' } };
         }
       }
-    }
+      
+      // Colonnes Valeur MOE et Valeur Offre - Format numérique
+      const moeCell = row.getCell(10);
+      const offerCell = row.getCell(11);
+      if (q.moe_value) {
+        moeCell.numFmt = '#,##0.00';
+        moeCell.alignment = { horizontal: 'right', vertical: 'top' };
+      }
+      if (q.offer_value) {
+        offerCell.numFmt = '#,##0.00';
+        offerCell.alignment = { horizontal: 'right', vertical: 'top' };
+      }
+      
+      // Colonne Type - Coloration selon le type
+      const typeCell = row.getCell(7);
+      if (typeLabel === 'Quantité Basse' || typeLabel === 'Quantité Haute') {
+        typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7F3FF' } };
+      } else if (typeLabel === 'Prix Bas' || typeLabel === 'Prix Haut') {
+        typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0E7' } };
+      }
+      
+      // Colonne Statut - Coloration selon le statut
+      const statusCell = row.getCell(13);
+      if (statusLabel === 'En attente') {
+        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+      } else if (statusLabel === 'Répondue') {
+        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1E7DD' } };
+      } else if (statusLabel === 'Ignorée') {
+        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
+      }
+      
+      // Colonnes dates - Format date
+      const createdCell = row.getCell(14);
+      const answeredCell = row.getCell(15);
+      if (q.created_at) {
+        createdCell.numFmt = 'dd/mm/yyyy hh:mm';
+      }
+      if (q.answered_at) {
+        answeredCell.numFmt = 'dd/mm/yyyy hh:mm';
+      }
+    });
     
     // Figer la première ligne
-    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
-    
-    // Hauteur de la première ligne (en-têtes)
-    ws['!rows'] = [{ hpt: 30 }];
-    
-    const wb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(wb, ws, 'Fiches Questions');
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
     
     // Générer le buffer Excel
-    const buffer = xlsx.write(wb, { 
-      type: 'buffer', 
-      bookType: 'xlsx',
-      cellStyles: true 
-    });
+    const buffer = await workbook.xlsx.writeBuffer();
     
     // Envoyer le fichier
     const filename = `Fiches_Questions_Lot_${lotId}_${new Date().toISOString().split('T')[0]}.xlsx`;

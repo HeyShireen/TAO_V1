@@ -310,6 +310,30 @@ h1,h2{
 .settings-section:first-child{ margin-top:0; padding-top:0; border-top:none }
 .settings-section h4{ margin:0 0 10px 0; font-size:14px }
 
+/* Indicateurs de critères de mot de passe */
+.password-requirements{ 
+  background: var(--input-bg); 
+  padding: 8px 12px; 
+  border-radius: 6px; 
+  border: 1px solid var(--border);
+}
+.pwd-req{ 
+  list-style: none; 
+  position: relative; 
+  padding-left: 24px;
+  margin: 4px 0;
+  color: var(--muted);
+}
+.pwd-req::before{ 
+  content: '✗'; 
+  position: absolute; 
+  left: 0; 
+  color: var(--danger);
+  font-weight: bold;
+}
+.pwd-req.valid{ color: var(--success); }
+.pwd-req.valid::before{ content: '✓'; color: var(--success); }
+
 /* Rounds/Tours */
 .rounds-container{ margin-top:20px }
 .rounds-list{ 
@@ -436,15 +460,19 @@ input:focus,textarea:focus,select:focus{
 /* Tables */
 .table-wrapper{ 
   width:100%; 
-  overflow:auto; 
+  overflow-x:auto;
+  overflow-y:auto;
   border:1px solid var(--border); 
   border-radius:2px; 
   background:var(--card);
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  /* Amélioration du scroll sur mobile */
+  -webkit-overflow-scrolling: touch;
 }
 .table-wrapper.tall{ max-height:75vh }
 table{ 
   width:100%; 
+  min-width:max-content;
   border-collapse:separate;
   border-spacing:0;
   font-family: 'IBM Plex Mono', monospace;
@@ -453,7 +481,10 @@ table{
 th,td{ 
   padding:10px 14px; 
   border-right:1px solid var(--border);
-  border-bottom:1px solid var(--border); 
+  border-bottom:1px solid var(--border);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis; 
   vertical-align:top; 
   text-align:left; 
   white-space:nowrap; 
@@ -528,6 +559,8 @@ thead tr.head-row-1 th { top:0; }
 thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 .delta-pos{ color:var(--success); font-weight:600 } 
 .delta-neg{ color:var(--danger); font-weight:600 }
+.delta-positive{ color:var(--danger); font-weight:600 } /* MOE > Offre = surplus */
+.delta-negative{ color:var(--success); font-weight:600 } /* MOE < Offre = moins cher */
 
 /* Ligne de totaux dans le comparatif */
 #compare-body .total-row{ 
@@ -547,12 +580,15 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 
 /* Tableur d'édition */
 #sheet-table td[contenteditable]{ 
-  min-width:110px; 
+  min-width:110px;
+  max-width: 200px;
   background:rgba(255,140,66,0.02); 
   outline:none; 
   direction:ltr; 
   unicode-bidi:normal;
   transition: all 0.2s;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #sheet-table td[contenteditable]:focus{ 
   box-shadow:inset 0 0 0 2px var(--accent);
@@ -625,6 +661,10 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   text-align:left; 
   border-bottom:1px solid var(--border);
   transition: all 0.2s;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .summary-table tbody tr:hover {
   background: rgba(255,140,66,0.04);
@@ -662,8 +702,13 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   vertical-align:middle; 
   border-right:2px solid var(--accent); 
   background:rgba(255,140,66,0.12);
+  max-width: 200px;
+  min-width: 150px;
   font-family: 'Archivo', sans-serif;
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .summary-table .moe-amount{ 
   background:rgba(255,140,66,0.1); 
@@ -704,6 +749,27 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 .summary-table .total-row th{ 
   padding:16px 16px; 
   font-size:14px;
+}
+
+/* Ligne MOE dans totaux */
+.summary-table .moe-total-row {
+  background: rgba(66, 153, 225, 0.15);
+  border-left: 4px solid #4299e1;
+  border-top: 3px solid #4299e1;
+}
+.summary-table .moe-total-cell {
+  color: #2c5282;
+  font-weight: 700;
+}
+
+/* Ligne simulation moins-disant */
+.summary-table .simulation-row {
+  background: rgba(72, 187, 120, 0.15);
+  border-left: 4px solid #48bb78;
+}
+.summary-table .simulation-name {
+  font-style: italic;
+  font-size: 13px;
 }
 
 /* Code lot */
@@ -776,6 +842,17 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   border:1px solid var(--border);
   position:relative;
   overflow:hidden;
+}
+.auto-preview{
+  background:linear-gradient(90deg, #0a0e14 0%, #0a0e14 50%, #f6f8fa 50%, #f6f8fa 100%);
+}
+.auto-preview::after{
+  content:'⚙';
+  position:absolute;
+  top:50%; left:50%;
+  transform:translate(-50%, -50%);
+  font-size:14px;
+  color:#888;
 }
 .dark-preview{ 
   background:linear-gradient(135deg, #0a0e14 0%, #161b22 100%);

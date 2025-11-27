@@ -1,4 +1,4 @@
-import xlsx from 'xlsx';
+import ExcelJS from 'exceljs';
 import { query } from '../db.js';
 
 /**
@@ -12,13 +12,41 @@ import { query } from '../db.js';
  * Sheet can be the first sheet or a sheet named like the lot. The importer tries to map automatically.
  */
 export async function importLotFromExcel({ lotId, buffer }) {
-  const wb = xlsx.read(buffer, { type: 'buffer' });
-  const sheetName = wb.SheetNames[0];
-  const ws = wb.Sheets[sheetName];
-  const rows = xlsx.utils.sheet_to_json(ws, { defval: null });
-  if (!rows || rows.length === 0) {
-    throw new Error('Empty sheet');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const ws = wb.worksheets[0];
+  if (!ws) throw new Error('Empty workbook');
+
+  // Build rows as array of objects using header row (row 1)
+  const headerRow = ws.getRow(1);
+  const headerNames = [];
+  headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+    const v = cell.value;
+    const text = typeof v === 'object' && v !== null ? (v.text || v.result || '') : v;
+    headerNames[colNumber - 1] = (text ?? '').toString();
+  });
+  if (headerNames.length === 0) throw new Error('Empty sheet');
+
+  const rows = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    // Skip completely empty rows
+    if (!row || row.cellCount === 0) continue;
+    const obj = {};
+    headerNames.forEach((h, idx) => {
+      const cell = row.getCell(idx + 1);
+      let val = cell?.value;
+      if (val && typeof val === 'object') {
+        // ExcelJS cell value can be RichText, Formula, Hyperlink, etc.
+        val = val.text ?? val.result ?? val.richText?.map(t => t.text).join('') ?? val.hyperlink ?? null;
+      }
+      obj[h] = val ?? null;
+    });
+    // Consider row empty if all values are null/empty
+    const hasAny = Object.values(obj).some(v => v !== null && v !== '');
+    if (hasAny) rows.push(obj);
   }
+  if (rows.length === 0) throw new Error('Empty sheet');
 
   // Normalize headers to simplify mapping
   const normalize = (s) => (s || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');

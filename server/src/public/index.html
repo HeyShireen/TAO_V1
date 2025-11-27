@@ -186,6 +186,8 @@
                 </select>
               </div>
               <button id="update-comparison" class="btn" style="align-self:flex-end">🔄 Mettre à jour</button>
+              <button id="export-rounds-compare-pdf" class="btn ghost" style="align-self:flex-end">🖨️ Export PDF</button>
+              <button id="export-rounds-compare-excel" class="btn ghost" style="align-self:flex-end">📊 Export Excel</button>
             </div>
             
             <div style="margin-top:20px">
@@ -221,7 +223,10 @@
         <div id="tour-summary" class="tour-tabpanel">
           <div class="card">
             <h4>📊 Tableau Récapitulatif des Montants</h4>
-            <p class="muted">Comparaison automatique des montants MOE et des offres par lot</p>
+            <div class="row" style="gap:8px;margin-top:8px">
+              <button id="export-summary-pdf" class="btn ghost">🖨️ Export PDF</button>
+              <button id="export-summary-excel" class="btn ghost">📊 Export Excel</button>
+            </div>
             
             <div style="margin-top:20px">
               <div class="table-wrapper">
@@ -493,6 +498,10 @@
             <div class="field">
               <div style="font-weight:500;margin-bottom:0.5rem;">Thème de l'interface</div>
               <div class="theme-selector">
+                <button id="theme-auto" class="theme-option" data-theme="auto">
+                  <span class="theme-preview auto-preview"></span>
+                  <span>Automatique</span>
+                </button>
                 <button id="theme-dark" class="theme-option active" data-theme="dark">
                   <span class="theme-preview dark-preview"></span>
                   <span>Sombre</span>
@@ -507,20 +516,37 @@
           
           <div class="settings-section">
             <h4>👤 Compte</h4>
-            <form onsubmit="return false;">
+            <form id="change-password-form" onsubmit="return false;">
               <div class="field">
                 <label for="settings-email">Email</label>
                 <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled autocomplete="email" />
               </div>
+              
               <div class="field">
-                <label for="settings-new-password">Nouveau mot de passe (laisser vide pour ne pas changer)</label>
-                <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
+                <label for="settings-current-password">Mot de passe actuel</label>
+                <input id="settings-current-password" type="password" placeholder="Mot de passe actuel" autocomplete="current-password" />
               </div>
+              
               <div class="field">
-              <label for="settings-confirm-password">Confirmer le mot de passe</label>
-              <input id="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
-            </div>
-            <button id="save-settings" type="button" class="btn">Enregistrer</button>
+                <label for="settings-new-password">Nouveau mot de passe</label>
+                <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
+                <div class="password-requirements" style="margin-top:8px;font-size:0.85em;color:var(--muted)">
+                  <div>Le mot de passe doit contenir :</div>
+                  <ul style="margin:4px 0;padding-left:20px">
+                    <li id="pwd-length" class="pwd-req">Au moins 8 caractères</li>
+                    <li id="pwd-upper" class="pwd-req">Au moins une majuscule (A-Z)</li>
+                    <li id="pwd-number" class="pwd-req">Au moins un chiffre (0-9)</li>
+                    <li id="pwd-special" class="pwd-req">Au moins un caractère spécial (.!:?,)</li>
+                  </ul>
+                </div>
+              </div>
+              
+              <div class="field">
+                <label for="settings-confirm-password">Confirmer le mot de passe</label>
+                <input id="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
+              </div>
+              
+              <button id="save-password" type="submit" class="btn">Modifier le mot de passe</button>
             </form>
           </div>
 

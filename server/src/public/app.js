@@ -189,6 +189,11 @@ function enableTourTabs(tabIds){
 function activateSubtab(id){
   qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
   qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
+  
+  // Charger les questions automatiquement quand on ouvre l'onglet
+  if (id === 'subtab-questions' && currentLot) {
+    refreshQuestions();
+  }
 }
 
 /* ================= Auth ================= */
@@ -797,7 +802,6 @@ async function loadRounds(){
       card.className = 'round-card';
       card.dataset.roundId = round.id;
       const actionsHTML = isVisionneur() ? '' : `
-            <button class="edit-round" title="Modifier">✏️</button>
             <button class="duplicate-round" title="Dupliquer">📋</button>
             <button class="delete-round" title="Supprimer">🗑️</button>
           `;
@@ -836,20 +840,18 @@ async function loadRounds(){
       
       // Empêcher l'édition pour les visionneurs
       if (!isVisionneur()) {
-        const editBtn = card.querySelector('.edit-round');
-        if (editBtn) {
-          editBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            nameEl.setAttribute('contenteditable', 'true');
-            nameEl.focus();
-            // Sélectionner tout le texte
-            const range = document.createRange();
-            range.selectNodeContents(nameEl);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-          });
-        }
+        // Double-clic sur le nom pour éditer
+        nameEl.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          nameEl.setAttribute('contenteditable', 'true');
+          nameEl.focus();
+          // Sélectionner tout le texte
+          const range = document.createRange();
+          range.selectNodeContents(nameEl);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        });
         
         nameEl.addEventListener('blur', async () => {
           nameEl.setAttribute('contenteditable', 'false');
@@ -1061,26 +1063,67 @@ async function loadRoundSummary(){
       }
     }
     
+    // Calculer simulation moins-disant (meilleur prix par lot)
+    let totalMoinsDisant = 0;
+    for (const lot of lots) {
+      if (lot.companies.length > 0) {
+        const minPrice = Math.min(...lot.companies.map(c => c.total));
+        totalMoinsDisant += minPrice;
+      }
+    }
+    
     // Ligne de totaux MOE
     tfoot.innerHTML = '';
     const companiesArray = Object.values(totalsByCompany);
     
     const totalMoeRow = document.createElement('tr');
-    totalMoeRow.className = 'total-row lot-header-row';
+    totalMoeRow.className = 'total-row lot-header-row moe-total-row';
     
     const totalLabelCell = document.createElement('th');
     totalLabelCell.textContent = 'TOTAL';
-    totalLabelCell.rowSpan = companiesArray.length + 1;
+    totalLabelCell.rowSpan = companiesArray.length + 2; // +2 pour MOE et moins-disant
     totalMoeRow.appendChild(totalLabelCell);
     
     const totalMoeCell = document.createElement('th');
-    totalMoeCell.className = 'amount';
+    totalMoeCell.className = 'amount moe-total-cell';
     totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
     totalMoeRow.appendChild(totalMoeCell);
     
     totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
     
     tfoot.appendChild(totalMoeRow);
+    
+    // Ligne simulation moins-disant
+    const moinsDRow = document.createElement('tr');
+    moinsDRow.className = 'total-row simulation-row';
+    
+    const moinsDNameCell = document.createElement('th');
+    moinsDNameCell.className = 'amount simulation-name';
+    moinsDNameCell.innerHTML = '<strong>Moins-disant (simulation)</strong>';
+    moinsDRow.appendChild(moinsDNameCell);
+    
+    const moinsDAmountCell = document.createElement('th');
+    moinsDAmountCell.className = 'amount';
+    moinsDAmountCell.innerHTML = `<strong>${fmtEuro(totalMoinsDisant)}</strong>`;
+    moinsDRow.appendChild(moinsDAmountCell);
+    
+    const moinsDEcartEur = totalMoinsDisant - totalMoe;
+    const moinsDEcartEurCell = document.createElement('th');
+    moinsDEcartEurCell.className = 'amount';
+    const moinsDEcartClass = moinsDEcartEur > 0 ? 'ecart-positive' : (moinsDEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+    const moinsDEcartSign = moinsDEcartEur > 0 ? '+' : '';
+    moinsDEcartEurCell.innerHTML = `<strong><span class="${moinsDEcartClass}">${moinsDEcartSign}${fmtEuro(Math.abs(moinsDEcartEur))}</span></strong>`;
+    moinsDRow.appendChild(moinsDEcartEurCell);
+    
+    const moinsDEcartPct = totalMoe > 0 ? ((totalMoinsDisant - totalMoe) / totalMoe) * 100 : 0;
+    const moinsDEcartPctCell = document.createElement('th');
+    moinsDEcartPctCell.className = 'amount';
+    const moinsDPctClass = moinsDEcartPct > 0 ? 'ecart-positive' : (moinsDEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+    const moinsDPctSign = moinsDEcartPct > 0 ? '+' : '';
+    moinsDEcartPctCell.innerHTML = `<strong><span class="${moinsDPctClass}">${moinsDPctSign}${moinsDEcartPct.toFixed(1)}%</span></strong>`;
+    moinsDRow.appendChild(moinsDEcartPctCell);
+    
+    tfoot.appendChild(moinsDRow);
     
     // Lignes de totaux par entreprise
     for (const companyId in totalsByCompany) {
@@ -1532,8 +1575,28 @@ async function exportQuestionsExcel(){
     if (companyId) url += `&company_id=${companyId}`;
     if (status) url += `&status=${status}`;
     
-    // Télécharger directement en ouvrant l'URL
-    window.location.href = API_BASE + url;
+    // Télécharger avec le token d'authentification
+    const response = await fetch(API_BASE + url, {
+      headers: {
+        'Authorization': `Bearer ${getToken()}`
+      }
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Erreur serveur' }));
+      throw new Error(error.error || 'Erreur lors de l\'export');
+    }
+    
+    // Créer un blob et télécharger le fichier
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `Fiches_Questions_Lot_${currentLot.id}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
   } catch (err) {
     alert('❌ Erreur: ' + err.message);
   }
@@ -1655,9 +1718,9 @@ async function refreshCompare(){
   const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
   const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
   let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
-  for (const c of data.companies) h1 += `<th colspan="5" class="company-col">${c.name}</th>`; h1 += '</tr>';
+  for (const c of data.companies) h1 += `<th colspan="6" class="company-col">${c.name}</th>`; h1 += '</tr>';
   let h2 = `<tr class="head-row-2"><th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`; 
-  for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
+  for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>ΔQté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
   h2 += '</tr>';
   head.innerHTML = h1 + h2;
   recalcCompareHeaderOffsets();
@@ -1673,8 +1736,14 @@ async function refreshCompare(){
     // Accumuler le total MOE
     if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
     
-    for (const c of r.companies){ 
-      tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+    for (const c of r.companies){
+      // Calculer delta quantité (MOE - Offre)
+      const moeQty = parseNum(r.moe.qty);
+      const offerQty = parseNum(c.qty);
+      const deltaQty = (moeQty !== null && offerQty !== null) ? moeQty - offerQty : null;
+      const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
+      
+      tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
       // Accumuler le total par entreprise
       if (c.mt != null) totalsByCompany[c.company_id] = (totalsByCompany[c.company_id] || 0) + parseNum(c.mt);
     }
@@ -1685,7 +1754,7 @@ async function refreshCompare(){
   let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
   for (const c of data.companies) {
     const companyTotal = totalsByCompany[c.id] || 0;
-    totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
+    totalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
@@ -2663,6 +2732,29 @@ function bindUI(){
     });
   });
   
+  // Gestion du changement de mot de passe
+  initPasswordSettings();
+
+  // Exports PDF
+  qs('#export-summary-pdf')?.addEventListener('click', () => {
+    const title = `Récapitulatif - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim();
+    exportTableToPDF('#summary-table', title || 'Récapitulatif');
+  });
+  qs('#export-rounds-compare-pdf')?.addEventListener('click', () => {
+    const title = `Comparaison des Tours - ${currentProject?.name || ''}`.trim();
+    exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
+  });
+
+  // Export Excel (CSV) depuis le DOM
+  qs('#export-summary-excel')?.addEventListener('click', () => {
+    const fname = `Recap_${sanitizeFilename(currentProject?.name)}${currentRound ? `_Tour${currentRound.round_number}` : ''}.csv`;
+    exportTableToCSV('#summary-table', fname);
+  });
+  qs('#export-rounds-compare-excel')?.addEventListener('click', () => {
+    const fname = `ComparaisonTours_${sanitizeFilename(currentProject?.name)}.csv`;
+    exportTableToCSV('#rounds-compare-table', fname);
+  });
+  
   // Modal de partage
   qs('#close-share-modal')?.addEventListener('click', closeShareModal);
   qs('#share-project-btn')?.addEventListener('click', shareProject);
@@ -2699,15 +2791,205 @@ function bindUI(){
   qs('#filter-access-requests-status')?.addEventListener('change', loadAccessRequests);
 }
 
+/* ================== PARAMÈTRES COMPTE ================== */
+function initPasswordSettings() {
+  const emailInput = qs('#settings-email');
+  const newPasswordInput = qs('#settings-new-password');
+  const form = qs('#change-password-form');
+  
+  // Afficher l'email de l'utilisateur
+  if (emailInput && currentUser) {
+    emailInput.value = currentUser.email || '';
+  }
+  
+  // Validation en temps réel du mot de passe
+  if (newPasswordInput) {
+    newPasswordInput.addEventListener('input', () => {
+      validatePasswordRequirements(newPasswordInput.value);
+    });
+  }
+  
+  // Soumettre le formulaire
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await changePassword();
+    });
+  }
+}
+
+/* ================== EXPORT PDF ================== */
+function exportTableToPDF(tableSelector, title) {
+  const table = qs(tableSelector);
+  if (!table) {
+    alert('Tableau introuvable');
+    return;
+  }
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert('Impossible d\'ouvrir la fenêtre d\'export (pop-up bloquée ?)');
+    return;
+  }
+  const now = new Date();
+  const dateStr = now.toLocaleString('fr-FR');
+  const style = `
+    <style>
+      @page { size: A4 landscape; margin: 12mm; }
+      body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
+      h2 { margin: 0 0 6px 0; font-size: 18px; }
+      .meta { color:#666; font-size: 12px; margin-bottom: 12px; }
+      table { width: 100%; border-collapse: collapse; font-size: 10px; }
+      th, td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
+      thead th { background: #f4f6f8; position: static; }
+      .sticky-col, .sticky-col2 { position: static; }
+      /* Eviter les scroll wrappers en impression */
+      .table-wrapper { overflow: visible !important; }
+    </style>`;
+  const html = `
+    <html>
+    <head><title>${escapeHtml(title)}</title>${style}</head>
+    <body>
+      <h2>${escapeHtml(title)}</h2>
+      <div class="meta">Projet: ${escapeHtml(currentProject?.name || '-')}${currentRound ? ` · Tour ${currentRound.round_number} - ${escapeHtml(currentRound.name || '')}` : ''} · ${dateStr}</div>
+      ${table.outerHTML}
+    </body>
+    </html>`;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  // Attendre un peu que le rendu s'applique puis imprimer
+  setTimeout(() => { win.focus(); win.print(); }, 300);
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"]+/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function sanitizeFilename(s) {
+  if (!s) return 'export';
+  return String(s).replace(/[^a-zA-Z0-9_\-]+/g, '_').slice(0, 60) || 'export';
+}
+
+function exportTableToCSV(tableSelector, filename) {
+  const table = qs(tableSelector);
+  if (!table) { alert('Tableau introuvable'); return; }
+  const rows = Array.from(table.querySelectorAll('thead tr, tbody tr, tfoot tr'));
+  const csv = rows.map(tr => {
+    const cells = Array.from(tr.children);
+    return cells.map(td => {
+      let text = td.textContent.replace(/\s+/g, ' ').trim();
+      if (text.includes(';') || text.includes('"')) {
+        text = '"' + text.replace(/"/g, '""') + '"';
+      }
+      return text;
+    }).join(';');
+  }).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'export.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function validatePasswordRequirements(password) {
+  const lengthReq = qs('#pwd-length');
+  const upperReq = qs('#pwd-upper');
+  const numberReq = qs('#pwd-number');
+  const specialReq = qs('#pwd-special');
+  
+  if (!lengthReq || !upperReq || !numberReq || !specialReq) return;
+  
+  // Au moins 8 caractères
+  lengthReq.classList.toggle('valid', password.length >= 8);
+  
+  // Au moins une majuscule
+  upperReq.classList.toggle('valid', /[A-Z]/.test(password));
+  
+  // Au moins un chiffre
+  numberReq.classList.toggle('valid', /[0-9]/.test(password));
+  
+  // Au moins un caractère spécial
+  specialReq.classList.toggle('valid', /[.!:?,]/.test(password));
+}
+
+async function changePassword() {
+  const currentPassword = qs('#settings-current-password').value;
+  const newPassword = qs('#settings-new-password').value;
+  const confirmPassword = qs('#settings-confirm-password').value;
+  
+  try {
+    // Validations
+    if (!currentPassword) {
+      alert('Veuillez entrer votre mot de passe actuel');
+      return;
+    }
+    
+    if (!newPassword) {
+      alert('Veuillez entrer un nouveau mot de passe');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      alert('Les mots de passe ne correspondent pas');
+      return;
+    }
+    
+    // Vérifier les critères
+    if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || 
+        !/[0-9]/.test(newPassword) || !/[.!:?,]/.test(newPassword)) {
+      alert('Le nouveau mot de passe ne respecte pas tous les critères de sécurité');
+      return;
+    }
+    
+    // Appel API
+    const response = await api('/auth/change-password', {
+      method: 'POST',
+      body: { currentPassword, newPassword }
+    });
+    
+    if (response.success) {
+      alert('Mot de passe modifié avec succès !');
+      // Réinitialiser le formulaire
+      qs('#settings-current-password').value = '';
+      qs('#settings-new-password').value = '';
+      qs('#settings-confirm-password').value = '';
+      validatePasswordRequirements(''); // Reset des indicateurs
+    }
+  } catch (err) {
+    alert('Erreur : ' + (err.message || 'Impossible de changer le mot de passe'));
+  }
+}
+
 /* ================== THEME ================== */
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme') || 'dark';
+  const savedTheme = localStorage.getItem('theme') || 'auto';
   setTheme(savedTheme);
+  
+  // Écouter les changements de préférence système
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  mediaQuery.addEventListener('change', () => {
+    const currentTheme = localStorage.getItem('theme') || 'auto';
+    if (currentTheme === 'auto') {
+      applyTheme(mediaQuery.matches ? 'dark' : 'light');
+    }
+  });
 }
 
 function setTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('theme', theme);
+  
+  // Appliquer le thème effectif
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark ? 'dark' : 'light');
+  } else {
+    applyTheme(theme);
+  }
   
   // Mettre à jour les boutons
   qsa('.theme-option').forEach(btn => {
@@ -2715,8 +2997,28 @@ function setTheme(theme) {
   });
 }
 
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
 document.addEventListener('DOMContentLoaded', () => { 
   updateCurrentUser(); // Charger le rôle depuis le token au démarrage
   bindUI(); 
   if (token) showDashboard(); 
+
+  // Brancher les boutons d'export PDF (récap et comparaison)
+  const summaryBtn = document.getElementById('export-summary-pdf');
+  if (summaryBtn) {
+    summaryBtn.addEventListener('click', () => {
+      const title = `Récapitulatif - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim();
+      exportTableToPDF('#summary-table', title || 'Récapitulatif');
+    });
+  }
+  const compareBtn = document.getElementById('export-rounds-compare-pdf');
+  if (compareBtn) {
+    compareBtn.addEventListener('click', () => {
+      const title = `Comparaison des Tours - ${currentProject?.name || ''}`.trim();
+      exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
+    });
+  }
 });
