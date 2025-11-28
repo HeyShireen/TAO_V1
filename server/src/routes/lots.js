@@ -14,6 +14,8 @@ router.use(requireAuth);
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const roundId = req.query.round_id ? Number(req.query.round_id) : null;
+  const isEntreprise = req.user?.role === 'entreprise';
+  const userCompanyId = req.user?.company_id || null;
 
   try {
     // Construire la condition pour filtrer les offres par round_id
@@ -25,11 +27,12 @@ router.get('/:id', async (req, res) => {
       SELECT 
         l.id as lot_id, l.code, l.name as lot_name, l.project_id,
         i.id as item_id, i.num, i.designation, i.unit, i.position,
-        m.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,
+        ${isEntreprise ? 'NULL AS moe_qty, NULL AS moe_unit_price, NULL AS moe_amount,' : 'm.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,'}
         (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name) ORDER BY lc2.created_at, c2.id)
          FROM lot_companies lc2
          JOIN companies c2 ON c2.id = lc2.company_id
-         WHERE lc2.lot_id = l.id) as companies,
+         WHERE lc2.lot_id = l.id
+         ${isEntreprise && userCompanyId ? 'AND c2.id = ' + userCompanyId : ''}) as companies,
         json_agg(jsonb_build_object(
           'item_id', o.item_id,
           'company_id', o.company_id,
@@ -37,10 +40,10 @@ router.get('/:id', async (req, res) => {
           'qty', o.qty,
           'unit_price', o.unit_price,
           'amount', o.amount
-        )) FILTER (WHERE o.id IS NOT NULL) as offers
+        )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
       FROM lots l
       LEFT JOIN items i ON i.lot_id = l.id
-      LEFT JOIN moe_items m ON m.item_id = i.id
+      ${isEntreprise ? '' : 'LEFT JOIN moe_items m ON m.item_id = i.id'}
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
       WHERE l.id = $1
       GROUP BY l.id, i.id, m.item_id
@@ -65,7 +68,7 @@ router.get('/:id', async (req, res) => {
 
     // Extraire items avec leurs données MOE
     const itemsMap = new Map();
-    const moeList = [];
+    const moeList = isEntreprise ? [] : [];
     const offersList = [];
 
     result.rows.forEach(row => {
@@ -79,7 +82,7 @@ router.get('/:id', async (req, res) => {
           position: row.position
         });
 
-        if (row.moe_qty !== null || row.moe_unit_price !== null) {
+        if (!isEntreprise && (row.moe_qty !== null || row.moe_unit_price !== null)) {
           moeList.push({
             item_id: row.item_id,
             qty: row.moe_qty,
@@ -98,12 +101,17 @@ router.get('/:id', async (req, res) => {
       }
     });
 
+    // Filtrer les offres par company pour entreprise (déjà fait en SQL) mais garde sécurité côté code
+    const filteredOffers = isEntreprise && userCompanyId
+      ? offersList.filter(o => o.company_id === userCompanyId)
+      : offersList;
+
     res.json({
       lot,
       items: Array.from(itemsMap.values()),
       moe: moeList,
-      companies,
-      offers: offersList
+      companies: companies || [],
+      offers: filteredOffers
     });
 
   } catch (err) {
@@ -116,11 +124,13 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/table', async (req, res) => {
   const id = Number(req.params.id);
   const roundId = req.query.round_id ? Number(req.query.round_id) : null;
+  const isEntreprise = req.user?.role === 'entreprise';
+  const userCompanyId = req.user?.company_id || null;
 
   const itemsRes = await query('SELECT * FROM items WHERE lot_id=$1 ORDER BY position NULLS LAST, id', [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
 
-  const moeRes = itemIds.length
+  const moeRes = (!isEntreprise && itemIds.length)
     ? await query('SELECT * FROM moe_items WHERE item_id = ANY($1::int[])', [itemIds])
     : { rows: [] };
 
@@ -130,7 +140,10 @@ router.get('/:id/table', async (req, res) => {
     'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
     [id]
   );
-  const companies = compsRes.rows;
+  let companies = compsRes.rows;
+  if (isEntreprise && userCompanyId) {
+    companies = companies.filter(c => c.id === userCompanyId);
+  }
 
   // Filtrer les offres par round_id si fourni
   const offersRes = itemIds.length && roundId
@@ -157,8 +170,8 @@ router.get('/:id/table', async (req, res) => {
     };
     for (const c of companies) {
       const off = offersByItem.get(item.id)?.get(c.id) || {};
-      const dQty = (m.qty != null && off.qty != null && m.qty !== 0) ? ((off.qty - m.qty) / m.qty * 100) : null;
-      const dPu  = (m.unit_price != null && off.unit_price != null && m.unit_price !== 0) ? ((off.unit_price - m.unit_price) / m.unit_price * 100) : null;
+      const dQty = (!isEntreprise && m.qty != null && off.qty != null && m.qty !== 0) ? ((off.qty - m.qty) / m.qty * 100) : null;
+      const dPu  = (!isEntreprise && m.unit_price != null && off.unit_price != null && m.unit_price !== 0) ? ((off.unit_price - m.unit_price) / m.unit_price * 100) : null;
       line.companies.push({
         company_id: c.id,
         name: c.name,
@@ -173,6 +186,11 @@ router.get('/:id/table', async (req, res) => {
     return line;
   });
 
+  // Si entreprise: filtrer lignes pour ne retourner que leurs offres dans companies déjà réduit
+  if (isEntreprise && userCompanyId) {
+    // Remove moe amounts
+    rows.forEach(r => { r.moe = { qty: null, pu: null, mt: null }; });
+  }
   res.json({ companies, rows });
 });
 

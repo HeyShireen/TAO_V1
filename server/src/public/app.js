@@ -111,11 +111,35 @@ async function api(path, opts = {}) {
     const res = await fetch(url, { ...opts, headers, body });
     const isJson = res.headers.get('content-type')?.includes('application/json');
     const data = isJson ? await res.json().catch(()=> ({})) : await res.text();
-    if (!res.ok) throw new Error((isJson && data?.error) ? data.error : (data || res.statusText));
+    if (!res.ok) {
+      const msg = (isJson && data?.error) ? data.error : (data || res.statusText);
+      showNotify({ title: 'Erreur', message: msg, type: 'error' });
+      throw new Error(msg);
+    }
     return data;
   } finally {
     if (showLoading) hideLoader();
   }
+}
+
+/* ================= Notifications ================= */
+function showNotify({ title = 'Info', message = '', type = 'info' }) {
+  const modal = qs('#notify-modal');
+  const titleEl = qs('#notify-title');
+  const msgEl = qs('#notify-message');
+  const okBtn = qs('#notify-ok');
+  const closeBtn = qs('#notify-close');
+  if (!modal || !titleEl || !msgEl) return;
+  titleEl.textContent = title;
+  msgEl.textContent = message;
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  modal.classList.remove('notify-success','notify-error','notify-info');
+  modal.classList.add(type === 'error' ? 'notify-error' : (type === 'success' ? 'notify-success' : 'notify-info'));
+  const close = () => { modal.classList.add('hidden'); modal.style.display='none'; };
+  okBtn?.addEventListener('click', close, { once: true });
+  closeBtn?.addEventListener('click', close, { once: true });
+  modal.addEventListener('click', (e)=>{ if (e.target.id === 'notify-modal') close(); }, { once: true });
 }
 
 /* ================= Onglets ================= */
@@ -245,7 +269,7 @@ async function registerFirst(email, password){
 function isAdmin() { return currentUser && currentUser.role === 'admin'; }
 function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
 function isVisionneur() { return currentUser && currentUser.role === 'visionneur'; }
-function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
+function isEntreprise() { return currentUser && currentUser.role === 'entreprise'; }
 function isResponsableOrAdmin() { return isAdmin() || isResponsable(); }
 function canCreateProject() { return isAdmin() || isResponsable(); }
 function canEditProject() { return isAdmin() || isResponsable(); }
@@ -269,10 +293,14 @@ function renderUsersTable(users) {
   
   for (const user of users) {
     const tr = document.createElement('tr');
-    const roleOptions = ['visionneur', 'responsable', 'admin'];
+    const roleOptions = ['visionneur', 'entreprise', 'responsable', 'admin'];
     const roleSelect = roleOptions.map(r => 
       `<option value="${r}" ${r === user.role ? 'selected' : ''}>${r.charAt(0).toUpperCase() + r.slice(1)}</option>`
     ).join('');
+    
+    const companyDisplay = user.company_name 
+      ? `<span style="color:var(--primary);">${user.company_name}</span>` 
+      : '<span class="muted">—</span>';
     
     tr.innerHTML = `
       <td>${user.id}</td>
@@ -282,19 +310,25 @@ function renderUsersTable(users) {
           ${roleSelect}
         </select>
       </td>
+      <td>${companyDisplay}</td>
       <td>${new Date(user.created_at).toLocaleDateString()}</td>
       <td>
-        <button class="btn ghost btn-sm" data-change-role="${user.id}">Modifier</button>
+        <button class="btn ghost btn-sm" data-change-role="${user.id}">Modifier rôle</button>
+        ${user.role === 'entreprise' ? `<button class="btn ghost btn-sm" data-assign-company="${user.id}">Attribuer entreprise</button>` : ''}
         <button class="btn ghost btn-sm" data-delete-user="${user.id}">Supprimer</button>
       </td>
     `;
     
     // Event listeners pour les boutons
     const changeBtn = tr.querySelector(`[data-change-role="${user.id}"]`);
+    const assignBtn = tr.querySelector(`[data-assign-company="${user.id}"]`);
     const deleteBtn = tr.querySelector(`[data-delete-user="${user.id}"]`);
     
     if (changeBtn) {
       changeBtn.addEventListener('click', () => changeUserRole(user.id));
+    }
+    if (assignBtn) {
+      assignBtn.addEventListener('click', () => openAssignCompanyModal(user));
     }
     if (deleteBtn) {
       deleteBtn.addEventListener('click', () => deleteUser(user.id));
@@ -312,10 +346,10 @@ async function changeUserRole(userId) {
   
   try {
     await api(`/users/${userId}/role`, { method: 'PATCH', body: { role: newRole } });
-    alert('Rôle modifié avec succès');
+    showNotify({ title: 'Succès', message: 'Rôle modifié avec succès', type: 'success' });
     loadUsers();
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -324,10 +358,94 @@ async function deleteUser(userId) {
   
   try {
     await api(`/users/${userId}`, { method: 'DELETE' });
-    alert('Utilisateur supprimé');
+    showNotify({ title: 'Succès', message: 'Utilisateur supprimé', type: 'success' });
     loadUsers();
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+/* ================= Attribution d'entreprise ================= */
+let currentAssignUserId = null;
+
+async function openAssignCompanyModal(user) {
+  currentAssignUserId = user.id;
+  const modal = qs('#assign-company-modal');
+  const userInfo = qs('#assign-company-user-info');
+  const projectSelect = qs('#assign-company-project');
+  const companySelect = qs('#assign-company-company');
+  const confirmBtn = qs('#assign-company-confirm-btn');
+  
+  userInfo.textContent = `Utilisateur : ${user.email} (ID: ${user.id})`;
+  
+  // Charger les projets
+  try {
+    const projects = await api('/projects');
+    projectSelect.innerHTML = '<option value="">-- Choisir un projet --</option>';
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.name}${p.reference ? ' (' + p.reference + ')' : ''}`;
+      projectSelect.appendChild(opt);
+    });
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: 'Impossible de charger les projets', type: 'error' });
+    return;
+  }
+  
+  // Reset
+  companySelect.innerHTML = '<option value="">-- D\'abord sélectionner un projet --</option>';
+  companySelect.disabled = true;
+  confirmBtn.disabled = true;
+  
+  // Event: changement de projet
+  projectSelect.onchange = async () => {
+    const projectId = projectSelect.value;
+    if (!projectId) {
+      companySelect.innerHTML = '<option value="">-- D\'abord sélectionner un projet --</option>';
+      companySelect.disabled = true;
+      confirmBtn.disabled = true;
+      return;
+    }
+    
+    try {
+      // Charger les entreprises liées à ce projet (via les lots)
+      const companies = await api(`/projects/${projectId}/companies`);
+      companySelect.innerHTML = '<option value="">-- Choisir une entreprise --</option>';
+      companies.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        companySelect.appendChild(opt);
+      });
+      companySelect.disabled = false;
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: 'Impossible de charger les entreprises', type: 'error' });
+    }
+  };
+  
+  // Event: changement d'entreprise
+  companySelect.onchange = () => {
+    confirmBtn.disabled = !companySelect.value;
+  };
+  
+  show('#assign-company-modal');
+}
+
+async function assignCompanyToUser() {
+  const companyId = qs('#assign-company-company').value;
+  if (!companyId || !currentAssignUserId) return;
+  
+  try {
+    await api(`/users/${currentAssignUserId}/company`, { 
+      method: 'PATCH', 
+      body: { company_id: companyId } 
+    });
+    showNotify({ title: 'Succès', message: 'Entreprise attribuée avec succès', type: 'success' });
+    hide('#assign-company-modal');
+    loadUsers();
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -392,7 +510,7 @@ async function shareProject() {
   const canEdit = qs('#share-can-edit').checked;
   
   if (!viewerId) {
-    return alert('Sélectionnez un visionneur');
+    showNotify({ title: 'Validation', message: 'Sélectionnez un visionneur', type: 'info' });
   }
   
   try {
@@ -401,12 +519,12 @@ async function shareProject() {
       body: { userId: viewerId, canView: true, canEdit }
     });
     
-    alert('Projet partagé avec succès');
+    showNotify({ title: 'Succès', message: 'Projet partagé avec succès', type: 'success' });
     qs('#share-viewer-select').value = '';
     qs('#share-can-edit').checked = false;
     loadExistingShares(currentShareProjectId);
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -415,10 +533,10 @@ async function removeShare(projectId, userId) {
   
   try {
     await api(`/shares/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
-    alert('Partage retiré');
+    showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
     loadExistingShares(projectId);
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -437,7 +555,7 @@ async function openAccessRequestModal() {
     
     show('#access-request-modal');
   } catch (err) {
-    alert('Erreur lors du chargement des projets: ' + err.message);
+    showNotify({ title: 'Erreur', message: 'Erreur lors du chargement des projets: ' + err.message, type: 'error' });
   }
 }
 
@@ -478,7 +596,7 @@ async function submitAccessRequest() {
   const message = qs('#access-request-message').value.trim();
   
   if (!projectName) {
-    return alert('Veuillez indiquer le nom du projet');
+    showNotify({ title: 'Validation', message: 'Veuillez indiquer le nom du projet', type: 'info' });
   }
   
   try {
@@ -487,12 +605,12 @@ async function submitAccessRequest() {
       body: { projectName, message }
     });
     
-    alert('✅ Demande envoyée ! Un responsable examinera votre demande.');
+    showNotify({ title: 'Succès', message: 'Demande envoyée. Un responsable examinera votre demande.', type: 'success' });
     qs('#access-request-project-name').value = '';
     qs('#access-request-message').value = '';
     await loadMyAccessRequests();
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -566,7 +684,8 @@ async function openApproveAccessModal(requestId) {
   const confirmBtn = qs('#approve-confirm-btn');
   const searchInput = qs('#approve-search');
   if (!contextEl || !selectedEl || !confirmBtn) {
-    return alert('Erreur interface: éléments modal introuvables');
+    showNotify({ title: 'Erreur', message: 'Interface: éléments modal introuvables', type: 'error' });
+    return;
   }
   selectedEl.textContent = 'Chargement des projets...';
   confirmBtn.disabled = true;
@@ -702,10 +821,10 @@ async function confirmApproveAccess() {
       });
     }
     hide('#approve-access-modal');
-    alert(`✅ Demande approuvée et ${selectedIds.length} projet(s) partagé(s)`);
+    showNotify({ title: 'Succès', message: `Demande approuvée et ${selectedIds.length} projet(s) partagé(s)`, type: 'success' });
     loadAccessRequests();
   } catch(err) {
-    alert('Erreur approbation: ' + err.message);
+    showNotify({ title: 'Erreur', message: 'Erreur approbation: ' + err.message, type: 'error' });
   }
 }
 
@@ -723,10 +842,10 @@ async function rejectAccessRequest(requestId) {
       method: 'PATCH',
       body: { reason }
     });
-    alert('❌ Demande rejetée. L\'utilisateur a été notifié.');
+    showNotify({ title: 'Info', message: 'Demande rejetée. L\'utilisateur a été notifié.', type: 'info' });
     loadAccessRequests();
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -778,26 +897,16 @@ async function openProject(id){
 
 async function loadRounds(){
   try {
-    const rounds = await api(`/rounds/project/${currentProject.id}`);
-    
-    // Charger les cartes dans la gestion des tours
+    // Utilise l'endpoint agrégé pour éviter N+1 requêtes de stats
+    const rounds = await api(`/rounds/project/${currentProject.id}/with-stats`);
+
     const container = qs('#rounds-list');
     container.innerHTML = '';
-    
-    // Charger les onglets dans la sous-navigation
     const tabsContainer = qs('#rounds-tabs');
     tabsContainer.innerHTML = '';
-    
+
     for (const round of rounds){
-      // Charger les stats avec gestion d'erreur
-      let stats = { total_items: 0, companies_count: 0, pending_questions: 0 };
-      try {
-        stats = await api(`/rounds/${round.id}/stats`);
-      } catch (statsErr) {
-        console.error('Erreur chargement stats pour tour', round.id, ':', statsErr);
-      }
-      
-      // Créer la carte pour la liste des tours
+      const stats = round.stats || { total_items:0, companies_count:0, pending_questions:0 };
       const card = document.createElement('div');
       card.className = 'round-card';
       card.dataset.roundId = round.id;
@@ -805,102 +914,69 @@ async function loadRounds(){
             <button class="duplicate-round" title="Dupliquer">📋</button>
             <button class="delete-round" title="Supprimer">🗑️</button>
           `;
-      
       card.innerHTML = `
         <div class="round-card-header">
           <span class="round-number">${round.round_number}</span>
-          <div class="round-actions">
-            ${actionsHTML}
-          </div>
+          <div class="round-actions">${actionsHTML}</div>
         </div>
         <div class="round-name" contenteditable="false">${round.name}</div>
         <div class="round-stats">
           <span>${stats.total_items || 0} items</span>
           <span>${stats.companies_count || 0} entreprises</span>
           <span>${stats.pending_questions || 0} questions</span>
-        </div>
-      `;
-      
+        </div>`;
+
       card.addEventListener('click', (e) => {
-        // Ne pas sélectionner si on clique sur le nom en mode édition
         if (!e.target.classList.contains('round-name') || e.target.getAttribute('contenteditable') === 'false') {
           selectRound(round, card);
         }
       });
-      
-      // Créer l'onglet dans la sous-navigation
+
       const tab = document.createElement('button');
       tab.className = 'round-tab';
       tab.textContent = round.name;
       tab.dataset.roundId = round.id;
       tab.addEventListener('click', () => selectRoundFromTab(round));
       tabsContainer.appendChild(tab);
-      
+
       const nameEl = card.querySelector('.round-name');
-      
-      // Empêcher l'édition pour les visionneurs
       if (!isVisionneur()) {
-        // Double-clic sur le nom pour éditer
         nameEl.addEventListener('dblclick', (e) => {
           e.stopPropagation();
-          nameEl.setAttribute('contenteditable', 'true');
+          nameEl.setAttribute('contenteditable','true');
           nameEl.focus();
-          // Sélectionner tout le texte
           const range = document.createRange();
           range.selectNodeContents(nameEl);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
+          const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
         });
-        
         nameEl.addEventListener('blur', async () => {
-          nameEl.setAttribute('contenteditable', 'false');
+          nameEl.setAttribute('contenteditable','false');
           const newName = nameEl.textContent.trim();
           if (newName && newName !== round.name) {
             try {
-              await api(`/rounds/${round.id}`, {
-                method: 'PUT',
-                body: { name: newName, description: round.description, status: round.status }
-              });
-              round.name = newName; // Mettre à jour localement
+              await api(`/rounds/${round.id}`, { method:'PUT', body:{ name:newName, description:round.description, status:round.status } });
+              round.name = newName;
+              tab.textContent = newName;
             } catch (err) {
-              alert('Erreur: ' + err.message);
-              nameEl.textContent = round.name; // Restaurer l'ancien nom
+              showNotify({ title:'Erreur', message:err.message, type:'error' });
+              nameEl.textContent = round.name;
             }
           }
         });
-        
         nameEl.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            nameEl.blur();
-          } else if (e.key === 'Escape') {
-            nameEl.textContent = round.name;
-            nameEl.blur();
-          }
+          if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+          else if (e.key === 'Escape') { nameEl.textContent = round.name; nameEl.blur(); }
         });
-        
         const duplicateBtn = card.querySelector('.duplicate-round');
-        if (duplicateBtn) {
-          duplicateBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            duplicateRound(round.id);
-          });
-        }
-        
+        duplicateBtn?.addEventListener('click', (e) => { e.stopPropagation(); duplicateRound(round.id); });
         const deleteBtn = card.querySelector('.delete-round');
-        if (deleteBtn) {
-          deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            deleteRound(round.id);
-          });
-        }
+        deleteBtn?.addEventListener('click', (e) => { e.stopPropagation(); deleteRound(round.id); });
       }
-      
       container.appendChild(card);
     }
   } catch (err) {
     console.error('Erreur chargement tours:', err);
+    showNotify({ title:'Erreur', message:'Chargement tours: ' + err.message, type:'error' });
   }
 }
 
@@ -974,6 +1050,7 @@ async function loadRoundSummary(){
   try {
     const data = await api(`/rounds/${currentRound.id}/summary`);
     const { lots } = data;
+    const entrepriseMode = isEntreprise();
     
     const table = qs('#summary-table');
     const thead = table.querySelector('thead');
@@ -983,7 +1060,9 @@ async function loadRoundSummary(){
     // Construire les en-têtes: Lot | MOE (€) | Montant (€) | Écart (€) | Écart (%)
     thead.innerHTML = '';
     const headerRow = document.createElement('tr');
-    headerRow.innerHTML = '<th>Lot</th><th class="amount">MOE (€)</th><th class="amount">Montant (€)</th><th class="amount">Écart (€)</th><th class="amount">Écart (%)</th>';
+    headerRow.innerHTML = entrepriseMode
+      ? '<th>Lot</th><th class="amount">Montant (€)</th>'
+      : '<th>Lot</th><th class="amount">MOE (€)</th><th class="amount">Montant (€)</th><th class="amount">Écart (€)</th><th class="amount">Écart (%)</th>';
     thead.appendChild(headerRow);
     
     // Construire les lignes: une ligne par lot avec MOE, puis une ligne par entreprise
@@ -997,21 +1076,22 @@ async function loadRoundSummary(){
       lotRow.className = 'lot-header-row';
       
       const lotCell = document.createElement('td');
-      lotCell.rowSpan = lot.companies.length + 1;
       lotCell.className = 'lot-name-cell';
       lotCell.innerHTML = lot.lot_code 
         ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>` 
         : `<strong>${lot.lot_name}</strong>`;
       lotRow.appendChild(lotCell);
       
-      const moeCell = document.createElement('td');
-      moeCell.className = 'amount moe-amount';
-      moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
-      lotRow.appendChild(moeCell);
-      
-      // Cellules vides pour Montant, Écart €, Écart %
-      lotRow.innerHTML += '<td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td>';
-      
+      if (!entrepriseMode) {
+        const moeCell = document.createElement('td');
+        moeCell.className = 'amount moe-amount';
+        moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
+        lotRow.appendChild(moeCell);
+        lotRow.innerHTML += '<td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td>';
+      } else {
+        // En mode entreprise on ne montre que l'en-tête du lot
+        lotRow.innerHTML += '<td class="amount empty-cell">—</td>';
+      }
       tbody.appendChild(lotRow);
       totalMoe += lot.moe_total;
       
@@ -1032,23 +1112,22 @@ async function loadRoundSummary(){
         amountCell.textContent = fmtEuro(companyData.total);
         companyRow.appendChild(amountCell);
         
-        // Colonne écart en euros
-        const ecartEur = companyData.total - lot.moe_total;
-        const ecartEurCell = document.createElement('td');
-        ecartEurCell.className = 'amount';
-        const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-        const ecartEurSign = ecartEur > 0 ? '+' : '';
-        ecartEurCell.innerHTML = `<span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>`;
-        companyRow.appendChild(ecartEurCell);
-        
-        // Colonne écart en pourcentage
-        const ecartPct = lot.moe_total > 0 ? ((companyData.total - lot.moe_total) / lot.moe_total) * 100 : 0;
-        const ecartPctCell = document.createElement('td');
-        ecartPctCell.className = 'amount';
-        const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
-        const ecartPctSign = ecartPct > 0 ? '+' : '';
-        ecartPctCell.innerHTML = `<span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(1)}%</span>`;
-        companyRow.appendChild(ecartPctCell);
+        if (!entrepriseMode) {
+          const ecartEur = companyData.total - lot.moe_total;
+          const ecartEurCell = document.createElement('td');
+          ecartEurCell.className = 'amount';
+          const ecartEurClass = ecartEur > 0 ? 'ecart-positive' : (ecartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+          const ecartEurSign = ecartEur > 0 ? '+' : '';
+          ecartEurCell.innerHTML = `<span class="${ecartEurClass}">${ecartEurSign}${fmtEuro(Math.abs(ecartEur))}</span>`;
+          companyRow.appendChild(ecartEurCell);
+          const ecartPct = lot.moe_total > 0 ? ((companyData.total - lot.moe_total) / lot.moe_total) * 100 : 0;
+          const ecartPctCell = document.createElement('td');
+          ecartPctCell.className = 'amount';
+          const ecartPctClass = ecartPct > 0 ? 'ecart-positive' : (ecartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+          const ecartPctSign = ecartPct > 0 ? '+' : '';
+          ecartPctCell.innerHTML = `<span class="${ecartPctClass}">${ecartPctSign}${ecartPct.toFixed(1)}%</span>`;
+          companyRow.appendChild(ecartPctCell);
+        }
         
         tbody.appendChild(companyRow);
         
@@ -1072,58 +1151,59 @@ async function loadRoundSummary(){
       }
     }
     
-    // Ligne de totaux MOE
+    // Ligne de totaux MOE (masquée en entreprise)
     tfoot.innerHTML = '';
     const companiesArray = Object.values(totalsByCompany);
     
-    const totalMoeRow = document.createElement('tr');
-    totalMoeRow.className = 'total-row lot-header-row moe-total-row';
+    if (!entrepriseMode) {
+      const totalMoeRow = document.createElement('tr');
+      totalMoeRow.className = 'total-row lot-header-row moe-total-row';
     
-    const totalLabelCell = document.createElement('th');
-    totalLabelCell.textContent = 'TOTAL';
-    totalLabelCell.rowSpan = companiesArray.length + 2; // +2 pour MOE et moins-disant
-    totalMoeRow.appendChild(totalLabelCell);
+      const totalLabelCell = document.createElement('th');
+      totalLabelCell.textContent = 'TOTAL';
+      totalLabelCell.rowSpan = companiesArray.length + 2; // +2 pour MOE et moins-disant
+      totalMoeRow.appendChild(totalLabelCell);
     
-    const totalMoeCell = document.createElement('th');
-    totalMoeCell.className = 'amount moe-total-cell';
-    totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
-    totalMoeRow.appendChild(totalMoeCell);
+      const totalMoeCell = document.createElement('th');
+      totalMoeCell.className = 'amount moe-total-cell';
+      totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
+      totalMoeRow.appendChild(totalMoeCell);
     
-    totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
-    
-    tfoot.appendChild(totalMoeRow);
+      totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
+      tfoot.appendChild(totalMoeRow);
+    }
     
     // Ligne simulation moins-disant
-    const moinsDRow = document.createElement('tr');
-    moinsDRow.className = 'total-row simulation-row';
+    if (!entrepriseMode) {
+      const moinsDRow = document.createElement('tr');
+      moinsDRow.className = 'total-row simulation-row';
     
-    const moinsDNameCell = document.createElement('th');
-    moinsDNameCell.className = 'amount simulation-name';
-    moinsDNameCell.innerHTML = '<strong>Moins-disant (simulation)</strong>';
-    moinsDRow.appendChild(moinsDNameCell);
+      const moinsDNameCell = document.createElement('th');
+      moinsDNameCell.className = 'amount simulation-name';
+      moinsDNameCell.innerHTML = '<strong>Moins-disant (simulation)</strong>';
+      moinsDRow.appendChild(moinsDNameCell);
     
-    const moinsDAmountCell = document.createElement('th');
-    moinsDAmountCell.className = 'amount';
-    moinsDAmountCell.innerHTML = `<strong>${fmtEuro(totalMoinsDisant)}</strong>`;
-    moinsDRow.appendChild(moinsDAmountCell);
+      const moinsDAmountCell = document.createElement('th');
+      moinsDAmountCell.className = 'amount';
+      moinsDAmountCell.innerHTML = `<strong>${fmtEuro(totalMoinsDisant)}</strong>`;
+      moinsDRow.appendChild(moinsDAmountCell);
     
-    const moinsDEcartEur = totalMoinsDisant - totalMoe;
-    const moinsDEcartEurCell = document.createElement('th');
-    moinsDEcartEurCell.className = 'amount';
-    const moinsDEcartClass = moinsDEcartEur > 0 ? 'ecart-positive' : (moinsDEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-    const moinsDEcartSign = moinsDEcartEur > 0 ? '+' : '';
-    moinsDEcartEurCell.innerHTML = `<strong><span class="${moinsDEcartClass}">${moinsDEcartSign}${fmtEuro(Math.abs(moinsDEcartEur))}</span></strong>`;
-    moinsDRow.appendChild(moinsDEcartEurCell);
-    
-    const moinsDEcartPct = totalMoe > 0 ? ((totalMoinsDisant - totalMoe) / totalMoe) * 100 : 0;
-    const moinsDEcartPctCell = document.createElement('th');
-    moinsDEcartPctCell.className = 'amount';
-    const moinsDPctClass = moinsDEcartPct > 0 ? 'ecart-positive' : (moinsDEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
-    const moinsDPctSign = moinsDEcartPct > 0 ? '+' : '';
-    moinsDEcartPctCell.innerHTML = `<strong><span class="${moinsDPctClass}">${moinsDPctSign}${moinsDEcartPct.toFixed(1)}%</span></strong>`;
-    moinsDRow.appendChild(moinsDEcartPctCell);
-    
-    tfoot.appendChild(moinsDRow);
+      const moinsDEcartEur = totalMoinsDisant - totalMoe;
+      const moinsDEcartEurCell = document.createElement('th');
+      moinsDEcartEurCell.className = 'amount';
+      const moinsDEcartClass = moinsDEcartEur > 0 ? 'ecart-positive' : (moinsDEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+      const moinsDEcartSign = moinsDEcartEur > 0 ? '+' : '';
+      moinsDEcartEurCell.innerHTML = `<strong><span class="${moinsDEcartClass}">${moinsDEcartSign}${fmtEuro(Math.abs(moinsDEcartEur))}</span></strong>`;
+      moinsDRow.appendChild(moinsDEcartEurCell);
+      const moinsDEcartPct = totalMoe > 0 ? ((totalMoinsDisant - totalMoe) / totalMoe) * 100 : 0;
+      const moinsDEcartPctCell = document.createElement('th');
+      moinsDEcartPctCell.className = 'amount';
+      const moinsDPctClass = moinsDEcartPct > 0 ? 'ecart-positive' : (moinsDEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+      const moinsDPctSign = moinsDEcartPct > 0 ? '+' : '';
+      moinsDEcartPctCell.innerHTML = `<strong><span class="${moinsDPctClass}">${moinsDPctSign}${moinsDEcartPct.toFixed(1)}%</span></strong>`;
+      moinsDRow.appendChild(moinsDEcartPctCell);
+      tfoot.appendChild(moinsDRow);
+    }
     
     // Lignes de totaux par entreprise
     for (const companyId in totalsByCompany) {
@@ -1143,30 +1223,29 @@ async function loadRoundSummary(){
       amountCell.innerHTML = `<strong>${fmtEuro(companyData.total)}</strong>`;
       companyTotalRow.appendChild(amountCell);
       
-      // Écart total en euros
-      const totalEcartEur = companyData.total - totalMoe;
-      const totalEcartEurCell = document.createElement('th');
-      totalEcartEurCell.className = 'amount';
-      const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
-      const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
-      totalEcartEurCell.innerHTML = `<strong><span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span></strong>`;
-      companyTotalRow.appendChild(totalEcartEurCell);
-      
-      // Écart total en pourcentage
-      const totalEcartPct = totalMoe > 0 ? ((companyData.total - totalMoe) / totalMoe) * 100 : 0;
-      const totalEcartPctCell = document.createElement('th');
-      totalEcartPctCell.className = 'amount';
-      const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
-      const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
-      totalEcartPctCell.innerHTML = `<strong><span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(1)}%</span></strong>`;
-      companyTotalRow.appendChild(totalEcartPctCell);
+      if (!entrepriseMode) {
+        const totalEcartEur = companyData.total - totalMoe;
+        const totalEcartEurCell = document.createElement('th');
+        totalEcartEurCell.className = 'amount';
+        const totalEcartEurClass = totalEcartEur > 0 ? 'ecart-positive' : (totalEcartEur < 0 ? 'ecart-negative' : 'ecart-zero');
+        const totalEcartEurSign = totalEcartEur > 0 ? '+' : '';
+        totalEcartEurCell.innerHTML = `<strong><span class="${totalEcartEurClass}">${totalEcartEurSign}${fmtEuro(Math.abs(totalEcartEur))}</span></strong>`;
+        companyTotalRow.appendChild(totalEcartEurCell);
+        const totalEcartPct = totalMoe > 0 ? ((companyData.total - totalMoe) / totalMoe) * 100 : 0;
+        const totalEcartPctCell = document.createElement('th');
+        totalEcartPctCell.className = 'amount';
+        const totalEcartPctClass = totalEcartPct > 0 ? 'ecart-positive' : (totalEcartPct < 0 ? 'ecart-negative' : 'ecart-zero');
+        const totalEcartPctSign = totalEcartPct > 0 ? '+' : '';
+        totalEcartPctCell.innerHTML = `<strong><span class="${totalEcartPctClass}">${totalEcartPctSign}${totalEcartPct.toFixed(1)}%</span></strong>`;
+        companyTotalRow.appendChild(totalEcartPctCell);
+      }
       
       tfoot.appendChild(companyTotalRow);
     }
     
   } catch (err) {
     console.error('Erreur chargement récapitulatif:', err);
-    alert('Erreur lors du chargement du récapitulatif: ' + err.message);
+    showNotify({ title:'Erreur', message:'Chargement récapitulatif: ' + err.message, type:'error' });
   }
 }
 
@@ -1176,6 +1255,7 @@ async function loadRoundsComparison(){
   try {
     const data = await api(`/rounds/project/${currentProject.id}/compare`);
     const { lots, rounds } = data;
+    const entrepriseMode = isEntreprise();
     
     if (rounds.length === 0) {
       qs('#rounds-compare-table').innerHTML = '<tbody><tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucun tour disponible</td></tr></tbody>';
@@ -1205,7 +1285,7 @@ async function loadRoundsComparison(){
     // Construire les en-têtes: Lot | MOE | Tour 1 | Tour 2 | ... | Analyse
     thead.innerHTML = '';
     const headerRow = document.createElement('tr');
-    headerRow.innerHTML = '<th rowspan="2" class="sticky-col">Lot</th><th rowspan="2" class="amount">MOE (€)</th>';
+    headerRow.innerHTML = '<th rowspan="2" class="sticky-col">Lot</th>' + (entrepriseMode ? '' : '<th rowspan="2" class="amount">MOE (€)</th>');
     for (const round of rounds) {
       const th = document.createElement('th');
       th.className = 'amount';
@@ -1251,10 +1331,12 @@ async function loadRoundsComparison(){
       
       // Colonne MOE
       const moeCell = document.createElement('td');
-      moeCell.className = 'amount moe-amount';
-      moeCell.textContent = fmtEuro(lot.moe_total);
-      row.appendChild(moeCell);
-      totalMoe += lot.moe_total;
+      if (!entrepriseMode) {
+        moeCell.className = 'amount moe-amount';
+        moeCell.textContent = fmtEuro(lot.moe_total);
+        row.appendChild(moeCell);
+        totalMoe += lot.moe_total;
+      }
       
       // Colonnes tours avec détails entreprises
       for (const round of rounds) {
@@ -1327,10 +1409,12 @@ async function loadRoundsComparison(){
     totalLabelCell.textContent = 'TOTAL';
     totalRow.appendChild(totalLabelCell);
     
-    const totalMoeCell = document.createElement('th');
-    totalMoeCell.className = 'amount';
-    totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
-    totalRow.appendChild(totalMoeCell);
+    if (!entrepriseMode) {
+      const totalMoeCell = document.createElement('th');
+      totalMoeCell.className = 'amount';
+      totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
+      totalRow.appendChild(totalMoeCell);
+    }
     
     // Totaux par tour
     for (const round of rounds) {
@@ -1345,14 +1429,14 @@ async function loadRoundsComparison(){
     
   } catch (err) {
     console.error('Erreur chargement comparaison tours:', err);
-    alert('Erreur lors du chargement de la comparaison: ' + err.message);
+    showNotify({ title:'Erreur', message:'Chargement comparaison: ' + err.message, type:'error' });
   }
 }
 
 async function createRound(){
   console.log('createRound called, currentProject:', currentProject);
   if (!currentProject) {
-    alert('Veuillez d\'abord ouvrir un projet');
+    showNotify({ title: 'Validation', message: 'Veuillez d\'abord ouvrir un projet', type: 'info' });
     return;
   }
   try {
@@ -1379,7 +1463,7 @@ async function createRound(){
       }
     }, 100);
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -1394,7 +1478,7 @@ async function duplicateRound(roundId){
     });
     await loadRounds();
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -1422,7 +1506,7 @@ async function deleteRound(roundId){
       activateTab('tab-rounds');
     }
   } catch (err) {
-    alert('Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -1437,12 +1521,10 @@ async function openLot(id, lotMeta){
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
   setText('#lot-questions-title', `Fiches Questions - ${lotMeta.name}`);
 
-  // Entreprises du lot
-  lotCompanies = await api(`/lots/${id}/companies`);
-
-  // Données pour éditer
+  // Données combinées (inclut déjà les entreprises) via l'endpoint existant
   const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
-  const raw = await api(`/lots/${id}${roundParam}`); // {items, moe, companies, offers}
+  const raw = await api(`/lots/${id}${roundParam}`); // { lot, items, moe, companies, offers }
+  lotCompanies = raw.companies || [];
   buildSheetModel(raw);
 
   // Afficher comparatif par défaut
@@ -1502,9 +1584,9 @@ async function saveProjectQuestionConfig(){
       question_price_high: qs('#q-price-high').value.trim()
     };
     await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
-    alert('✅ Configuration sauvegardée');
+    showNotify({ title: 'Succès', message: 'Configuration sauvegardée', type: 'success' });
   } catch (err) {
-    alert('❌ Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -1523,7 +1605,8 @@ async function loadLotThresholds(){
 }
 
 async function saveLotThresholds(){
-  if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas modifier les seuils.');
+  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
+  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
   if (!currentLot) return;
   try {
     const body = {
@@ -1533,24 +1616,25 @@ async function saveLotThresholds(){
       price_high_threshold: parseFloat(qs('#threshold-price-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
-    alert('✅ Seuils sauvegardés');
+    showNotify({ title: 'Succès', message: 'Seuils sauvegardés', type: 'success' });
   } catch (err) {
-    alert('❌ Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
 async function generateQuestions(){
-  if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas générer de fiches questions.');
+  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
+  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
   if (!currentLot || !currentRound) return;
   try {
     const result = await api(`/question-config/lot/${currentLot.id}/generate`, { 
       method: 'POST',
       body: { round_id: currentRound.id }
     });
-    alert(`✅ ${result.generated} fiche(s) question générée(s)`);
+    showNotify({ title: 'Succès', message: `${result.generated} fiche(s) question générée(s)`, type: 'success' });
     await refreshQuestions();
   } catch (err) {
-    alert('❌ Erreur: ' + err.message);
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
 }
 
@@ -1578,7 +1662,7 @@ async function exportQuestionsExcel(){
     // Télécharger avec le token d'authentification
     const response = await fetch(API_BASE + url, {
       headers: {
-        'Authorization': `Bearer ${getToken()}`
+        'Authorization': `Bearer ${token}`
       }
     });
     
@@ -1598,7 +1682,7 @@ async function exportQuestionsExcel(){
     document.body.removeChild(a);
     window.URL.revokeObjectURL(downloadUrl);
   } catch (err) {
-    alert('❌ Erreur: ' + err.message);
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
 }
 
@@ -1687,14 +1771,14 @@ async function refreshQuestions(){
             });
             await refreshQuestions();
           } catch (err) {
-            alert('❌ Erreur: ' + err.message);
+            showNotify({ title:'Erreur', message: err.message, type:'error' });
           }
         });
       });
     }
   } catch (err) {
     console.error('Erreur chargement questions:', err);
-    alert('❌ Erreur: ' + err.message);
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
 }
 
@@ -1849,6 +1933,10 @@ function buildColModel(){
     colModel.push({ key:`c.${c.id}.qty`, editable:true  });
     colModel.push({ key:`c.${c.id}.pu`,  editable:true  });
     colModel.push({ key:`c.${c.id}.mt`,  editable:false });
+  }
+  // Rôle entreprise : rendre colonnes MOE non éditables (elles sont masquées côté serveur mais sécurité supplémentaire)
+  if (isEntreprise()) {
+    colModel = colModel.map(c => c.key.startsWith('moe.') ? { ...c, editable:false } : c);
   }
 }
 
@@ -2213,26 +2301,26 @@ function renderLotCompanies(){
   for (const c of lotCompanies) {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
-    chip.querySelector('button').addEventListener('click', async () => {
-      // Confirmation avant suppression
-      if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres de cette entreprise seront également supprimées.`)) {
-        return;
-      }
-      
-      try {
-        await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
-        lotCompanies = lotCompanies.filter(x => x.id !== c.id);
-
-        // MAJ modèle de colonnes + sheetRows (supprimer les offres de cette entreprise)
-        for (const r of sheetRows) delete r.offers[c.id];
-        buildColModel();
-        renderSheetInitial();  // (on rerend la structure car nombre de colonnes change)
-        refreshCompare();
-      } catch (err) {
-        alert('❌ Erreur lors de la suppression: ' + err.message);
-      }
-    });
+    if (!isEntreprise()) {
+      chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+      chip.querySelector('button').addEventListener('click', async () => {
+        if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres de cette entreprise seront également supprimées.`)) {
+          return;
+        }
+        try {
+          await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
+          lotCompanies = lotCompanies.filter(x => x.id !== c.id);
+          for (const r of sheetRows) delete r.offers[c.id];
+          buildColModel();
+          renderSheetInitial();
+          refreshCompare();
+        } catch (err) {
+          showNotify({ title:'Erreur', message:'Suppression entreprise: ' + err.message, type:'error' });
+        }
+      });
+    } else {
+      chip.textContent = c.name; // Pas de bouton suppression pour entreprise
+    }
     wrap.appendChild(chip);
   }
 }
@@ -2266,7 +2354,7 @@ async function saveGrid(){
     if (moePu !== '') {
       const parsedPu = parseNum(moePu);
       if (isNaN(parsedPu)) {
-        alert(`Erreur: Le PU MOE de la ligne "${designation || '(vide)'}" n'est pas un nombre valide.\nValeur saisie: "${moePu}"`);
+        showNotify({ title:'Validation', message:`PU MOE invalide sur "${designation || '(vide)'}" (valeur: "${moePu}")`, type:'error' });
         // Mettre en évidence la cellule problématique
         const puCol = colModel.findIndex(x => x.key === 'moe.pu');
         if (puCol >= 0) focusCell(r, puCol);
@@ -2291,7 +2379,7 @@ async function saveGrid(){
         const parsedOfferPu = parseNum(offerPu);
         if (isNaN(parsedOfferPu)) {
           const companyName = lotCompanies.find(comp => comp.id === c.id)?.name || 'Entreprise';
-          alert(`Erreur: Le PU de ${companyName} pour la ligne "${designation || '(vide)'}" n'est pas un nombre valide.\nValeur saisie: "${offerPu}"`);
+          showNotify({ title:'Validation', message:`PU invalide (${companyName}) sur "${designation || '(vide)'}" (valeur: "${offerPu}")`, type:'error' });
           // Mettre en évidence la cellule problématique
           const puCol = colModel.findIndex(x => x.key === base+'pu');
           if (puCol >= 0) focusCell(r, puCol);
@@ -2354,7 +2442,7 @@ async function saveGrid(){
     console.log('✅ Sauvegarde réussie');
   } catch (err) {
     console.error('❌ Erreur sauvegarde:', err);
-    alert('❌ Erreur lors de la sauvegarde: ' + err.message);
+    showNotify({ title:'Erreur', message:'Sauvegarde grille: ' + err.message, type:'error' });
   } finally {
     isSaving = false;
   }
@@ -2390,7 +2478,7 @@ function renderSheetBindings(){
   });
   qs('#mode-edit').addEventListener('click', () => {
     if (isVisionneur()) {
-      alert('Accès non autorisé : vous ne pouvez consulter que le comparatif.');
+      showNotify({ title:'Accès refusé', message:'Mode édition non disponible en lecture seule.', type:'error' });
       return;
     }
     show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
@@ -2457,7 +2545,7 @@ function updateUIForRole() {
   }
   
   // Section création de projet (responsable/admin)
-  if (canCreateProject()) {
+  if (canCreateProject() && !isEntreprise()) {
     show('#create-project-section');
   } else {
     hide('#create-project-section');
@@ -2466,7 +2554,7 @@ function updateUIForRole() {
   // Masquer le bouton d'ajout de tour pour les visionneurs
   const addRoundBtn = qs('#add-round');
   if (addRoundBtn) {
-    if (isVisionneur()) {
+    if (isVisionneur() || isEntreprise()) {
       addRoundBtn.style.display = 'none';
     } else {
       addRoundBtn.style.display = '';
@@ -2476,7 +2564,7 @@ function updateUIForRole() {
   // Masquer le bouton d'ajout de lot et l'onglet lots pour les visionneurs
   const addLotBtn = qs('#add-lot');
   if (addLotBtn) {
-    if (isVisionneur()) {
+    if (isVisionneur() || isEntreprise()) {
       addLotBtn.style.display = 'none';
     } else {
       addLotBtn.style.display = '';
@@ -2495,7 +2583,7 @@ function updateUIForRole() {
   // Masquer le bouton de sauvegarde config questions projet pour les visionneurs
   const saveProjectQuestions = qs('#save-project-questions');
   if (saveProjectQuestions) {
-    if (isVisionneur()) {
+    if (isVisionneur() || isEntreprise()) {
       saveProjectQuestions.style.display = 'none';
     } else {
       saveProjectQuestions.style.display = '';
@@ -2690,25 +2778,25 @@ function bindUI(){
   // projets / lots
   qs('#create-project').addEventListener('click', async ()=>{ try{
     const body={ name:qs('#proj-name').value.trim(), reference:qs('#proj-ref').value.trim(), client:qs('#proj-client').value.trim(), location:qs('#proj-location').value.trim() };
-    if(!body.name) return alert('Nom requis');
+    if(!body.name){ showNotify({ title:'Validation', message:'Nom requis', type:'info' }); return; }
     await api('/projects',{method:'POST',body});
     qsa('#proj-name,#proj-ref,#proj-client,#proj-location').forEach(i=>i.value='');
     await refreshProjects();
-  }catch(e){ alert(e.message);} });
+  }catch(e){ showNotify({ title:'Erreur', message:e.message, type:'error' }); } });
 
   // Gestion des tours
   qs('#add-round')?.addEventListener('click', createRound);
 
   qs('#add-lot').addEventListener('click', async ()=>{ try{
-    if (isVisionneur()) return alert('Accès non autorisé : vous ne pouvez pas ajouter de lots.');
-    if(!currentProject) return alert('Ouvrir un projet');
-    if(!currentRound) return alert('Sélectionner un tour d\'abord');
+    if (isVisionneur()){ showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas ajouter de lots.', type:'error' }); return; }
+    if(!currentProject){ showNotify({ title:'Validation', message:'Ouvrir un projet d\'abord', type:'info' }); return; }
+    if(!currentRound){ showNotify({ title:'Validation', message:'Sélectionner un tour d\'abord', type:'info' }); return; }
     const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim();
-    if(!name) return alert('Nom du lot requis');
+    if(!name){ showNotify({ title:'Validation', message:'Nom du lot requis', type:'info' }); return; }
     await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}});
     qsa('#lot-code,#lot-name').forEach(i=>i.value=''); 
     await loadLotsForRound();
-  }catch(e){ alert(e.message);} });
+  }catch(e){ showNotify({ title:'Erreur', message:e.message, type:'error' }); } });
 
   // Config questions projet
   qs('#save-project-questions').addEventListener('click', saveProjectQuestionConfig);
@@ -2718,6 +2806,12 @@ function bindUI(){
   qs('#generate-questions').addEventListener('click', generateQuestions);
   qs('#refresh-questions').addEventListener('click', refreshQuestions);
   qs('#export-questions-excel').addEventListener('click', exportQuestionsExcel);
+    // Rôle entreprise : masquer génération et réglages des questions + ajout entreprise
+    if (isEntreprise()) {
+      const genBtn = qs('#generate-questions'); if (genBtn) genBtn.style.display = 'none';
+      const saveThresh = qs('#save-thresholds'); if (saveThresh) saveThresh.style.display = 'none';
+      const addCompanyBtn = qs('#add-company'); if (addCompanyBtn) addCompanyBtn.style.display = 'none';
+    }
   qs('#filter-company').addEventListener('change', refreshQuestions);
   qs('#filter-status').addEventListener('change', refreshQuestions);
 
@@ -2745,14 +2839,46 @@ function bindUI(){
     exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
   });
 
-  // Export Excel (CSV) depuis le DOM
-  qs('#export-summary-excel')?.addEventListener('click', () => {
-    const fname = `Recap_${sanitizeFilename(currentProject?.name)}${currentRound ? `_Tour${currentRound.round_number}` : ''}.csv`;
-    exportTableToCSV('#summary-table', fname);
+  // Export Excel formaté via API
+  qs('#export-summary-excel')?.addEventListener('click', async () => {
+    if (!currentRound) { showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' }); return; }
+    try {
+      const res = await fetch(`${API_BASE}/exports/summary/${currentRound.id}`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) throw new Error('Erreur export');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
+    }
   });
-  qs('#export-rounds-compare-excel')?.addEventListener('click', () => {
-    const fname = `ComparaisonTours_${sanitizeFilename(currentProject?.name)}.csv`;
-    exportTableToCSV('#rounds-compare-table', fname);
+  qs('#export-rounds-compare-excel')?.addEventListener('click', async () => {
+    if (!currentProject) { showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' }); return; }
+    try {
+      const res = await fetch(`${API_BASE}/exports/rounds-comparison/${currentProject.id}`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) throw new Error('Erreur export');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ComparaisonTours_${currentProject?.name}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
+    }
   });
   
   // Modal de partage
@@ -2789,6 +2915,14 @@ function bindUI(){
   
   // Gestion demandes d'accès (responsable/admin)
   qs('#filter-access-requests-status')?.addEventListener('change', loadAccessRequests);
+  
+  // Attribution d'entreprise
+  qs('#close-assign-company-modal')?.addEventListener('click', () => hide('#assign-company-modal'));
+  qs('#assign-company-cancel-btn')?.addEventListener('click', () => hide('#assign-company-modal'));
+  qs('#assign-company-confirm-btn')?.addEventListener('click', assignCompanyToUser);
+  qs('#assign-company-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'assign-company-modal') hide('#assign-company-modal');
+  });
 }
 
 /* ================== PARAMÈTRES COMPTE ================== */
@@ -2822,12 +2956,12 @@ function initPasswordSettings() {
 function exportTableToPDF(tableSelector, title) {
   const table = qs(tableSelector);
   if (!table) {
-    alert('Tableau introuvable');
+    showNotify({ title:'Validation', message:'Tableau introuvable', type:'info' });
     return;
   }
   const win = window.open('', '_blank');
   if (!win) {
-    alert('Impossible d\'ouvrir la fenêtre d\'export (pop-up bloquée ?)');
+    showNotify({ title:'Erreur', message:'Impossible d\'ouvrir la fenêtre d\'export (pop-up bloquée ?)', type:'error' });
     return;
   }
   const now = new Date();
@@ -2873,7 +3007,7 @@ function sanitizeFilename(s) {
 
 function exportTableToCSV(tableSelector, filename) {
   const table = qs(tableSelector);
-  if (!table) { alert('Tableau introuvable'); return; }
+  if (!table) { showNotify({ title:'Validation', message:'Tableau introuvable', type:'info' }); return; }
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr, tfoot tr'));
   const csv = rows.map(tr => {
     const cells = Array.from(tr.children);
@@ -2924,27 +3058,15 @@ async function changePassword() {
   
   try {
     // Validations
-    if (!currentPassword) {
-      alert('Veuillez entrer votre mot de passe actuel');
-      return;
-    }
+    if (!currentPassword) { showNotify({ title:'Validation', message:'Entrez votre mot de passe actuel', type:'info' }); return; }
     
-    if (!newPassword) {
-      alert('Veuillez entrer un nouveau mot de passe');
-      return;
-    }
+    if (!newPassword) { showNotify({ title:'Validation', message:'Entrez un nouveau mot de passe', type:'info' }); return; }
     
-    if (newPassword !== confirmPassword) {
-      alert('Les mots de passe ne correspondent pas');
-      return;
-    }
+    if (newPassword !== confirmPassword) { showNotify({ title:'Validation', message:'Les mots de passe ne correspondent pas', type:'error' }); return; }
     
     // Vérifier les critères
     if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || 
-        !/[0-9]/.test(newPassword) || !/[.!:?,]/.test(newPassword)) {
-      alert('Le nouveau mot de passe ne respecte pas tous les critères de sécurité');
-      return;
-    }
+        !/[0-9]/.test(newPassword) || !/[.!:?,]/.test(newPassword)) { showNotify({ title:'Validation', message:'Mot de passe non conforme aux critères', type:'error' }); return; }
     
     // Appel API
     const response = await api('/auth/change-password', {
@@ -2953,7 +3075,7 @@ async function changePassword() {
     });
     
     if (response.success) {
-      alert('Mot de passe modifié avec succès !');
+      showNotify({ title:'Succès', message:'Mot de passe modifié', type:'success' });
       // Réinitialiser le formulaire
       qs('#settings-current-password').value = '';
       qs('#settings-new-password').value = '';
@@ -2961,7 +3083,7 @@ async function changePassword() {
       validatePasswordRequirements(''); // Reset des indicateurs
     }
   } catch (err) {
-    alert('Erreur : ' + (err.message || 'Impossible de changer le mot de passe'));
+    showNotify({ title:'Erreur', message:(err.message || 'Impossible de changer le mot de passe'), type:'error' });
   }
 }
 
@@ -3001,10 +3123,192 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
 }
 
+/* ================== AIDE CONTEXTUELLE ================== */
+const HELP_CONTEXTS = {
+  'tab-projects': {
+    title: 'Projets',
+    items: [
+      'Créer un projet via le formulaire si votre rôle le permet.',
+      'Chaque projet contient des tours (phases) et leurs lots.',
+      'Le partage permet d’accorder lecture ou édition à des visionneurs.'
+    ]
+  },
+  'tab-rounds': {
+    title: 'Tours',
+    items: [
+      'Un tour correspond à une étape d’appel d’offres.',
+      'Dupliquez un tour pour conserver la structure tout en lançant une nouvelle phase.',
+      'Les stats (items, entreprises, questions) sont agrégées pour réduire les requêtes.'
+    ]
+  },
+  'round-content': {
+    title: 'Tour Sélectionné',
+    items: [
+      'Accédez aux lots, récapitulatif, configuration et fiches questions.',
+      'Le récapitulatif calcule les totaux (MOE masqué pour rôle entreprise).',
+      'Les lots permettent la saisie / comparaison des offres.'
+    ]
+  },
+  'tab-lot': {
+    title: 'Lot',
+    items: [
+      'Vue édition: saisie des quantités & prix par entreprise.',
+      'Vue comparatif: lecture consolidée avec écarts & pourcentages.',
+      'Rôle entreprise: seules ses colonnes sont éditables, MOE masqué côté serveur.'
+    ]
+  }
+};
+
+function initContextHelp(){
+  window.__HELP_ACTIVE = false;
+  // Ajouter data-help-key sur panneaux racine si absent
+  Object.keys(HELP_CONTEXTS).forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.dataset.helpKey) el.dataset.helpKey = id;
+  });
+  // Survol tooltips dynamiques
+  document.body.addEventListener('mouseover', e => {
+    if (!window.__HELP_ACTIVE) return;
+    const target = e.target.closest('[data-help]');
+    if (target) showHelpTooltip(target);
+  });
+  document.body.addEventListener('mouseout', e => {
+    const target = e.target.closest('[data-help]');
+    if (target) hideHelpTooltip(target);
+  });
+}
+
+function currentActiveTabKey(){
+  // Cherche un panel actif (classe .tabpanel ou .tab-content selon markup)
+  const active = document.querySelector('.tabpanel:not(.hidden), .tab-content.active');
+  if (!active) return null;
+  return active.dataset.helpKey || active.id || null;
+}
+
+function renderHelpOverlay(){
+  const overlay = document.getElementById('help-overlay');
+  if (!overlay) return;
+  overlay.innerHTML = '';
+  if (!window.__HELP_ACTIVE){
+    overlay.style.display = 'none';
+    return;
+  }
+  const key = currentActiveTabKey();
+  const ctx = key && HELP_CONTEXTS[key] ? HELP_CONTEXTS[key] : null;
+  if (!ctx){
+    overlay.style.display = 'none';
+    return;
+  }
+  const title = document.createElement('h4');
+  title.textContent = 'Aide: ' + ctx.title;
+  overlay.appendChild(title);
+  ctx.items.forEach(txt => {
+    const div = document.createElement('div');
+    div.className = 'help-item';
+    div.textContent = txt;
+    overlay.appendChild(div);
+  });
+  overlay.style.display = 'flex';
+}
+
+function updateHelpHighlights(){
+  document.querySelectorAll('[data-help]').forEach(el => {
+    if (window.__HELP_ACTIVE) el.classList.add('help-highlight');
+    else el.classList.remove('help-highlight');
+  });
+  renderHelpOverlay();
+}
+
+function showHelpTooltip(el){
+  hideHelpTooltip(el);
+  const text = el.getAttribute('data-help');
+  if (!text) return;
+  const tip = document.createElement('div');
+  tip.className = 'help-tooltip';
+  tip.textContent = text;
+  el.appendChild(tip);
+  requestAnimationFrame(()=> tip.classList.add('show'));
+}
+
+function hideHelpTooltip(el){
+  const tip = el.querySelector('.help-tooltip');
+  if (tip){
+    tip.classList.remove('show');
+    setTimeout(()=> tip.remove(), 200);
+  }
+}
+
+function setHelp(el, text){ if (el) el.setAttribute('data-help', text); }
+
+function annotateDynamicHelp(){
+  setHelp(document.getElementById('create-project'), 'Créer un nouveau projet');
+  setHelp(document.getElementById('add-round'), 'Ajouter un tour (phase) au projet');
+  setHelp(document.getElementById('add-lot'), 'Créer un lot à l’intérieur du tour sélectionné');
+  setHelp(document.getElementById('save-grid'), 'Sauvegarder les valeurs saisies dans la grille');
+  setHelp(document.getElementById('mode-edit'), 'Basculer en mode édition de la grille');
+  setHelp(document.getElementById('mode-compare'), 'Afficher le comparatif consolidé des offres');
+  setHelp(document.getElementById('generate-questions'), 'Générer automatiquement les fiches questions pour ce lot');
+  setHelp(document.getElementById('export-summary-excel'), 'Exporter le récapitulatif en Excel formaté');
+  setHelp(document.getElementById('export-rounds-compare-excel'), 'Exporter la comparaison des tours en Excel');
+}
+
+function bindHelpToggle(){
+  const btn = document.getElementById('toggle-help');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const modal = qs('#notify-modal');
+    const titleEl = qs('#notify-title');
+    const msgEl = qs('#notify-message');
+    const okBtn = qs('#notify-ok');
+    const closeBtn = qs('#notify-close');
+    if (!modal || !titleEl || !msgEl) return;
+    
+    titleEl.textContent = 'Contact & Assistance';
+    msgEl.innerHTML = `
+      <div style="text-align: center; padding: 1rem;">
+        <p style="margin-bottom: 1.5rem;">Pour toute question ou assistance, contactez-nous :</p>
+        
+        <div style="background: var(--bg-secondary, #f5f5f5); padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
+          <p style="font-size: 1.1em; margin-bottom: 0.5rem;">
+            <strong>📧 Email :</strong>
+          </p>
+          <p style="font-size: 1em; color: var(--primary, #0066cc);">
+            <a href="mailto:alban.michaud65@gmail.com" style="color: inherit; text-decoration: none;">alban.michaud65@gmail.com</a>
+          </p>
+        </div>
+        
+        <div style="background: var(--bg-secondary, #f5f5f5); padding: 1.5rem; border-radius: 8px;">
+          <p style="font-size: 1.1em; margin-bottom: 0.5rem;">
+            <strong>📞 Téléphone :</strong>
+          </p>
+          <p style="font-size: 1em; color: var(--primary, #0066cc);">
+            <a href="tel:+33787756047" style="color: inherit; text-decoration: none;">07 87 75 60 47</a>
+          </p>
+        </div>
+      </div>
+    `;
+    
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    modal.classList.remove('notify-success','notify-error','notify-info');
+    modal.classList.add('notify-info');
+    
+    const close = () => { modal.classList.add('hidden'); modal.style.display='none'; };
+    okBtn?.addEventListener('click', close, { once: true });
+    closeBtn?.addEventListener('click', close, { once: true });
+    modal.addEventListener('click', (e)=>{ if (e.target.id === 'notify-modal') close(); }, { once: true });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => { 
   updateCurrentUser(); // Charger le rôle depuis le token au démarrage
   bindUI(); 
   if (token) showDashboard(); 
+
+  // Init aide contextuelle
+  initContextHelp();
+  bindHelpToggle();
+  setTimeout(annotateDynamicHelp, 1200); // léger délai pour laisser le DOM se peupler
 
   // Brancher les boutons d'export PDF (récap et comparaison)
   const summaryBtn = document.getElementById('export-summary-pdf');

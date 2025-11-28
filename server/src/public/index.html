@@ -26,8 +26,8 @@
         <details class="auth-details" open>
           <summary>Se connecter avec un compte</summary>
           <form class="auth-form" onsubmit="return false;">
-            <label class="field"><span>Email</span><input id="login-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
-            <label class="field"><span>Mot de passe</span><input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password"/></label>
+            <label class="field"><span>Email</span><input id="login-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
+            <label class="field"><span>Mot de passe</span><input id="login-password" name="password" type="password" placeholder="••••••••" autocomplete="current-password"/></label>
             <div class="row gap">
               <button id="login-btn" type="button" class="btn">Se connecter</button>
             </div>
@@ -40,9 +40,9 @@
         <details class="auth-details">
           <summary>Créer un compte</summary>
           <form class="auth-form" onsubmit="return false;">
-            <label class="field"><span>Email</span><input id="register-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
-            <label class="field"><span>Mot de passe</span><input id="register-password" type="password" placeholder="Min. 8 caractères" autocomplete="new-password"/></label>
-            <label class="field"><span>Confirmer</span><input id="register-password-confirm" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password"/></label>
+            <label class="field"><span>Email</span><input id="register-email" name="register-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
+            <label class="field"><span>Mot de passe</span><input id="register-password" name="register-password" type="password" placeholder="Min. 8 caractères" autocomplete="new-password"/></label>
+            <label class="field"><span>Confirmer</span><input id="register-password-confirm" name="register-password-confirm" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password"/></label>
             <div class="row gap">
               <button id="register-btn" type="button" class="btn btn-primary">S'inscrire</button>
             </div>
@@ -66,6 +66,7 @@
             <button data-tab="tab-rounds" class="nav-btn" disabled>🔄 Tours</button>
             <button data-tab="tab-settings" class="nav-btn">⚙️ Paramètres</button>
           </nav>
+          <button id="toggle-help" class="btn ghost" title="Aide contextuelle">❓ Aide</button>
           <button id="logout" class="btn ghost">Déconnexion</button>
         </div>
         
@@ -87,10 +88,10 @@
         <div id="create-project-section" class="card hidden">
           <h3>➕ Nouveau projet</h3>
           <div class="grid grid-4 gap">
-            <input id="proj-name" placeholder="Nom du projet *" />
-            <input id="proj-ref" placeholder="Référence" />
-            <input id="proj-client" placeholder="Client" />
-            <input id="proj-location" placeholder="Localisation" />
+            <input id="proj-name" name="proj-name" placeholder="Nom du projet *" />
+            <input id="proj-ref" name="proj-ref" placeholder="Référence" />
+            <input id="proj-client" name="proj-client" placeholder="Client" />
+            <input id="proj-location" name="proj-location" placeholder="Localisation" />
           </div>
           <div class="row"><button id="create-project" class="btn">Créer</button></div>
         </div>
@@ -253,8 +254,8 @@
             <p class="muted" id="current-round-name">Tour actuel</p>
             
             <div class="grid grid-3 gap">
-              <input id="lot-code" placeholder="Code (ex: GO, ELE)"/>
-              <input id="lot-name" placeholder="Nom du lot *"/>
+              <input id="lot-code" name="lot-code" placeholder="Code (ex: GO, ELE)"/>
+              <input id="lot-name" name="lot-name" placeholder="Nom du lot *"/>
               <button id="add-lot" class="btn">➕ Ajouter</button>
             </div>
             
@@ -314,7 +315,7 @@
             <!-- Actions tableur -->
             <div id="sheet-actions" class="row gap hidden">
             <button id="add-row" class="btn">+ Ligne</button>
-            <input id="company-input" placeholder="Nom d’une entreprise"/>
+            <input id="company-input" name="company-name" placeholder="Nom d'une entreprise"/>
             <button id="add-company" class="btn ghost">+ Entreprise</button>
             <div id="lot-companies" class="chips"></div>
             <div class="spacer"></div>
@@ -349,22 +350,22 @@
           
           <div class="field">
             <label for="q-qty-low"><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
-            <textarea id="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+            <textarea id="q-qty-low" name="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
             <label for="q-qty-high"><strong>Question si quantité HAUTE (supérieure à MOE)</strong></label>
-            <textarea id="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+            <textarea id="q-qty-high" name="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
             <label for="q-price-low"><strong>Question si prix unitaire FAIBLE (inférieur à MOE)</strong></label>
-            <textarea id="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+            <textarea id="q-price-low" name="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <div class="field">
             <label for="q-price-high"><strong>Question si prix unitaire HAUT (supérieur à MOE)</strong></label>
-            <textarea id="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+            <textarea id="q-price-high" name="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
           </div>
           
           <button id="save-project-questions" class="btn" style="margin-top:16px">💾 Sauvegarder</button>
@@ -382,19 +383,19 @@
             <div class="grid grid-4 gap" style="margin-top:16px">
               <div class="field">
                 <label for="threshold-qty-low">Seuil Qté Basse (%)</label>
-                <input id="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
+                <input id="threshold-qty-low" name="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
                 <label for="threshold-qty-high">Seuil Qté Haute (%)</label>
-                <input id="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
+                <input id="threshold-qty-high" name="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
                 <label for="threshold-price-low">Seuil Prix Bas (%)</label>
-                <input id="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
+                <input id="threshold-price-low" name="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <div class="field">
                 <label for="threshold-price-high">Seuil Prix Haut (%)</label>
-                <input id="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
+                <input id="threshold-price-high" name="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
               </div>
             </div>
             <div class="row gap" style="margin-top:12px">
@@ -406,11 +407,11 @@
           <!-- Filtre par entreprise -->
           <div class="row gap" style="margin-bottom:16px">
             <label for="filter-company">Filtrer par entreprise :</label>
-            <select id="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+            <select id="filter-company" name="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Toutes les entreprises</option>
             </select>
             <label for="filter-status">Statut :</label>
-            <select id="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+            <select id="filter-status" name="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Tous</option>
               <option value="pending">En attente</option>
               <option value="answered">Répondues</option>
@@ -480,6 +481,7 @@
                     <th>ID</th>
                     <th>Email</th>
                     <th>Rôle</th>
+                    <th>Entreprise</th>
                     <th>Créé le</th>
                     <th>Actions</th>
                   </tr>
@@ -519,17 +521,17 @@
             <form id="change-password-form" onsubmit="return false;">
               <div class="field">
                 <label for="settings-email">Email</label>
-                <input id="settings-email" type="email" placeholder="email@exemple.fr" disabled autocomplete="email" />
+                <input id="settings-email" name="settings-email" type="email" placeholder="email@exemple.fr" disabled autocomplete="email" />
               </div>
               
               <div class="field">
                 <label for="settings-current-password">Mot de passe actuel</label>
-                <input id="settings-current-password" type="password" placeholder="Mot de passe actuel" autocomplete="current-password" />
+                <input id="settings-current-password" name="settings-current-password" type="password" placeholder="Mot de passe actuel" autocomplete="current-password" />
               </div>
               
               <div class="field">
                 <label for="settings-new-password">Nouveau mot de passe</label>
-                <input id="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
+                <input id="settings-new-password" name="settings-new-password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" />
                 <div class="password-requirements" style="margin-top:8px;font-size:0.85em;color:var(--muted)">
                   <div>Le mot de passe doit contenir :</div>
                   <ul style="margin:4px 0;padding-left:20px">
@@ -543,7 +545,7 @@
               
               <div class="field">
                 <label for="settings-confirm-password">Confirmer le mot de passe</label>
-                <input id="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
+                <input id="settings-confirm-password" name="settings-confirm-password" type="password" placeholder="Confirmer" autocomplete="new-password" />
               </div>
               
               <button id="save-password" type="submit" class="btn">Modifier le mot de passe</button>
@@ -564,6 +566,21 @@
   </div>
 
   <!-- Modals (en dehors des sections pour toujours être accessibles) -->
+  <!-- Modal Notification globale -->
+  <div id="notify-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:520px;">
+      <div class="modal-header">
+        <h3 id="notify-title">Notification</h3>
+        <button id="notify-close" class="btn ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="notify-message" class="muted"></div>
+      </div>
+      <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button id="notify-ok" class="btn">OK</button>
+      </div>
+    </div>
+  </div>
   <!-- Modal de demande d'accès (visionneur) -->
   <div id="access-request-modal" class="modal hidden">
     <div class="modal-content">
@@ -582,7 +599,7 @@
         
         <div class="field">
           <label for="access-request-message">Message (optionnel)</label>
-          <textarea id="access-request-message" rows="4" placeholder="Expliquez pourquoi vous avez besoin d'accéder à ce projet..."></textarea>
+          <textarea id="access-request-message" name="access-request-message" rows="4" placeholder="Expliquez pourquoi vous avez besoin d'accéder à ce projet..."></textarea>
         </div>
         
         <button id="submit-access-request-btn" class="btn btn-primary">Envoyer la demande</button>
@@ -633,6 +650,40 @@
     </div>
   </div>
 
+  <!-- Modal d'attribution d'entreprise -->
+  <div id="assign-company-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:560px;">
+      <div class="modal-header">
+        <h3>🏢 Attribuer une entreprise</h3>
+        <button id="close-assign-company-modal" class="btn ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="assign-company-user-info" class="muted" style="margin-bottom:1rem;padding:10px;background:var(--card);border-radius:6px;font-size:0.9em;"></div>
+        
+        <div class="field">
+          <label for="assign-company-project">Sélectionner un projet *</label>
+          <select id="assign-company-project" name="assign-company-project" required>
+            <option value="">-- Choisir un projet --</option>
+          </select>
+        </div>
+        
+        <div class="field">
+          <label for="assign-company-company">Sélectionner une entreprise *</label>
+          <select id="assign-company-company" name="assign-company-company" required disabled>
+            <option value="">-- D'abord sélectionner un projet --</option>
+          </select>
+        </div>
+        
+        <div class="row gap" style="justify-content:flex-end;margin-top:1rem;">
+          <button id="assign-company-cancel-btn" class="btn ghost">Annuler</button>
+          <button id="assign-company-confirm-btn" class="btn btn-primary" disabled>Attribuer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="./app.js"></script>
+  <!-- Overlay Aide Contextuelle -->
+  <div id="help-overlay" class="hidden"></div>
 </body>
 </html>

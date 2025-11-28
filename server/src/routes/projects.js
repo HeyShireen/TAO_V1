@@ -108,4 +108,33 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
   }
 });
 
+// Get companies linked to a project (via lots)
+router.get('/:id/companies', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    
+    // Vérifier que l'utilisateur peut voir ce projet
+    const canView = await canViewProject(req.user.id, projectId, req.user.role);
+    if (!canView) {
+      return res.status(403).json({ error: 'Accès refusé à ce projet' });
+    }
+    
+    // Récupérer toutes les entreprises liées aux lots de ce projet
+    const result = await query(
+      `SELECT DISTINCT c.id, c.name
+       FROM companies c
+       INNER JOIN lot_companies lc ON lc.company_id = c.id
+       INNER JOIN lots l ON l.id = lc.lot_id
+       WHERE l.project_id = $1
+       ORDER BY c.name`,
+      [projectId]
+    );
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur récupération entreprises projet:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les entreprises' });
+  }
+});
+
 export default router;

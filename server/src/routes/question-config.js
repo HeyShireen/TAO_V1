@@ -272,6 +272,7 @@ router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
     const { status, company_id, round_id } = req.query;
+    const isEntreprise = req.user?.role === 'entreprise';
     
     let sql = `
       SELECT gq.*, 
@@ -295,7 +296,11 @@ router.get('/lot/:lotId', async (req, res) => {
       params.push(status);
     }
     
-    if (company_id) {
+    // Si utilisateur entreprise, forcer le filtre sur sa company_id
+    if (isEntreprise && req.user?.company_id) {
+      sql += ` AND gq.company_id = $${params.length + 1}`;
+      params.push(req.user.company_id);
+    } else if (company_id) {
       sql += ` AND gq.company_id = $${params.length + 1}`;
       params.push(company_id);
     }
@@ -315,6 +320,21 @@ router.put('/question/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { answer, status } = req.body;
+    const isEntreprise = req.user?.role === 'entreprise';
+    
+    // Si entreprise, vérifier que la question lui appartient
+    if (isEntreprise && req.user?.company_id) {
+      const checkResult = await query(
+        'SELECT company_id FROM generated_questions WHERE id = $1',
+        [id]
+      );
+      if (checkResult.rowCount === 0) {
+        return res.status(404).json({ error: 'Fiche question introuvable' });
+      }
+      if (checkResult.rows[0].company_id !== req.user.company_id) {
+        return res.status(403).json({ error: 'Accès refusé - Cette question ne vous appartient pas' });
+      }
+    }
     
     const result = await query(
       `UPDATE generated_questions 
@@ -339,6 +359,22 @@ router.put('/question/:id', async (req, res) => {
 router.delete('/question/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const isEntreprise = req.user?.role === 'entreprise';
+    
+    // Si entreprise, vérifier que la question lui appartient
+    if (isEntreprise && req.user?.company_id) {
+      const checkResult = await query(
+        'SELECT company_id FROM generated_questions WHERE id = $1',
+        [id]
+      );
+      if (checkResult.rowCount === 0) {
+        return res.status(404).json({ error: 'Fiche question introuvable' });
+      }
+      if (checkResult.rows[0].company_id !== req.user.company_id) {
+        return res.status(403).json({ error: 'Accès refusé - Cette question ne vous appartient pas' });
+      }
+    }
+    
     await query('DELETE FROM generated_questions WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (err) {
@@ -352,6 +388,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
   try {
     const { lotId } = req.params;
     const { status, company_id, round_id } = req.query;
+    const isEntreprise = req.user?.role === 'entreprise';
     
     // Import dynamique de exceljs pour une meilleure mise en forme
     const ExcelJS = (await import('exceljs')).default;
@@ -383,7 +420,11 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       params.push(status);
     }
     
-    if (company_id) {
+    // Si utilisateur entreprise, forcer le filtre sur sa company_id
+    if (isEntreprise && req.user?.company_id) {
+      sql += ` AND gq.company_id = $${params.length + 1}`;
+      params.push(req.user.company_id);
+    } else if (company_id) {
       sql += ` AND gq.company_id = $${params.length + 1}`;
       params.push(company_id);
     }
@@ -397,146 +438,163 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       return res.status(404).json({ error: 'Aucune fiche question à exporter' });
     }
     
-    // Créer le workbook avec ExcelJS
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Fiches Questions');
-    
-    // Définir les colonnes avec largeurs
-    worksheet.columns = [
-      { header: 'Projet', key: 'project', width: 20 },
-      { header: 'Lot', key: 'lot', width: 15 },
-      { header: 'Entreprise', key: 'company', width: 20 },
-      { header: 'Article N°', key: 'num', width: 12 },
-      { header: 'Désignation', key: 'designation', width: 40 },
-      { header: 'Unité', key: 'unit', width: 10 },
-      { header: 'Type', key: 'type', width: 18 },
-      { header: 'Question', key: 'question', width: 50 },
-      { header: 'Écart (%)', key: 'deviation', width: 12 },
-      { header: 'Valeur MOE', key: 'moe_value', width: 14 },
-      { header: 'Valeur Offre', key: 'offer_value', width: 14 },
-      { header: 'Réponse', key: 'answer', width: 40 },
-      { header: 'Statut', key: 'status', width: 14 },
-      { header: 'Créée le', key: 'created', width: 18 },
-      { header: 'Répondue le', key: 'answered', width: 18 }
-    ];
-    
-    // Styliser l'en-tête
-    const headerRow = worksheet.getRow(1);
-    headerRow.height = 25;
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4472C4' }
-    };
-    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    headerRow.border = {
-      top: { style: 'thin' },
-      bottom: { style: 'thin' },
-      left: { style: 'thin' },
-      right: { style: 'thin' }
-    };
-    
-    // Ajouter les données
+    // Grouper les questions par entreprise
+    const questionsByCompany = new Map();
     questions.forEach(q => {
-      const typeLabel = {
-        'qty_low': 'Quantité Basse',
-        'qty_high': 'Quantité Haute',
-        'price_low': 'Prix Bas',
-        'price_high': 'Prix Haut'
-      }[q.question_type] || q.question_type;
-      
-      const statusLabel = {
-        'pending': 'En attente',
-        'answered': 'Répondue',
-        'dismissed': 'Ignorée'
-      }[q.status] || q.status;
-      
-      const row = worksheet.addRow({
-        project: q.project_name,
-        lot: q.lot_name,
-        company: q.company_name,
-        num: q.num || '',
-        designation: q.designation || '',
-        unit: q.unit || '',
-        type: typeLabel,
-        question: q.question_text,
-        deviation: q.deviation_pct ? Number(q.deviation_pct) : null,
-        moe_value: q.moe_value || '',
-        offer_value: q.offer_value || '',
-        answer: q.answer || '',
-        status: statusLabel,
-        created: q.created_at ? new Date(q.created_at) : '',
-        answered: q.answered_at ? new Date(q.answered_at) : ''
-      });
-      
-      // Appliquer les styles de base
-      row.alignment = { vertical: 'top', wrapText: true };
-      row.border = {
-        top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
-        bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
-        left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
-        right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
-      };
-      
-      // Colonne Écart (%) - Format et coloration selon la valeur
-      const deviationCell = row.getCell(9);
-      if (q.deviation_pct) {
-        deviationCell.numFmt = '0.00"%"';
-        deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
-        const ecartAbs = Math.abs(Number(q.deviation_pct));
-        if (ecartAbs > 20) {
-          deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
-          deviationCell.font = { color: { argb: 'FFCC0000' }, bold: true };
-        } else if (ecartAbs > 10) {
-          deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE5CC' } };
-          deviationCell.font = { color: { argb: 'FFCC6600' } };
-        }
+      if (!questionsByCompany.has(q.company_id)) {
+        questionsByCompany.set(q.company_id, {
+          name: q.company_name,
+          questions: []
+        });
       }
-      
-      // Colonnes Valeur MOE et Valeur Offre - Format numérique
-      const moeCell = row.getCell(10);
-      const offerCell = row.getCell(11);
-      if (q.moe_value) {
-        moeCell.numFmt = '#,##0.00';
-        moeCell.alignment = { horizontal: 'right', vertical: 'top' };
-      }
-      if (q.offer_value) {
-        offerCell.numFmt = '#,##0.00';
-        offerCell.alignment = { horizontal: 'right', vertical: 'top' };
-      }
-      
-      // Colonne Type - Coloration selon le type
-      const typeCell = row.getCell(7);
-      if (typeLabel === 'Quantité Basse' || typeLabel === 'Quantité Haute') {
-        typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7F3FF' } };
-      } else if (typeLabel === 'Prix Bas' || typeLabel === 'Prix Haut') {
-        typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0E7' } };
-      }
-      
-      // Colonne Statut - Coloration selon le statut
-      const statusCell = row.getCell(13);
-      if (statusLabel === 'En attente') {
-        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
-      } else if (statusLabel === 'Répondue') {
-        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1E7DD' } };
-      } else if (statusLabel === 'Ignorée') {
-        statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
-      }
-      
-      // Colonnes dates - Format date
-      const createdCell = row.getCell(14);
-      const answeredCell = row.getCell(15);
-      if (q.created_at) {
-        createdCell.numFmt = 'dd/mm/yyyy hh:mm';
-      }
-      if (q.answered_at) {
-        answeredCell.numFmt = 'dd/mm/yyyy hh:mm';
-      }
+      questionsByCompany.get(q.company_id).questions.push(q);
     });
     
-    // Figer la première ligne
-    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    // Créer le workbook avec ExcelJS
+    const workbook = new ExcelJS.Workbook();
+    
+    // Créer un onglet par entreprise
+    for (const [companyId, companyData] of questionsByCompany) {
+      // Nom de l'onglet (limité à 31 caractères pour Excel)
+      let sheetName = companyData.name.substring(0, 31);
+      
+      const worksheet = workbook.addWorksheet(sheetName);
+      
+      // Définir les colonnes avec largeurs (sans la colonne Entreprise)
+      worksheet.columns = [
+        { header: 'Projet', key: 'project', width: 20 },
+        { header: 'Lot', key: 'lot', width: 15 },
+        { header: 'Article N°', key: 'num', width: 12 },
+        { header: 'Désignation', key: 'designation', width: 40 },
+        { header: 'Unité', key: 'unit', width: 10 },
+        { header: 'Type', key: 'type', width: 18 },
+        { header: 'Question', key: 'question', width: 50 },
+        { header: 'Écart (%)', key: 'deviation', width: 12 },
+        { header: 'Valeur MOE', key: 'moe_value', width: 14 },
+        { header: 'Valeur Offre', key: 'offer_value', width: 14 },
+        { header: 'Réponse', key: 'answer', width: 40 },
+        { header: 'Statut', key: 'status', width: 14 },
+        { header: 'Créée le', key: 'created', width: 18 },
+        { header: 'Répondue le', key: 'answered', width: 18 }
+      ];
+      
+      // Styliser l'en-tête
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 25;
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4472C4' }
+      };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headerRow.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+      
+      // Ajouter les données pour cette entreprise
+      companyData.questions.forEach(q => {
+        const typeLabel = {
+          'qty_low': 'Quantité Basse',
+          'qty_high': 'Quantité Haute',
+          'price_low': 'Prix Bas',
+          'price_high': 'Prix Haut'
+        }[q.question_type] || q.question_type;
+        
+        const statusLabel = {
+          'pending': 'En attente',
+          'answered': 'Répondue',
+          'dismissed': 'Ignorée'
+        }[q.status] || q.status;
+        
+        const row = worksheet.addRow({
+          project: q.project_name,
+          lot: q.lot_name,
+          num: q.num || '',
+          designation: q.designation || '',
+          unit: q.unit || '',
+          type: typeLabel,
+          question: q.question_text,
+          deviation: q.deviation_pct ? Number(q.deviation_pct) : null,
+          moe_value: q.moe_value || '',
+          offer_value: q.offer_value || '',
+          answer: q.answer || '',
+          status: statusLabel,
+          created: q.created_at ? new Date(q.created_at) : '',
+          answered: q.answered_at ? new Date(q.answered_at) : ''
+        });
+        
+        // Appliquer les styles de base
+        row.alignment = { vertical: 'top', wrapText: true };
+        row.border = {
+          top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+        };
+        
+        // Colonne Écart (%) - Format et coloration selon la valeur
+        const deviationCell = row.getCell(8);
+        if (q.deviation_pct) {
+          deviationCell.numFmt = '0.00"%"';
+          deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
+          const ecartAbs = Math.abs(Number(q.deviation_pct));
+          if (ecartAbs > 20) {
+            deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
+            deviationCell.font = { color: { argb: 'FFCC0000' }, bold: true };
+          } else if (ecartAbs > 10) {
+            deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE5CC' } };
+            deviationCell.font = { color: { argb: 'FFCC6600' } };
+          }
+        }
+        
+        // Colonnes Valeur MOE et Valeur Offre - Format numérique
+        const moeCell = row.getCell(9);
+        const offerCell = row.getCell(10);
+        if (q.moe_value) {
+          moeCell.numFmt = '#,##0.00';
+          moeCell.alignment = { horizontal: 'right', vertical: 'top' };
+        }
+        if (q.offer_value) {
+          offerCell.numFmt = '#,##0.00';
+          offerCell.alignment = { horizontal: 'right', vertical: 'top' };
+        }
+        
+        // Colonne Type - Coloration selon le type
+        const typeCell = row.getCell(6);
+        if (typeLabel === 'Quantité Basse' || typeLabel === 'Quantité Haute') {
+          typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7F3FF' } };
+        } else if (typeLabel === 'Prix Bas' || typeLabel === 'Prix Haut') {
+          typeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0E7' } };
+        }
+        
+        // Colonne Statut - Coloration selon le statut
+        const statusCell = row.getCell(12);
+        if (statusLabel === 'En attente') {
+          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+        } else if (statusLabel === 'Répondue') {
+          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1E7DD' } };
+        } else if (statusLabel === 'Ignorée') {
+          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
+        }
+        
+        // Colonnes dates - Format date
+        const createdCell = row.getCell(13);
+        const answeredCell = row.getCell(14);
+        if (q.created_at) {
+          createdCell.numFmt = 'dd/mm/yyyy hh:mm';
+        }
+        if (q.answered_at) {
+          answeredCell.numFmt = 'dd/mm/yyyy hh:mm';
+        }
+      });
+      
+      // Figer la première ligne
+      worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    }
     
     // Générer le buffer Excel
     const buffer = await workbook.xlsx.writeBuffer();

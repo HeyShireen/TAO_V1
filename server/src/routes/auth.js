@@ -12,7 +12,7 @@ const router = express.Router();
 
 // Helper: create token
 function sign(user) {
-  return jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
 // Register: auto-inscription publique (toujours visionneur sauf premier = admin)
@@ -40,7 +40,7 @@ router.post('/register', emailRateLimiter, async (req, res) => {
   const password_hash = await hashPassword(password);
   try {
     const result = await query(
-      'INSERT INTO users (email, password_hash, role, email_verified) VALUES ($1,$2,$3,$4) RETURNING id, email, role, email_verified',
+      'INSERT INTO users (email, password_hash, role, email_verified) VALUES ($1,$2,$3,$4) RETURNING id, email, role, email_verified, company_id',
       [email, password_hash, finalRole, emailVerified]
     );
     const user = result.rows[0];
@@ -99,7 +99,7 @@ router.post('/login', emailRateLimiter, async (req, res) => {
   resetEmailAttempts(email);
   
   const token = sign(user);
-  return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+  return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
 });
 
 // Renvoyer l'email de vérification (avec cooldown)

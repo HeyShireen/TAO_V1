@@ -19,6 +19,7 @@ import questionConfigRoutes from './routes/question-config.js'
 import userRoutes from './routes/users.js'
 import shareRoutes from './routes/shares.js'
 import accessRequestRoutes from './routes/access-requests.js'
+import exportRoutes from './routes/exports.js'
 
 // Validation des variables d'environnement critiques
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me' || process.env.JWT_SECRET.length < 32) {
@@ -145,6 +146,7 @@ app.use('/api/shares', shareRoutes)
 app.use('/api/access-requests', accessRequestRoutes)
 app.use('/api/questions', questionRoutes)
 app.use('/api/question-config', questionConfigRoutes)
+app.use('/api/exports', exportRoutes)
 
 // Front same-origin
 const __filename = fileURLToPath(import.meta.url)

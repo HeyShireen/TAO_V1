@@ -23,6 +23,99 @@ router.get('/project/:projectId', async (req, res) => {
   }
 });
 
+// Lister les tours d'un projet avec statistiques agrégées (évite N requêtes côté client)
+router.get('/project/:projectId/with-stats', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    // Récupérer tous les tours du projet
+    const roundsResult = await query(
+      'SELECT * FROM rounds WHERE project_id = $1 ORDER BY round_number ASC',
+      [projectId]
+    );
+    const rounds = roundsResult.rows;
+
+    if (rounds.length === 0) {
+      return res.json([]);
+    }
+
+    // Pré-calcul des counts communs (items, moe) au niveau projet
+    let itemsCount = 0;
+    let moeCount = 0;
+    try {
+      const itemsRes = await query(
+        `SELECT COUNT(DISTINCT i.id) as count
+         FROM items i
+         JOIN lots l ON l.id = i.lot_id
+         WHERE l.project_id = $1`,
+        [projectId]
+      );
+      itemsCount = parseInt(itemsRes.rows[0]?.count || 0);
+    } catch (e) { console.error('Items count error:', e.message); }
+    try {
+      const moeRes = await query(
+        `SELECT COUNT(DISTINCT m.item_id) as count
+         FROM moe_items m
+         JOIN items i ON i.id = m.item_id
+         JOIN lots l ON l.id = i.lot_id
+         WHERE l.project_id = $1`,
+        [projectId]
+      );
+      moeCount = parseInt(moeRes.rows[0]?.count || 0);
+    } catch (e) { console.error('MOE count error:', e.message); }
+
+    // Offres + entreprises + questions par tour (boucle internalisée côté serveur)
+    const enriched = [];
+    for (const r of rounds) {
+      let offersCount = 0;
+      let companiesCount = 0;
+      let questionsStats = { total: 0, pending: 0, answered: 0 };
+      try {
+        const offRes = await query(
+          'SELECT COUNT(*) as total, COUNT(DISTINCT company_id) as companies FROM offers WHERE round_id = $1',
+          [r.id]
+        );
+        offersCount = parseInt(offRes.rows[0]?.total || 0);
+        companiesCount = parseInt(offRes.rows[0]?.companies || 0);
+      } catch (e) { console.error('Offers count error (round '+r.id+'):', e.message); }
+      try {
+        const qRes = await query(
+          `SELECT COUNT(*) as total,
+                  COUNT(CASE WHEN status='pending' THEN 1 END) as pending,
+                  COUNT(CASE WHEN status='answered' THEN 1 END) as answered
+           FROM generated_questions WHERE round_id = $1`,
+          [r.id]
+        );
+        if (qRes.rows[0]) {
+          questionsStats = {
+            total: parseInt(qRes.rows[0].total || 0),
+            pending: parseInt(qRes.rows[0].pending || 0),
+            answered: parseInt(qRes.rows[0].answered || 0)
+          };
+        }
+      } catch (e) { /* silencieux si table absente */ }
+
+      enriched.push({
+        ...r,
+        stats: {
+          total_items: itemsCount,
+            moe_items: moeCount,
+            total_offers: offersCount,
+            companies_count: companiesCount,
+            total_questions: questionsStats.total,
+            pending_questions: questionsStats.pending,
+            answered_questions: questionsStats.answered
+        }
+      });
+    }
+
+    res.json(enriched);
+  } catch (err) {
+    console.error('Erreur récupération tours avec stats:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les tours avec stats' });
+  }
+});
+
 // Créer un nouveau tour pour un projet
 router.post('/project/:projectId', async (req, res) => {
   try {
@@ -267,6 +360,7 @@ router.get('/:roundId/stats', async (req, res) => {
 router.get('/:roundId/summary', async (req, res) => {
   try {
     const { roundId } = req.params;
+    const isEntreprise = req.user?.role === 'entreprise';
     
     // Récupérer le projet_id du tour
     const roundResult = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
@@ -309,6 +403,11 @@ router.get('/:roundId/summary', async (req, res) => {
       // Montants par entreprise pour ce lot
       const companyTotals = [];
       for (const company of lotCompanies) {
+        // Si entreprise, filtrer pour ne montrer que sa propre entreprise
+        if (isEntreprise && req.user?.company_id && company.id !== req.user.company_id) {
+          continue;
+        }
+        
         const offerResult = await query(
           `SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
            FROM offers o
@@ -328,14 +427,13 @@ router.get('/:roundId/summary', async (req, res) => {
         lot_id: lot.id,
         lot_code: lot.code,
         lot_name: lot.name,
-        moe_total: moeTotal,
+        moe_total: isEntreprise ? null : moeTotal,
         companies: companyTotals
       });
     }
     
-    res.json({
-      lots: summary
-    });
+    // Pour rôle entreprise: on ne renvoie pas les deltas MOE, juste leurs propres montants (MOE déjà masqué)
+    res.json({ lots: summary });
   } catch (err) {
     console.error('Erreur récupération récapitulatif:', err);
     res.status(500).json({ error: 'Impossible de récupérer le récapitulatif' });
@@ -346,6 +444,7 @@ router.get('/:roundId/summary', async (req, res) => {
 router.get('/project/:projectId/compare', async (req, res) => {
   try {
     const { projectId } = req.params;
+    const isEntreprise = req.user?.role === 'entreprise';
     
     // Récupérer tous les tours du projet
     const roundsResult = await query(
@@ -403,6 +502,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
            LEFT JOIN offers o ON o.company_id = c.id AND o.round_id = $2
            LEFT JOIN items i ON i.id = o.item_id AND i.lot_id = $1
            WHERE lc.lot_id = $1
+           ${isEntreprise && req.user?.company_id ? 'AND c.id = ' + req.user.company_id : ''}
            GROUP BY c.id, c.name
            HAVING COALESCE(SUM(o.qty * o.unit_price), 0) > 0
            ORDER BY c.name`,
@@ -420,16 +520,13 @@ router.get('/project/:projectId/compare', async (req, res) => {
         lot_id: lot.id,
         lot_code: lot.code,
         lot_name: lot.name,
-        moe_total: moeTotal,
+        moe_total: isEntreprise ? null : moeTotal,
         round_totals: roundTotals,
         companies_by_round: companiesByRound
       });
     }
     
-    res.json({
-      lots: summary,
-      rounds: rounds
-    });
+    res.json({ lots: summary, rounds });
   } catch (err) {
     console.error('Erreur comparaison tours:', err);
     res.status(500).json({ error: 'Impossible de récupérer la comparaison' });

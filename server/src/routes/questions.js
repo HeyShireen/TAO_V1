@@ -13,6 +13,8 @@ router.get('/round/:roundId', async (req, res) => {
   try {
     const { roundId } = req.params;
     const { status } = req.query; // Filtrer par statut optionnel
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id || null;
     
     let sql = `
       SELECT qs.*, 
@@ -32,6 +34,17 @@ router.get('/round/:roundId', async (req, res) => {
       sql += ` AND qs.status = $2`;
       params.push(status);
     }
+
+    if (isEntreprise && companyId) {
+      // Restreindre aux fiches de la propre entreprise
+      if (params.length === 1) {
+        sql += ` AND qs.company_id = $2`;
+        params.push(companyId);
+      } else if (params.length === 2) {
+        sql += ` AND qs.company_id = $3`;
+        params.push(companyId);
+      }
+    }
     
     sql += ` ORDER BY qs.created_at DESC`;
     
@@ -47,9 +60,10 @@ router.get('/round/:roundId', async (req, res) => {
 router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id || null;
     
-    const questions = await query(
-      `SELECT qs.*, 
+    let sql = `SELECT qs.*, 
         i.num, i.designation, i.unit,
         c.name as company_name,
         r.name as round_name, r.round_number
@@ -57,10 +71,14 @@ router.get('/lot/:lotId', async (req, res) => {
       JOIN items i ON i.id = qs.item_id
       JOIN companies c ON c.id = qs.company_id
       JOIN rounds r ON r.id = qs.round_id
-      WHERE r.lot_id = $1
-      ORDER BY r.round_number DESC, qs.created_at DESC`,
-      [lotId]
-    );
+      WHERE r.lot_id = $1`;
+    const params = [lotId];
+    if (isEntreprise && companyId) {
+      sql += ` AND qs.company_id = $2`;
+      params.push(companyId);
+    }
+    sql += ` ORDER BY r.round_number DESC, qs.created_at DESC`;
+    const questions = await query(sql, params);
     
     res.json(questions.rows);
   } catch (err) {
@@ -72,6 +90,9 @@ router.get('/lot/:lotId', async (req, res) => {
 // Créer une fiche question manuelle
 router.post('/', async (req, res) => {
   try {
+    if (req.user?.role === 'entreprise') {
+      return res.status(403).json({ error: 'Rôle entreprise: création manuelle interdite' });
+    }
     const { round_id, item_id, company_id, question } = req.body;
     
     validateRequired(round_id, 'L\'ID du tour');
@@ -100,6 +121,8 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { response, status, response_date } = req.body;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id || null;
     
     const updates = [];
     const values = [];
@@ -128,13 +151,17 @@ router.put('/:id', async (req, res) => {
     
     values.push(id);
     
-    const result = await query(
-      `UPDATE question_sheets 
+    // Ajouter restriction entreprise (peut uniquement répondre à ses propres fiches)
+    const whereRestriction = isEntreprise && companyId ? `AND company_id = $${paramIndex + 1}` : '';
+    const sql = `UPDATE question_sheets 
        SET ${updates.join(', ')}
-       WHERE id = $${paramIndex}
-       RETURNING *`,
-      values
-    );
+       WHERE id = $${paramIndex} ${whereRestriction}
+       RETURNING *`;
+    let finalValues = values;
+    if (whereRestriction) {
+      finalValues = [...values, companyId];
+    }
+    const result = await query(sql, finalValues);
     
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Fiche question introuvable' });
@@ -151,7 +178,13 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id || null;
     
+    // Entreprise ne peut pas supprimer (traçabilité) sauf éventuellement ses propres si politique change
+    if (isEntreprise) {
+      return res.status(403).json({ error: 'Rôle entreprise: suppression interdite' });
+    }
     const result = await query(
       'DELETE FROM question_sheets WHERE id = $1 RETURNING id',
       [id]
@@ -173,9 +206,10 @@ router.get('/round/:roundId/export', async (req, res) => {
   try {
     const { roundId } = req.params;
     const { format = 'json' } = req.query;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id || null;
     
-    const questions = await query(
-      `SELECT qs.*, 
+    let sql = `SELECT qs.*, 
         i.num, i.designation, i.unit,
         c.name as company_name,
         r.name as round_name
@@ -183,10 +217,14 @@ router.get('/round/:roundId/export', async (req, res) => {
       JOIN items i ON i.id = qs.item_id
       JOIN companies c ON c.id = qs.company_id
       JOIN rounds r ON r.id = qs.round_id
-      WHERE qs.round_id = $1
-      ORDER BY c.name, i.num`,
-      [roundId]
-    );
+      WHERE qs.round_id = $1`;
+    const params = [roundId];
+    if (isEntreprise && companyId) {
+      sql += ' AND qs.company_id = $2';
+      params.push(companyId);
+    }
+    sql += ' ORDER BY c.name, i.num';
+    const questions = await query(sql, params);
     
     if (format === 'json') {
       res.json(questions.rows);

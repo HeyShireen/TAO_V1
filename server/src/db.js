@@ -1,4 +1,6 @@
 import pg from 'pg'
+
+console.log('DATABASE_URL utilisé:', process.env.DATABASE_URL)
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'

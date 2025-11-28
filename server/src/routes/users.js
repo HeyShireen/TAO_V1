@@ -16,7 +16,10 @@ router.use(isAdmin); // Toutes ces routes sont réservées aux admins
 router.get('/', async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, email, role, created_at FROM users ORDER BY created_at DESC'
+      `SELECT u.id, u.email, u.role, u.created_at, u.company_id, c.name as company_name
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+       ORDER BY u.created_at DESC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -34,7 +37,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Email et mot de passe requis' });
     }
 
-    const validRoles = ['admin', 'responsable', 'visionneur'];
+    const validRoles = ['admin', 'responsable', 'entreprise', 'visionneur'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
@@ -61,7 +64,7 @@ router.patch('/:id/role', async (req, res) => {
     const { id } = req.params;
     const { role } = req.body;
 
-    const validRoles = ['admin', 'responsable', 'visionneur'];
+    const validRoles = ['admin', 'responsable', 'entreprise', 'visionneur'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
@@ -134,6 +137,38 @@ router.post('/:id/reset-password', async (req, res) => {
   } catch (err) {
     console.error('Erreur reset password:', err);
     res.status(500).json({ error: 'Impossible de réinitialiser le mot de passe' });
+  }
+});
+
+// Attribuer une entreprise à un utilisateur
+router.patch('/:id/company', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { company_id } = req.body;
+
+    if (!company_id) {
+      return res.status(400).json({ error: 'company_id requis' });
+    }
+
+    // Vérifier que l'entreprise existe
+    const companyCheck = await query('SELECT id FROM companies WHERE id = $1', [company_id]);
+    if (companyCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Entreprise introuvable' });
+    }
+
+    const result = await query(
+      'UPDATE users SET company_id = $1 WHERE id = $2 RETURNING id, email, role, company_id',
+      [company_id, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur attribution entreprise:', err);
+    res.status(500).json({ error: 'Impossible d\'attribuer l\'entreprise' });
   }
 });
 
