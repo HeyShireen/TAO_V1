@@ -6,10 +6,19 @@ import { requireAuth } from '../middleware.auth.js';
 const router = express.Router();
 router.use(requireAuth);
 
+// Autoriser uniquement admin ou responsable pour la configuration et la génération
+function requireManager(req, res, next) {
+  const role = req.user?.role;
+  if (role !== 'admin' && role !== 'responsable') {
+    return res.status(403).json({ error: 'Accès refusé' });
+  }
+  next();
+}
+
 // ========== Configuration Projet ==========
 
 // Obtenir la config des questions pour un projet
-router.get('/project/:projectId', async (req, res) => {
+router.get('/project/:projectId', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
     
@@ -35,7 +44,7 @@ router.get('/project/:projectId', async (req, res) => {
 });
 
 // Mettre à jour la config des questions pour un projet
-router.put('/project/:projectId', async (req, res) => {
+router.put('/project/:projectId', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
     const { question_qty_low, question_qty_high, question_price_low, question_price_high } = req.body;
@@ -65,7 +74,7 @@ router.put('/project/:projectId', async (req, res) => {
 // ========== Configuration Lot (seuils) ==========
 
 // Obtenir les seuils pour un lot
-router.get('/lot/:lotId/thresholds', async (req, res) => {
+router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
     
@@ -91,7 +100,7 @@ router.get('/lot/:lotId/thresholds', async (req, res) => {
 });
 
 // Mettre à jour les seuils pour un lot
-router.put('/lot/:lotId/thresholds', async (req, res) => {
+router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
     const { qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold } = req.body;
@@ -121,7 +130,7 @@ router.put('/lot/:lotId/thresholds', async (req, res) => {
 // ========== Génération et gestion des fiches questions ==========
 
 // Générer les fiches questions pour un lot et un tour
-router.post('/lot/:lotId/generate', async (req, res) => {
+router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
     const { round_id } = req.body;

@@ -2,6 +2,7 @@
 // Routes pour la gestion des utilisateurs (admin uniquement)
 
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware.auth.js';
 import { isAdmin } from '../middleware.roles.js';
@@ -165,7 +166,19 @@ router.patch('/:id/company', async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
     }
 
-    res.json(result.rows[0]);
+    const user = result.rows[0];
+    
+    // Si c'est l'utilisateur concerné qui est connecté, générer un nouveau token
+    let newToken = null;
+    if (Number(id) === req.user?.id) {
+      newToken = jwt.sign(
+        { id: user.id, email: user.email, role: user.role, company_id: user.company_id },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+    }
+
+    res.json({ user, token: newToken });
   } catch (err) {
     console.error('Erreur attribution entreprise:', err);
     res.status(500).json({ error: 'Impossible d\'attribuer l\'entreprise' });

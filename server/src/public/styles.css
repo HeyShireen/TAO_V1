@@ -144,7 +144,7 @@ h1,h2{
 .header{ 
   position:sticky; 
   top:0; 
-  z-index:5; 
+  z-index:200; 
   padding:12px 20px; 
   background:rgba(var(--bg-rgb),0.95); 
   backdrop-filter: blur(12px);
@@ -544,7 +544,7 @@ thead th{
   position:sticky; 
   left:0; 
   z-index:40; 
-  background:var(--sticky); 
+  background:var(--card); 
   min-width:120px; 
   width:120px; 
   max-width:120px;
@@ -555,7 +555,7 @@ thead th{
   position:sticky; 
   left:120px; 
   z-index:40; 
-  background:var(--sticky); 
+  background:var(--card); 
   min-width:320px; 
   max-width:520px; 
   white-space:normal; 
@@ -566,6 +566,14 @@ thead th{
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
   z-index:100;
+}
+/* Assurer l'opacité sur le corps du tableau pour masquer ce qui est derrière */
+tbody .sticky-col, tbody .sticky-col2{
+  background: var(--card);
+}
+tbody tr:hover .sticky-col,
+tbody tr:hover .sticky-col2{
+  background: var(--card);
 }
 /* Multi-lignes header sticky : la seconde ligne est décalée */
 thead tr.head-row-1 th { top:0; }
@@ -585,10 +593,13 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   padding:14px 14px; 
   border-top:3px solid var(--accent);
   font-size: 14px;
+  /* Totaux non-sticky: ils défilent avec le tableau */
 }
 #compare-body .total-row .sticky-col, 
 #compare-body .total-row .sticky-col2{ 
-  background:rgba(255,140,66,0.12);
+  background: var(--card);
+  z-index: 42; /* au-dessus du contenu, en dessous des en-têtes */
+  background-clip: padding-box;
 }
 
 /* Tableur d'édition */
@@ -763,6 +774,9 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   padding:16px 16px; 
   font-size:14px;
 }
+
+/* Garder les totaux visibles dans les tableaux récap (sticky bottom) */
+/* Les totaux du récapitulatif ne sont pas sticky (défilent normalement) */
 
 /* Ligne MOE dans totaux */
 .summary-table .moe-total-row {

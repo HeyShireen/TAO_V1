@@ -492,4 +492,31 @@ router.post('/change-password', requireAuth, async (req, res) => {
   }
 });
 
+// Rafraîchir le token avec les données à jour
+router.post('/refresh-token', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Non authentifié' });
+    }
+    
+    // Récupérer les données à jour de l'utilisateur
+    const userResult = await query('SELECT id, email, role, company_id FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    }
+    
+    const user = userResult.rows[0];
+    const newToken = sign(user);
+    
+    return res.json({ 
+      token: newToken,
+      user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id }
+    });
+  } catch (err) {
+    console.error('Erreur rafraîchissement token:', err);
+    res.status(500).json({ error: 'Impossible de rafraîchir le token' });
+  }
+});
+
 export default router;

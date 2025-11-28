@@ -46,7 +46,7 @@ router.get('/:id', async (req, res) => {
       ${isEntreprise ? '' : 'LEFT JOIN moe_items m ON m.item_id = i.id'}
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
       WHERE l.id = $1
-      GROUP BY l.id, i.id, m.item_id
+      GROUP BY l.id, i.id${isEntreprise ? '' : ', m.item_id'}
       ORDER BY i.position NULLS LAST, i.id
     `, queryParams);
 
@@ -141,8 +141,9 @@ router.get('/:id/table', async (req, res) => {
     [id]
   );
   let companies = compsRes.rows;
+  
   if (isEntreprise && userCompanyId) {
-    companies = companies.filter(c => c.id === userCompanyId);
+    companies = companies.filter(c => Number(c.id) === Number(userCompanyId));
   }
 
   // Filtrer les offres par round_id si fourni

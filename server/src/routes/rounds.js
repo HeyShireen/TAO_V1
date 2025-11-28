@@ -404,7 +404,7 @@ router.get('/:roundId/summary', async (req, res) => {
       const companyTotals = [];
       for (const company of lotCompanies) {
         // Si entreprise, filtrer pour ne montrer que sa propre entreprise
-        if (isEntreprise && req.user?.company_id && company.id !== req.user.company_id) {
+        if (isEntreprise && req.user?.company_id && Number(company.id) !== Number(req.user.company_id)) {
           continue;
         }
         

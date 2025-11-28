@@ -239,9 +239,19 @@ function updateCurrentUser() {
     if (payload) {
       currentUser = { id: payload.id, email: payload.email, role: payload.role || 'visionneur' };
       console.log('👤 Current user updated:', currentUser);
+      // Ajuster l'UI selon le rôle
+      applyRoleVisibility();
     }
   }
   // Pas de warning si pas de token : c'est normal avant connexion
+}
+
+// Masquer certains onglets selon le rôle
+function applyRoleVisibility(){
+  const tourCfgBtn = document.querySelector('[data-tour-tab="tour-config"]');
+  if (tourCfgBtn) {
+    tourCfgBtn.style.display = isEntreprise() ? 'none' : '';
+  }
 }
 
 async function login(email, password){
@@ -437,15 +447,48 @@ async function assignCompanyToUser() {
   if (!companyId || !currentAssignUserId) return;
   
   try {
-    await api(`/users/${currentAssignUserId}/company`, { 
+    const data = await api(`/users/${currentAssignUserId}/company`, { 
       method: 'PATCH', 
       body: { company_id: companyId } 
     });
-    showNotify({ title: 'Succès', message: 'Entreprise attribuée avec succès', type: 'success' });
+    
+    // Si un nouveau token est retourné (utilisateur s'attribue à lui-même), le sauvegarder
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      token = data.token;
+      // Mettre à jour currentUser avec les nouvelles données
+      if (data.user) {
+        currentUser = { ...currentUser, company_id: data.user.company_id };
+      }
+      showNotify({ title: 'Succès', message: 'Entreprise attribuée avec succès. Vos données ont été mises à jour.', type: 'success' });
+      
+      // Recharger la page pour actualiser toutes les vues
+      setTimeout(() => window.location.reload(), 1500);
+    } else {
+      showNotify({ title: 'Succès', message: 'Entreprise attribuée avec succès. L\'utilisateur doit se reconnecter pour voir les changements.', type: 'success' });
+    }
+    
     hide('#assign-company-modal');
     loadUsers();
   } catch (err) {
     showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+// Fonction pour rafraîchir le token de l'utilisateur courant
+async function refreshCurrentUserToken() {
+  try {
+    const data = await api('/auth/refresh-token', { method: 'POST' });
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      token = data.token;
+      currentUser = data.user;
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('[refreshCurrentUserToken] Erreur:', err);
+    return false;
   }
 }
 
@@ -891,8 +934,10 @@ async function openProject(id){
   // Charger les tours/phases
   await loadRounds();
   
-  // Charger la config des questions
-  await loadProjectQuestionConfig();
+  // Charger la config des questions uniquement pour admin/responsable
+  if (!isEntreprise() && !isVisionneur()) {
+    await loadProjectQuestionConfig();
+  }
 }
 
 async function loadRounds(){
@@ -1340,14 +1385,22 @@ async function loadRoundsComparison(){
       
       // Colonnes tours avec détails entreprises
       for (const round of rounds) {
-        const roundTotal = lot.round_totals[round.id] || 0;
         const companies = lot.companies_by_round?.[round.id] || [];
+        
+        // En mode entreprise, utiliser le total de l'entreprise, sinon le total global
+        let roundTotal;
+        if (entrepriseMode && companies.length > 0) {
+          // Somme des montants de l'entreprise (il ne devrait y en avoir qu'une)
+          roundTotal = companies.reduce((sum, c) => sum + c.total, 0);
+        } else {
+          roundTotal = lot.round_totals[round.id] || 0;
+        }
         
         const roundCell = document.createElement('td');
         roundCell.className = 'amount';
         
-        if (showAnalysis) {
-          // Afficher les entreprises sous le total
+        if (showAnalysis && !entrepriseMode) {
+          // Afficher les entreprises sous le total (pas en mode entreprise)
           let html = `<div style="font-weight:600;margin-bottom:4px">${fmtEuro(roundTotal)}</div>`;
           if (companies.length > 0) {
             html += '<div style="font-size:11px;color:var(--muted);line-height:1.4">';
@@ -1367,8 +1420,19 @@ async function loadRoundsComparison(){
       
       // Colonnes d'analyse si deux tours sélectionnés
       if (showAnalysis) {
-        const fromTotal = lot.round_totals[roundFromId] || 0;
-        const toTotal = lot.round_totals[roundToId] || 0;
+        let fromTotal, toTotal;
+        
+        if (entrepriseMode) {
+          // Utiliser les montants de l'entreprise
+          const fromCompanies = lot.companies_by_round?.[roundFromId] || [];
+          const toCompanies = lot.companies_by_round?.[roundToId] || [];
+          fromTotal = fromCompanies.reduce((sum, c) => sum + c.total, 0);
+          toTotal = toCompanies.reduce((sum, c) => sum + c.total, 0);
+        } else {
+          fromTotal = lot.round_totals[roundFromId] || 0;
+          toTotal = lot.round_totals[roundToId] || 0;
+        }
+        
         const delta = toTotal - fromTotal;
         const deltaPct = fromTotal > 0 ? ((delta / fromTotal) * 100) : 0;
         
@@ -1513,6 +1577,11 @@ async function deleteRound(roundId){
 async function openLot(id, lotMeta){
   currentLot = { id, ...lotMeta };
   
+  // Si l'utilisateur est entreprise mais n'a pas de company_id, rafraîchir le token
+  if (isEntreprise() && !currentUser?.company_id) {
+    await refreshCurrentUserToken();
+  }
+  
   // Afficher l'onglet lot (il n'est pas dans la nav principale)
   qsa('.tabpanel').forEach(p => p.classList.add('hidden'));
   show('#tab-lot');
@@ -1532,18 +1601,23 @@ async function openLot(id, lotMeta){
   hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
   qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
   
-  // Visionneurs: masquer le bouton Édition
-  if (isVisionneur()) {
+  // Visionneurs et Entreprises: masquer édition et Config Questions
+  if (isVisionneur() || isEntreprise()) {
     const modeEditBtn = qs('#mode-edit');
     if (modeEditBtn) modeEditBtn.style.display = 'none';
     // Masquer complètement le panneau de configuration des seuils
     const configDetails = qs('.config-details');
     if (configDetails) configDetails.style.display = 'none';
+    // Masquer le sous-onglet Config Questions
+    const subtabCfgBtn = qs('[data-subtab="subtab-config"]');
+    if (subtabCfgBtn) subtabCfgBtn.style.display = 'none';
   } else {
     const modeEditBtn = qs('#mode-edit');
     if (modeEditBtn) modeEditBtn.style.display = '';
     const configDetails = qs('.config-details');
     if (configDetails) configDetails.style.display = '';
+    const subtabCfgBtn = qs('[data-subtab="subtab-config"]');
+    if (subtabCfgBtn) subtabCfgBtn.style.display = '';
   }
 
   // Chips entreprises
@@ -1553,10 +1627,14 @@ async function openLot(id, lotMeta){
   enableTab('tab-lot-questions', true);
   
   // Activer les onglets Config Questions et Fiches Questions du tour
-  enableTourTabs(['tour-config', 'tour-questions']);
+  const tourTabs = ['tour-questions'];
+  if (!isEntreprise() && !isVisionneur()) tourTabs.unshift('tour-config');
+  enableTourTabs(tourTabs);
   
   // Charger les seuils et questions
-  await loadLotThresholds();
+  if (!isEntreprise() && !isVisionneur()) {
+    await loadLotThresholds();
+  }
   populateCompanyFilter();
 }
 
@@ -1605,8 +1683,7 @@ async function loadLotThresholds(){
 }
 
 async function saveLotThresholds(){
-  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
-  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
+  if (isVisionneur() || isEntreprise()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
   if (!currentLot) return;
   try {
     const body = {
@@ -1623,8 +1700,7 @@ async function saveLotThresholds(){
 }
 
 async function generateQuestions(){
-  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
-  if (isVisionneur()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
+  if (isVisionneur() || isEntreprise()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
   if (!currentLot || !currentRound) return;
   try {
     const result = await api(`/question-config/lot/${currentLot.id}/generate`, { 
@@ -1733,11 +1809,13 @@ async function refreshQuestions(){
           <td>${deviationPct}</td>
           <td>${moeVal}</td>
           <td>${offerVal}</td>
-          <td><textarea data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Réponse...">${q.answer || ''}</textarea></td>
+          <td>
+            <textarea id="answer-${q.id}" name="answer-${q.id}" data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Réponse..." autocomplete="off">${q.answer || ''}</textarea>
+          </td>
           <td>${statusBadge}</td>
           <td>
-            <button class="btn-answer" data-qid="${q.id}" data-status="answered" style="padding:4px 8px;font-size:12px">✓</button>
-            <button class="btn-dismiss" data-qid="${q.id}" data-status="dismissed" style="padding:4px 8px;font-size:12px">✗</button>
+            <button class="btn-answer" data-qid="${q.id}" data-status="answered" style="padding:4px 8px;font-size:12px" aria-label="Marquer réponse question ${q.id}">✓</button>
+            <button class="btn-dismiss" data-qid="${q.id}" data-status="dismissed" style="padding:4px 8px;font-size:12px" aria-label="Ignorer question ${q.id}">✗</button>
           </td>
         </tr>
       `;
@@ -1797,14 +1875,46 @@ function fmtEuro(v){
 }
 
 async function refreshCompare(){
-  if (!currentLot) return;
-  const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
-  const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
-  const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
-  let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th><th colspan="3" class="moe-col">MOE</th>`;
-  for (const c of data.companies) h1 += `<th colspan="6" class="company-col">${c.name}</th>`; h1 += '</tr>';
-  let h2 = `<tr class="head-row-2"><th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`; 
-  for (let i=0;i<data.companies.length;i++) h2 += '<th class="company-border">Unité</th><th>Qté</th><th>ΔQté</th><th>PU</th><th>Mt</th><th>ΔPU</th>'; 
+  try {
+    if (!currentLot) return;
+    const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
+    
+    const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
+    const entrepriseMode = isEntreprise();
+    
+    // Vérifier si l'utilisateur entreprise a des données
+    if (entrepriseMode && (!data.companies || data.companies.length === 0)) {
+      const head = qs('#compare-head'), body = qs('#compare-body');
+      head.innerHTML = '';
+      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucune entreprise attribuée ou aucune donnée disponible pour ce lot.</td></tr>';
+      return;
+    }
+    
+    const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
+  
+  // En-tête ligne 1
+  let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th>`;
+  if (!entrepriseMode) {
+    h1 += `<th colspan="3" class="moe-col">MOE</th>`;
+  }
+  for (const c of data.companies) {
+    h1 += `<th colspan="${entrepriseMode ? '4' : '6'}" class="company-col">${c.name}</th>`;
+  }
+  h1 += '</tr>';
+  
+  // En-tête ligne 2
+  let h2 = `<tr class="head-row-2">`;
+  if (!entrepriseMode) {
+    h2 += `<th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`;
+  }
+  for (let i=0; i<data.companies.length; i++) {
+    if (entrepriseMode) {
+      // Sans les colonnes ΔQté et ΔPU
+      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th>';
+    } else {
+      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>ΔQté</th><th>PU</th><th>Mt</th><th>ΔPU</th>';
+    }
+  }
   h2 += '</tr>';
   head.innerHTML = h1 + h2;
   recalcCompareHeaderOffsets();
@@ -1815,19 +1925,29 @@ async function refreshCompare(){
   data.companies.forEach(c => totalsByCompany[c.id] = 0);
   
   for (const r of data.rows){
-    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td><td class="moe-border">${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
+    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td>`;
     
-    // Accumuler le total MOE
-    if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
+    // Colonnes MOE (seulement si pas entreprise)
+    if (!entrepriseMode) {
+      tr += `<td class="moe-border">${fmtNum(r.moe.qty)}</td><td>${fmtEuro(r.moe.pu)}</td><td>${fmtEuro(r.moe.mt)}</td>`;
+      // Accumuler le total MOE
+      if (r.moe.mt != null) totalMoe += parseNum(r.moe.mt);
+    }
     
     for (const c of r.companies){
-      // Calculer delta quantité (MOE - Offre)
-      const moeQty = parseNum(r.moe.qty);
-      const offerQty = parseNum(c.qty);
-      const deltaQty = (moeQty !== null && offerQty !== null) ? moeQty - offerQty : null;
-      const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
+      if (entrepriseMode) {
+        // Sans les colonnes ΔQté et ΔPU
+        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td>`;
+      } else {
+        // Calculer delta quantité (MOE - Offre)
+        const moeQty = parseNum(r.moe.qty);
+        const offerQty = parseNum(c.qty);
+        const deltaQty = (moeQty !== null && offerQty !== null) ? moeQty - offerQty : null;
+        const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
+        
+        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+      }
       
-      tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
       // Accumuler le total par entreprise
       if (c.mt != null) totalsByCompany[c.company_id] = (totalsByCompany[c.company_id] || 0) + parseNum(c.mt);
     }
@@ -1835,13 +1955,26 @@ async function refreshCompare(){
   }
   
   // Ajouter la ligne de totaux
-  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td><td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td>`;
+  if (!entrepriseMode) {
+    totalRow += `<td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+  }
   for (const c of data.companies) {
     const companyTotal = totalsByCompany[c.id] || 0;
-    totalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
+    if (entrepriseMode) {
+      totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td>`;
+    } else {
+      totalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(companyTotal)}</strong></td><td></td>`;
+    }
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
+  } catch (err) {
+    console.error('[refreshCompare] Erreur:', err);
+    const head = qs('#compare-head'), body = qs('#compare-body');
+    head.innerHTML = '';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--error)">Erreur lors du chargement du comparatif : ' + err.message + '</td></tr>';
+  }
 }
 
 function recalcCompareHeaderOffsets(){
@@ -1918,25 +2051,30 @@ function buildSheetModel(raw){
 }
 
 function buildColModel(){
-  // base 6 colonnes
+  const entrepriseMode = isEntreprise();
+  
+  // base colonnes (sans MOE si entreprise)
   colModel = [
     { key:'num',        editable:true },
     { key:'designation',editable:true,  wide:true },
-    { key:'unit',       editable:true },
-    { key:'moe.qty',    editable:true,  cls:'moe-col' },
-    { key:'moe.pu',     editable:true,  cls:'moe-col' },
-    { key:'moe.mt',     editable:false, cls:'moe-col' },
+    { key:'unit',       editable:true }
   ];
+  
+  // Ajouter les colonnes MOE seulement si pas entreprise
+  if (!entrepriseMode) {
+    colModel.push(
+      { key:'moe.qty',    editable:true,  cls:'moe-col' },
+      { key:'moe.pu',     editable:true,  cls:'moe-col' },
+      { key:'moe.mt',     editable:false, cls:'moe-col' }
+    );
+  }
+  
   // groupes par entreprise : 4 colonnes
   for (const c of lotCompanies){
     colModel.push({ key:`c.${c.id}.u`,   editable:true  });
     colModel.push({ key:`c.${c.id}.qty`, editable:true  });
     colModel.push({ key:`c.${c.id}.pu`,  editable:true  });
     colModel.push({ key:`c.${c.id}.mt`,  editable:false });
-  }
-  // Rôle entreprise : rendre colonnes MOE non éditables (elles sont masquées côté serveur mais sécurité supplémentaire)
-  if (isEntreprise()) {
-    colModel = colModel.map(c => c.key.startsWith('moe.') ? { ...c, editable:false } : c);
   }
 }
 
@@ -1969,9 +2107,14 @@ function renderSheetInitial(){
 
   // top header: base (rowSpan=2) + groupes
   const tr1 = document.createElement('tr');
-  // base (6) en rowSpan
-  const baseCount = 6;
-  for (let i=0;i<baseCount;i++){
+  
+  // Trouver le nombre de colonnes de base (avant les colonnes entreprises)
+  // Colonnes de base : num, designation, unit, [moe.qty, moe.pu, moe.mt si pas entreprise]
+  const baseCount = colModel.findIndex(col => col.key.startsWith('c.'));
+  const actualBaseCount = baseCount === -1 ? colModel.length : baseCount;
+  
+  // Colonnes de base en rowSpan=2
+  for (let i=0; i<actualBaseCount; i++){
     const col = colModel[i];
     const th = document.createElement('th');
     th.textContent = headerLabelFor(col.key);
@@ -1979,8 +2122,9 @@ function renderSheetInitial(){
     if (col.cls) th.classList.add(col.cls);
     tr1.appendChild(th);
   }
+  
   // groupes par entreprise (4 colonnes)
-  for (let i=baseCount;i<colModel.length;i+=4){
+  for (let i=actualBaseCount; i<colModel.length; i+=4){
     const col = colModel[i];
     const [, cid] = col.key.split('.');
     const th = document.createElement('th');
@@ -1993,7 +2137,7 @@ function renderSheetInitial(){
 
   // bottom header: libellés des 4 colonnes par entreprise
   const tr2 = document.createElement('tr');
-  for (let i=baseCount;i<colModel.length;i++){
+  for (let i=actualBaseCount; i<colModel.length; i++){
     const th = document.createElement('th');
     th.textContent = headerLabelFor(colModel[i].key);
     tr2.appendChild(th);
@@ -2622,8 +2766,10 @@ function updateUIForRole() {
 }
 
 function bindUI(){
-  // Auth classique
-  qs('#login-btn').addEventListener('click', async ()=>{ 
+  // Auth classique - Formulaire de connexion
+  const loginForm = qs('#login-form');
+  loginForm.addEventListener('submit', async (e)=> {
+    e.preventDefault();
     const msgEl = qs('#login-msg');
     setText('#login-msg',''); 
     const email = qs('#login-email').value.trim();
@@ -2667,8 +2813,10 @@ function bindUI(){
     }
   });
   
-  // Inscription publique
-  qs('#register-btn').addEventListener('click', async ()=>{ 
+  // Inscription publique - Formulaire d'inscription
+  const registerForm = qs('#register-form');
+  registerForm.addEventListener('submit', async (e)=> {
+    e.preventDefault();
     setText('#login-msg',''); 
     const email = qs('#register-email').value.trim();
     const password = qs('#register-password').value;
