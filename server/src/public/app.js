@@ -1345,17 +1345,7 @@ async function loadRoundsComparison(){
     }
     thead.appendChild(headerRow);
     
-    // Deuxième ligne d'en-tête si analyse active
-    if (showAnalysis) {
-      const headerRow2 = document.createElement('tr');
-      for (const round of rounds) {
-        headerRow2.innerHTML += '<th class="amount" style="font-size:10px;padding:6px">Entreprises</th>';
-      }
-      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);border-left:2px solid var(--accent);font-size:10px">Δ Montant</th>';
-      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);font-size:10px">Δ %</th>';
-      headerRow2.innerHTML += '<th class="amount" style="background:rgba(255,140,66,0.1);font-size:10px">Tendance</th>';
-      thead.appendChild(headerRow2);
-    }
+    // Suppression des sous-titres (ligne 2) en mode analyse
     
     // Construire les lignes: une ligne par lot avec détails entreprises
     tbody.innerHTML = '';
