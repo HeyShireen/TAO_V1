@@ -328,7 +328,7 @@ router.get('/lot/:lotId', async (req, res) => {
 router.put('/question/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { answer, status } = req.body;
+    const { comment, status } = req.body;
     const isEntreprise = req.user?.role === 'entreprise';
     
     // Si entreprise, vérifier que la question lui appartient
@@ -347,10 +347,10 @@ router.put('/question/:id', async (req, res) => {
     
     const result = await query(
       `UPDATE generated_questions 
-       SET answer = $1, status = $2, answered_at = CASE WHEN $2 = 'answered' THEN now() ELSE answered_at END
+       SET comment = $1, status = $2, answered_at = CASE WHEN $2 = 'answered' THEN now() ELSE answered_at END
        WHERE id = $3
        RETURNING *`,
-      [answer, status, id]
+      [comment, status, id]
     );
     
     if (result.rowCount === 0) {
@@ -481,7 +481,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         { header: 'Écart (%)', key: 'deviation', width: 12 },
         { header: 'Valeur MOE', key: 'moe_value', width: 14 },
         { header: 'Valeur Offre', key: 'offer_value', width: 14 },
-        { header: 'Réponse', key: 'answer', width: 40 },
+        { header: 'Commentaire', key: 'comment', width: 40 },
         { header: 'Statut', key: 'status', width: 14 },
         { header: 'Créée le', key: 'created', width: 18 },
         { header: 'Répondue le', key: 'answered', width: 18 }
@@ -530,7 +530,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           deviation: q.deviation_pct ? Number(q.deviation_pct) : null,
           moe_value: q.moe_value || '',
           offer_value: q.offer_value || '',
-          answer: q.answer || '',
+          comment: q.comment || '',
           status: statusLabel,
           created: q.created_at ? new Date(q.created_at) : '',
           answered: q.answered_at ? new Date(q.answered_at) : ''

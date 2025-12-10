@@ -1762,7 +1762,30 @@ async function refreshQuestions(){
     if (companyId) url += `&company_id=${companyId}`;
     if (status) url += `&status=${status}`;
     
-    const questions = await api(url);
+    let questions = await api(url);
+    // Filtrage combiné avancé
+    const type = qs('#filter-type')?.value;
+    const deviation = parseFloat(qs('#filter-deviation')?.value);
+    const price = parseFloat(qs('#filter-price')?.value);
+    const questionText = qs('#filter-question')?.value?.toLowerCase() || '';
+    if (companyId) {
+      questions = questions.filter(q => String(q.company_id) === String(companyId));
+    }
+    if (status) {
+      questions = questions.filter(q => String(q.status) === String(status));
+    }
+    if (type) {
+      questions = questions.filter(q => String(q.question_type) === String(type));
+    }
+    if (!isNaN(deviation)) {
+      questions = questions.filter(q => parseFloat(q.deviation_pct) >= deviation);
+    }
+    if (!isNaN(price)) {
+      questions = questions.filter(q => parseFloat(q.offer_value) <= price);
+    }
+    if (questionText) {
+      questions = questions.filter(q => (q.question_text || '').toLowerCase().includes(questionText));
+    }
     
     const listDiv = qs('#questions-list');
     if (questions.length === 0) {
@@ -1770,7 +1793,38 @@ async function refreshQuestions(){
       return;
     }
     
-    let html = '<table><thead><tr><th>Entreprise</th><th>Article</th><th>Type</th><th>Question</th><th>Écart</th><th>MOE</th><th>Offre</th><th>Réponse</th><th>Statut</th><th>Actions</th></tr></thead><tbody>';
+    let html = `<table><thead><tr>
+      <th data-sort="company_name">Entreprise</th>
+      <th data-sort="num">Article</th>
+      <th data-sort="question_type">Type</th>
+      <th data-sort="question_text">Question</th>
+      <th data-sort="deviation_pct">Écart</th>
+      <th data-sort="moe_value">MOE</th>
+      <th data-sort="offer_value">Offre</th>
+      <th>Réponse</th>
+      <th data-sort="status">Statut</th>
+      <th>Actions</th>
+    </tr></thead><tbody>`;
+        // Gestion du tri
+        let currentSort = window.questionsSort || { key: null, asc: true };
+        function sortQuestions(arr, key, asc) {
+          return arr.slice().sort((a, b) => {
+            let va = a[key], vb = b[key];
+            if (va == null) va = '';
+            if (vb == null) vb = '';
+            if (typeof va === 'string') va = va.toLowerCase();
+            if (typeof vb === 'string') vb = vb.toLowerCase();
+            if (!isNaN(parseFloat(va)) && !isNaN(parseFloat(vb))) {
+              va = parseFloat(va); vb = parseFloat(vb);
+            }
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+          });
+        }
+        if (currentSort.key) {
+          questions = sortQuestions(questions, currentSort.key, currentSort.asc);
+        }
     
     for (const q of questions) {
       const typeLabel = {
@@ -1800,12 +1854,14 @@ async function refreshQuestions(){
           <td>${moeVal}</td>
           <td>${offerVal}</td>
           <td>
-            <textarea id="answer-${q.id}" name="answer-${q.id}" data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Réponse..." autocomplete="off">${q.answer || ''}</textarea>
+            <textarea id="comment-${q.id}" name="comment-${q.id}" data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Commentaire..." autocomplete="off" ${isEntreprise() ? 'disabled' : ''}>${q.comment || ''}</textarea>
           </td>
           <td>${statusBadge}</td>
           <td>
             <button class="btn-answer" data-qid="${q.id}" data-status="answered" style="padding:4px 8px;font-size:12px" aria-label="Marquer réponse question ${q.id}">✓</button>
             <button class="btn-dismiss" data-qid="${q.id}" data-status="dismissed" style="padding:4px 8px;font-size:12px" aria-label="Ignorer question ${q.id}">✗</button>
+            <button class="btn-edit-question" data-qid="${q.id}" style="padding:4px 8px;font-size:12px" aria-label="Modifier question ${q.id}">✏️</button>
+            <button class="btn-delete-question" data-qid="${q.id}" style="padding:4px 8px;font-size:12px" aria-label="Supprimer question ${q.id}">🗑️</button>
           </td>
         </tr>
       `;
@@ -1813,9 +1869,26 @@ async function refreshQuestions(){
     
     html += '</tbody></table>';
     listDiv.innerHTML = html;
+        // Ajout listeners de tri sur les th
+        qsa('#questions-list th[data-sort]').forEach(th => {
+          th.style.cursor = 'pointer';
+          th.addEventListener('click', () => {
+            const key = th.getAttribute('data-sort');
+            if (window.questionsSort && window.questionsSort.key === key) {
+              window.questionsSort.asc = !window.questionsSort.asc;
+            } else {
+              window.questionsSort = { key, asc: true };
+            }
+            refreshQuestions();
+          });
+          // Indicateur visuel
+          if (window.questionsSort && window.questionsSort.key === th.getAttribute('data-sort')) {
+            th.textContent += window.questionsSort.asc ? ' ▲' : ' ▼';
+          }
+        });
     
     // Visionneurs: rendre les textareas en lecture seule
-    if (isVisionneur()) {
+    if (isVisionneur() || isEntreprise()) {
       qsa('textarea[data-qid]').forEach(ta => {
         ta.disabled = true;
         ta.style.backgroundColor = 'var(--input-bg)';
@@ -1830,12 +1903,11 @@ async function refreshQuestions(){
           const qid = e.target.dataset.qid;
           const status = e.target.dataset.status;
           const textarea = qs(`textarea[data-qid="${qid}"]`);
-          const answer = textarea ? textarea.value.trim() : '';
-          
+          const comment = qs(`#comment-${qid}`)?.value.trim() || '';
           try {
             await api(`/question-config/question/${qid}`, {
               method: 'PUT',
-              body: { answer, status }
+              body: { comment, status }
             });
             await refreshQuestions();
           } catch (err) {
@@ -1843,6 +1915,92 @@ async function refreshQuestions(){
           }
         });
       });
+      // Modification commentaire en direct (responsable/admin)
+      qsa('textarea[id^="comment-"]').forEach(ta => {
+        ta.addEventListener('blur', async (e) => {
+          const qid = ta.dataset.qid;
+          const newComment = ta.value.trim();
+          try {
+            await api(`/question-config/question/${qid}`, {
+              method: 'PUT',
+              body: { comment: newComment }
+            });
+            // Optionnel : refreshQuestions();
+          } catch (err) {
+            showNotify({ title:'Erreur', message: err.message, type:'error' });
+          }
+        });
+      });
+      // Bouton édition question
+      qsa('.btn-edit-question').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const qid = e.target.dataset.qid;
+          const row = qs(`tr[data-qid="${qid}"]`);
+          const questionCell = row.querySelector('td:nth-child(4)');
+          const currentText = questionCell.textContent;
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = currentText;
+          input.style.width = '280px';
+          questionCell.innerHTML = '';
+          questionCell.appendChild(input);
+          input.focus();
+          input.addEventListener('blur', async () => {
+            const newText = input.value.trim();
+            if (newText && newText !== currentText) {
+              try {
+                await api(`/question-config/question/${qid}`, {
+                  method: 'PUT',
+                  body: { question_text: newText }
+                });
+                await refreshQuestions();
+              } catch (err) {
+                showNotify({ title:'Erreur', message: err.message, type:'error' });
+              }
+            } else {
+              questionCell.textContent = currentText;
+            }
+          });
+        });
+      });
+      // Bouton suppression question
+      qsa('.btn-delete-question').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const qid = e.target.dataset.qid;
+          if (confirm('Supprimer cette question ?')) {
+            try {
+              await api(`/question-config/question/${qid}`, {
+                method: 'DELETE'
+              });
+              await refreshQuestions();
+            } catch (err) {
+              showNotify({ title:'Erreur', message: err.message, type:'error' });
+            }
+          }
+        });
+      });
+    // Ajout question manuelle
+    qs('#add-question-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = qs('#add-question-text').value.trim();
+      const type = qs('#add-question-type').value;
+      if (!text || !type) return;
+      try {
+        await api('/question-config/question', {
+          method: 'POST',
+          body: {
+            question_text: text,
+            question_type: type,
+            lot_id: currentLot?.id,
+            round_id: currentRound?.id
+          }
+        });
+        qs('#add-question-text').value = '';
+        await refreshQuestions();
+      } catch (err) {
+        showNotify({ title:'Erreur', message: err.message, type:'error' });
+      }
+    });
     }
   } catch (err) {
     console.error('Erreur chargement questions:', err);
@@ -2953,6 +3111,10 @@ function bindUI(){
     }
   qs('#filter-company').addEventListener('change', refreshQuestions);
   qs('#filter-status').addEventListener('change', refreshQuestions);
+  qs('#filter-type')?.addEventListener('change', refreshQuestions);
+  qs('#filter-deviation')?.addEventListener('input', refreshQuestions);
+  qs('#filter-price')?.addEventListener('input', refreshQuestions);
+  qs('#filter-question')?.addEventListener('input', refreshQuestions);
 
   renderSheetBindings();
   

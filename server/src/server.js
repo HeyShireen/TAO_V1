@@ -167,6 +167,6 @@ await ensureSchema()
 const port = process.env.PORT || 4000
 app.listen(port, '0.0.0.0', () => {
   console.log(`✅ Serveur démarré sur le port ${port}`)
-  console.log(`   - API: http://localhost:${port}/api`)
-  console.log(`   - Interface: http://localhost:${port}`)
+  // console.log(`   - API: http://localhost:${port}/api`)
+  // console.log(`   - Interface: http://localhost:${port}`)
 })

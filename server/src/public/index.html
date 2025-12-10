@@ -410,15 +410,30 @@
             <select id="filter-company" name="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Toutes les entreprises</option>
             </select>
-            <label for="filter-status">Statut :</label>
-            <select id="filter-status" name="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-              <option value="">Tous</option>
-              <option value="pending">En attente</option>
-              <option value="answered">Répondues</option>
-              <option value="dismissed">Ignorées</option>
-            </select>
-            <button id="refresh-questions" class="btn ghost">🔄 Actualiser</button>
-            <button id="export-questions-excel" class="btn ghost">📊 Exporter Excel</button>
+              <label for="filter-status">Statut :</label>
+              <select id="filter-status" name="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <option value="">Tous</option>
+                <option value="pending">En attente</option>
+                <option value="answered">Répondues</option>
+                <option value="dismissed">Ignorées</option>
+              </select>
+              <label for="filter-type">Type :</label>
+              <select id="filter-type" name="filter-type" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <option value="">Tous</option>
+                <option value="manual">Manuelle</option>
+                <option value="qty_low">Qté Basse</option>
+                <option value="qty_high">Qté Haute</option>
+                <option value="price_low">Prix Bas</option>
+                <option value="price_high">Prix Haut</option>
+              </select>
+              <label for="filter-deviation">Écart &gt;=</label>
+              <input id="filter-deviation" name="filter-deviation" type="number" step="0.1" style="width:80px" placeholder="%" />
+              <label for="filter-price">Prix &lt;=</label>
+              <input id="filter-price" name="filter-price" type="number" step="0.01" style="width:80px" placeholder="€" />
+              <label for="filter-question">Question :</label>
+              <input id="filter-question" name="filter-question" type="text" style="width:120px" placeholder="Texte..." />
+              <button id="refresh-questions" class="btn ghost">🔄 Actualiser</button>
+              <button id="export-questions-excel" class="btn ghost">📊 Exporter Excel</button>
           </div>
           
           <!-- Liste des fiches -->

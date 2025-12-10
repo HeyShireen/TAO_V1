@@ -27,8 +27,8 @@ export function emailRateLimiter(req, res, next) {
     });
   }
   
-  // Reset après 15 minutes
-  if (now - attempts.firstAttempt > 15 * 60 * 1000) {
+  // Reset après 5 minutes
+  if (now - attempts.firstAttempt > 5 * 60 * 1000) {
     attempts.count = 0;
     attempts.firstAttempt = now;
   }
@@ -36,12 +36,12 @@ export function emailRateLimiter(req, res, next) {
   // Incrémenter
   attempts.count++;
   
-  // Bloquer après 5 tentatives
-  if (attempts.count > 5) {
-    attempts.blockedUntil = now + 15 * 60 * 1000; // 15 min
+  // Bloquer après 20 tentatives
+  if (attempts.count > 20) {
+    attempts.blockedUntil = now + 5 * 60 * 1000; // 5 min
     loginAttempts.set(email, attempts);
     return res.status(429).json({ 
-      error: 'Trop de tentatives échouées. Compte bloqué pendant 15 minutes.' 
+      error: 'Trop de tentatives échouées. Compte bloqué pendant 5 minutes.' 
     });
   }
   
