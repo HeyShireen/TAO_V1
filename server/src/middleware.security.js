@@ -74,6 +74,14 @@ export function cleanupLoginAttempts() {
   }
 }
 
+/**
+ * Réinitialiser tous les cooldowns (admin uniquement)
+ */
+export function resetAllCooldowns() {
+  loginAttempts.clear();
+  return { cleared: true, message: 'Tous les cooldowns ont été réinitialisés' };
+}
+
 // Nettoyer toutes les heures
 setInterval(cleanupLoginAttempts, 60 * 60 * 1000);
 

@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { query } from '../db.js';
 import { hashPassword, comparePassword } from '../utils.hash.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils.email.js';
-import { emailRateLimiter, resetEmailAttempts } from '../middleware.security.js';
+import { emailRateLimiter, resetEmailAttempts, resetAllCooldowns } from '../middleware.security.js';
 import { requireAuth } from '../middleware.auth.js';
 import { validatePassword } from '../utils.validation.js';
 
@@ -489,6 +489,22 @@ router.post('/change-password', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Erreur changement mot de passe:', err);
     res.status(500).json({ error: 'Impossible de changer le mot de passe' });
+  }
+});
+
+// Admin: Reset all login cooldowns
+router.post('/reset-cooldowns', requireAuth, async (req, res) => {
+  try {
+    // Vérifier que l'utilisateur est admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Accès refusé - Admin uniquement' });
+    }
+    
+    const result = resetAllCooldowns();
+    res.json(result);
+  } catch (err) {
+    console.error('Erreur reset cooldowns:', err);
+    res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
   }
 });
 

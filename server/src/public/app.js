@@ -2842,6 +2842,7 @@ function bindUI(){
           </div>
         `;
         
+        
         // Vider les champs
         qs('#register-email').value = '';
         qs('#register-password').value = '';
@@ -3060,6 +3061,17 @@ function bindUI(){
   qs('#assign-company-confirm-btn')?.addEventListener('click', assignCompanyToUser);
   qs('#assign-company-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'assign-company-modal') hide('#assign-company-modal');
+  });
+  
+  // Admin: Reset des cooldowns de connexion
+  qs('#reset-cooldowns-btn')?.addEventListener('click', async () => {
+    if (!confirm('Réinitialiser tous les cooldowns de connexion (débloquer tous les comptes) ?')) return;
+    try {
+      const result = await api('/auth/reset-cooldowns', { method: 'POST' });
+      showNotify({ title: 'Succès', message: result.message, type: 'success' });
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    }
   });
 }
 
