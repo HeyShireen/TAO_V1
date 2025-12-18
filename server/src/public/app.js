@@ -3,6 +3,24 @@
 const API_ROOT = window.location.origin;
 const API_BASE = API_ROOT + '/api';
 
+/* ====== Logo error handling ====== */
+document.addEventListener('DOMContentLoaded', () => {
+  const loginLogo = document.getElementById('login-logo');
+  const headerLogo = document.getElementById('header-logo');
+  
+  if (loginLogo) {
+    loginLogo.addEventListener('error', function() {
+      this.style.display = 'none';
+    });
+  }
+  
+  if (headerLogo) {
+    headerLogo.addEventListener('error', function() {
+      this.style.display = 'none';
+    });
+  }
+});
+
 /* ====== Auth ================= */
 let token = localStorage.getItem('token') || null;
 let currentUser = null;     // {id, email, role}
@@ -95,10 +113,7 @@ async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
   
-  // Mode accès direct : pas de token requis
-  if (token && token !== 'direct-access-mode') {
-    headers['Authorization'] = 'Bearer ' + token;
-  }
+  // Cookie HttpOnly: pas d'Authorization, on envoie les credentials
   
   let body = opts.body;
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
@@ -108,7 +123,7 @@ async function api(path, opts = {}) {
   if (showLoading) showLoader();
   
   try {
-    const res = await fetch(url, { ...opts, headers, body });
+    const res = await fetch(url, { ...opts, headers, body, credentials: 'include' });
     const isJson = res.headers.get('content-type')?.includes('application/json');
     const data = isJson ? await res.json().catch(()=> ({})) : await res.text();
     if (!res.ok) {
@@ -947,8 +962,6 @@ async function loadRounds(){
 
     const container = qs('#rounds-list');
     container.innerHTML = '';
-    const tabsContainer = qs('#rounds-tabs');
-    tabsContainer.innerHTML = '';
 
     for (const round of rounds){
       const stats = round.stats || { total_items:0, companies_count:0, pending_questions:0 };
@@ -978,11 +991,7 @@ async function loadRounds(){
       });
 
       const tab = document.createElement('button');
-      tab.className = 'round-tab';
-      tab.textContent = round.name;
-      tab.dataset.roundId = round.id;
-      tab.addEventListener('click', () => selectRoundFromTab(round));
-      tabsContainer.appendChild(tab);
+
 
       const nameEl = card.querySelector('.round-name');
       if (!isVisionneur()) {
@@ -1001,7 +1010,6 @@ async function loadRounds(){
             try {
               await api(`/rounds/${round.id}`, { method:'PUT', body:{ name:newName, description:round.description, status:round.status } });
               round.name = newName;
-              tab.textContent = newName;
             } catch (err) {
               showNotify({ title:'Erreur', message:err.message, type:'error' });
               nameEl.textContent = round.name;
@@ -1078,7 +1086,11 @@ async function loadLotsForRound(){
   if (!currentRound) return;
   
   const { project, lots } = await api('/projects/'+currentProject.id);
-  const tbody = qs('#lots-table tbody'); 
+  const tbody = qs('#lots-table tbody');
+  if (!tbody) {
+    console.warn('lots-table manquant dans le DOM; chargement des lots ignoré');
+    return;
+  }
   tbody.innerHTML='';
   
   for (const l of lots){
@@ -1725,11 +1737,9 @@ async function exportQuestionsExcel(){
     if (companyId) url += `&company_id=${companyId}`;
     if (status) url += `&status=${status}`;
     
-    // Télécharger avec le token d'authentification
+    // Télécharger avec cookie HttpOnly (credentials)
     const response = await fetch(API_BASE + url, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
+      credentials: 'include'
     });
     
     if (!response.ok) {
@@ -1747,6 +1757,33 @@ async function exportQuestionsExcel(){
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(downloadUrl);
+  } catch (err) {
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
+  }
+}
+
+async function exportRAO(){
+  if (!currentProject) return;
+  try {
+    const response = await fetch(`${API_BASE}/exports/rao/${currentProject.id}`, {
+      credentials: 'include'
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Erreur serveur' }));
+      throw new Error(error.error || 'Erreur lors de la génération');
+    }
+    
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `RAO_${currentProject.name}_${new Date().toISOString().split('T')[0]}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+    showNotify({ title: 'Succès', message: 'RAO généré avec succès', type: 'success' });
   } catch (err) {
     showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
@@ -2743,9 +2780,9 @@ async function saveGrid(){
 /* ================= Bindings UI ================= */
 function renderSheetBindings(){
   // boutons édition
-  qs('#add-row').addEventListener('click', addRow);
+  qs('#add-row')?.addEventListener('click', addRow);
 
-  qs('#add-company').addEventListener('click', async () => {
+  qs('#add-company')?.addEventListener('click', async () => {
     const name = qs('#company-input').value.trim();
     if (!name) return;
     const created = await api(`/lots/${currentLot.id}/companies`, { method:'POST', body:{ name }});
@@ -2759,16 +2796,16 @@ function renderSheetBindings(){
     qs('#company-input').value = '';
   });
 
-  qs('#save-grid').addEventListener('click', saveGrid);
-  qs('#undo').addEventListener('click', undo);
-  qs('#redo').addEventListener('click', redo);
+  qs('#save-grid')?.addEventListener('click', saveGrid);
+  qs('#undo')?.addEventListener('click', undo);
+  qs('#redo')?.addEventListener('click', redo);
 
   // bascule modes
-  qs('#mode-compare').addEventListener('click', () => {
+  qs('#mode-compare')?.addEventListener('click', () => {
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
     qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
   });
-  qs('#mode-edit').addEventListener('click', () => {
+  qs('#mode-edit')?.addEventListener('click', () => {
     if (isVisionneur()) {
       showNotify({ title:'Accès refusé', message:'Mode édition non disponible en lecture seule.', type:'error' });
       return;
@@ -2916,7 +2953,7 @@ function updateUIForRole() {
 function bindUI(){
   // Auth classique - Formulaire de connexion
   const loginForm = qs('#login-form');
-  loginForm.addEventListener('submit', async (e)=> {
+  loginForm?.addEventListener('submit', async (e)=> {
     e.preventDefault();
     const msgEl = qs('#login-msg');
     setText('#login-msg',''); 
@@ -2963,12 +3000,12 @@ function bindUI(){
   
   // Inscription publique - Formulaire d'inscription
   const registerForm = qs('#register-form');
-  registerForm.addEventListener('submit', async (e)=> {
+  registerForm?.addEventListener('submit', async (e)=> {
     e.preventDefault();
     setText('#login-msg',''); 
-    const email = qs('#register-email').value.trim();
-    const password = qs('#register-password').value;
-    const confirm = qs('#register-password-confirm').value;
+    const email = qs('#register-email')?.value.trim();
+    const password = qs('#register-password')?.value;
+    const confirm = qs('#register-password-confirm')?.value;
     
     if (!email || !password) {
       setText('#login-msg', 'Email et mot de passe requis');
@@ -3002,9 +3039,9 @@ function bindUI(){
         
         
         // Vider les champs
-        qs('#register-email').value = '';
-        qs('#register-password').value = '';
-        qs('#register-password-confirm').value = '';
+        if (qs('#register-email')) qs('#register-email').value = '';
+        if (qs('#register-password')) qs('#register-password').value = '';
+        if (qs('#register-password-confirm')) qs('#register-password-confirm').value = '';
       } else {
         // Admin auto-connecté
         token = data.token;
@@ -3035,10 +3072,13 @@ function bindUI(){
     }
   });
   
-  qs('#logout').addEventListener('click', ()=>{ 
-    localStorage.removeItem('token'); 
+  qs('#logout').addEventListener('click', async ()=>{ 
+    try {
+      await fetch(API_BASE + '/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (_) {}
+    try { localStorage.removeItem('token'); } catch(_) {}
     currentUser = null;
-    location.reload(); 
+    window.location.href = '/login';
   });
 
   // Navigation principale
@@ -3072,8 +3112,15 @@ function bindUI(){
     }
   });
 
+  // Bouton de retour vers phases (liste des tours)
+  qs('#back-to-rounds')?.addEventListener('click', () => {
+    currentRound = null;
+    activateTab('tab-rounds');
+    activateRoundsTab('rounds-list-view');
+  });
+
   // projets / lots
-  qs('#create-project').addEventListener('click', async ()=>{ try{
+  qs('#create-project')?.addEventListener('click', async ()=>{ try{
     const body={ name:qs('#proj-name').value.trim(), reference:qs('#proj-ref').value.trim(), client:qs('#proj-client').value.trim(), location:qs('#proj-location').value.trim() };
     if(!body.name){ showNotify({ title:'Validation', message:'Nom requis', type:'info' }); return; }
     await api('/projects',{method:'POST',body});
@@ -3084,7 +3131,7 @@ function bindUI(){
   // Gestion des tours
   qs('#add-round')?.addEventListener('click', createRound);
 
-  qs('#add-lot').addEventListener('click', async ()=>{ try{
+  qs('#add-lot')?.addEventListener('click', async ()=>{ try{
     if (isVisionneur()){ showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas ajouter de lots.', type:'error' }); return; }
     if(!currentProject){ showNotify({ title:'Validation', message:'Ouvrir un projet d\'abord', type:'info' }); return; }
     if(!currentRound){ showNotify({ title:'Validation', message:'Sélectionner un tour d\'abord', type:'info' }); return; }
@@ -3096,21 +3143,22 @@ function bindUI(){
   }catch(e){ showNotify({ title:'Erreur', message:e.message, type:'error' }); } });
 
   // Config questions projet
-  qs('#save-project-questions').addEventListener('click', saveProjectQuestionConfig);
+  qs('#save-project-questions')?.addEventListener('click', saveProjectQuestionConfig);
   
   // Fiches questions lot
-  qs('#save-thresholds').addEventListener('click', saveLotThresholds);
-  qs('#generate-questions').addEventListener('click', generateQuestions);
-  qs('#refresh-questions').addEventListener('click', refreshQuestions);
-  qs('#export-questions-excel').addEventListener('click', exportQuestionsExcel);
+  qs('#save-thresholds')?.addEventListener('click', saveLotThresholds);
+  qs('#generate-questions')?.addEventListener('click', generateQuestions);
+  qs('#refresh-questions')?.addEventListener('click', refreshQuestions);
+  qs('#export-questions-excel')?.addEventListener('click', exportQuestionsExcel);
+  qs('#export-rao')?.addEventListener('click', exportRAO);
     // Rôle entreprise : masquer génération et réglages des questions + ajout entreprise
     if (isEntreprise()) {
       const genBtn = qs('#generate-questions'); if (genBtn) genBtn.style.display = 'none';
       const saveThresh = qs('#save-thresholds'); if (saveThresh) saveThresh.style.display = 'none';
       const addCompanyBtn = qs('#add-company'); if (addCompanyBtn) addCompanyBtn.style.display = 'none';
     }
-  qs('#filter-company').addEventListener('change', refreshQuestions);
-  qs('#filter-status').addEventListener('change', refreshQuestions);
+  qs('#filter-company')?.addEventListener('change', refreshQuestions);
+  qs('#filter-status')?.addEventListener('change', refreshQuestions);
   qs('#filter-type')?.addEventListener('change', refreshQuestions);
   qs('#filter-deviation')?.addEventListener('input', refreshQuestions);
   qs('#filter-price')?.addEventListener('input', refreshQuestions);
@@ -3145,7 +3193,7 @@ function bindUI(){
     if (!currentRound) { showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' }); return; }
     try {
       const res = await fetch(`${API_BASE}/exports/summary/${currentRound.id}`, {
-        headers: { 'Authorization': 'Bearer ' + token }
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Erreur export');
       const blob = await res.blob();
@@ -3165,7 +3213,7 @@ function bindUI(){
     if (!currentProject) { showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' }); return; }
     try {
       const res = await fetch(`${API_BASE}/exports/rounds-comparison/${currentProject.id}`, {
-        headers: { 'Authorization': 'Bearer ' + token }
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Erreur export');
       const blob = await res.blob();

@@ -44,10 +44,17 @@
 html,body{ margin:0; height:100% }
 body{ 
   background: 
+    radial-gradient(ellipse at 10% 20%, rgba(31, 111, 235, 0.12) 0%, transparent 40%),
+    radial-gradient(ellipse at 90% 80%, rgba(255, 140, 66, 0.1) 0%, transparent 40%),
+    radial-gradient(circle at 50% 50%, rgba(255, 140, 66, 0.03) 0%, transparent 50%),
+    repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,140,66,0.02) 2px, rgba(255,140,66,0.02) 4px),
+    repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(31,111,235,0.02) 2px, rgba(31,111,235,0.02) 4px),
+    linear-gradient(180deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.95) 50%, var(--bg) 100%),
     repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
     repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
     var(--bg);
-  background-size: 60px 60px, 60px 60px, 100% 100%;
+  background-size: 100% 100%, 100% 100%, 100% 100%, 80px 80px, 80px 80px, 100% 100%, 60px 60px, 60px 60px, 100% 100%;
+  background-attachment: fixed;
   color:var(--fg); 
   font:15px/1.6 'Archivo', -apple-system, sans-serif;
   letter-spacing: -0.01em;
@@ -168,6 +175,30 @@ h1,h2{
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* Logo dans le header */
+.header-logo {
+  height: 32px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0.9);
+  transition: filter 0.3s;
+}
+.header-logo:hover {
+  filter: brightness(1.1);
+}
+
+/* Logo dans la page de login */
+.login-logo-container {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.login-logo {
+  height: 80px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(255,140,66,0.3));
 }
 
 /* Navigation principale */

@@ -99,7 +99,23 @@ router.post('/login', emailRateLimiter, async (req, res) => {
   resetEmailAttempts(email);
   
   const token = sign(user);
+  // Déposer un cookie HttpOnly pour plus de sécurité (tout en renvoyant le token pour compat SPA)
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+  res.cookie('auth', token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
   return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
+});
+
+// Déconnexion: suppression du cookie HttpOnly
+router.post('/logout', (req, res) => {
+  const opts = { httpOnly: true, secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, sameSite: 'lax', path: '/' };
+  res.clearCookie('auth', opts);
+  return res.json({ ok: true });
 });
 
 // Renvoyer l'email de vérification (avec cooldown)

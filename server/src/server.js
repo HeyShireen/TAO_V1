@@ -7,6 +7,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import jwt from 'jsonwebtoken'
 
 import { query, ensureSchema } from './db.js'
 import { sanitizeInput } from './middleware.security.js'
@@ -152,10 +153,69 @@ app.use('/api/exports', exportRoutes)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const publicDir = path.resolve(__dirname, './public') // server/src/public
-app.use(express.static(publicDir))
+const homeFile = path.join(publicDir, 'home.html')
+const loginFile = path.join(publicDir, 'login.html')
+const appFile = path.join(publicDir, 'index.html')
+
+// Helper: détecter cookie auth pour décider quelle page servir
+function getTokenFromCookie(req){
+  const c = req.headers.cookie || ''
+  const pair = c.split(';').map(s => s.trim()).find(s => s.startsWith('auth='))
+  if (!pair) return null
+  const val = decodeURIComponent(pair.slice('auth='.length))
+  if (!val || val === 'undefined' || val === 'null') return null
+  return val
+}
+
+function isValidJwt(token){
+  if (!token) return false
+  try {
+    jwt.verify(token, process.env.JWT_SECRET)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Page de login dédiée avec CSP plus stricte
+const loginCsp = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", 'https://fonts.googleapis.com'],
+      imgSrc: ["'self'", 'data:'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+    }
+  }
+});
+
+// Routes spécifiques AVANT express.static
+// Page d'accueil publique (pas d'authentification requise)
+app.get('/', (_req, res) => {
+  res.sendFile(homeFile)
+})
+
+app.get('/login', loginCsp, (_req, res) => {
+  res.sendFile(loginFile)
+})
+
+// Route pour la SPA (authentification requise)
+app.get('/app', (req, res) => {
+  const token = getTokenFromCookie(req)
+  if (!isValidJwt(token)) return res.redirect('/login')
+  res.sendFile(appFile)
+})
+
+// Static files APRÈS les routes, sans servir index.html automatiquement
+app.use(express.static(publicDir, { index: false }))
+
+// Catch-all: pour les routes non définies, rediriger vers home (hors /api)
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Route API introuvable' })
-  res.sendFile(path.join(publicDir, 'index.html'))
+  res.status(404).send('Page non trouvée')
 })
 
 // Middleware global de gestion d'erreurs (doit être après toutes les routes)

@@ -1,6 +1,7 @@
 // server/src/routes/exports.js
 import { Router } from 'express';
 import ExcelJS from 'exceljs';
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, BorderStyle, UnderlineType, HeadingLevel, AlignmentType } from 'docx';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware.auth.js';
 
@@ -458,6 +459,315 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
   } catch (err) {
     console.error('Export rounds comparison error:', err);
     res.status(500).json({ error: 'Erreur lors de l\'export' });
+  }
+});
+
+// Générer le RAO (Rapport d'Analyse d'Offre) complet pour un projet en Word
+router.get('/rao/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const userId = req.user.id;
+
+    // Récupérer le projet
+    const projectRes = await query(
+      `SELECT * FROM projects WHERE id = $1`,
+      [projectId]
+    );
+    if (projectRes.rowCount === 0) return res.status(404).json({ error: 'Projet introuvable' });
+    const project = projectRes.rows[0];
+
+    // Vérifier l'accès
+    const accessCheck = await query(
+      `SELECT 1 FROM projects WHERE id = $1 AND (owner_id = $2 OR $3 = 'admin')`,
+      [projectId, userId, req.user.role]
+    );
+    if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès refusé' });
+
+    // Récupérer tous les lots du projet
+    const lotsRes = await query(
+      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+      [projectId]
+    );
+    const lots = lotsRes.rows;
+
+    if (lots.length === 0) {
+      return res.status(400).json({ error: 'Aucun lot trouvé pour ce projet' });
+    }
+
+    // Récupérer les phases/tours du projet
+    const roundsRes = await query(
+      `SELECT * FROM rounds WHERE project_id = $1 ORDER BY round_number ASC`,
+      [projectId]
+    );
+    const rounds = roundsRes.rows;
+
+    if (rounds.length === 0) {
+      return res.status(400).json({ error: 'Aucune phase créée pour ce projet' });
+    }
+
+    // Récupérer les entreprises ayant déposé une offre sur le projet (toutes phases confondues)
+    const companiesRes = await query(
+      `SELECT DISTINCT c.id, c.name
+       FROM companies c
+       JOIN offers o ON o.company_id = c.id
+       JOIN items i ON i.id = o.item_id
+       JOIN rounds r ON r.id = o.round_id
+       WHERE r.project_id = $1
+       ORDER BY c.name`,
+      [projectId]
+    );
+    const companies = companiesRes.rows;
+
+    // Totaux MOE par lot
+    const moeTotals = {};
+    const moeRes = await query(
+      `SELECT i.lot_id, m.qty, m.unit_price
+       FROM items i
+       LEFT JOIN moe_items m ON m.item_id = i.id
+       WHERE i.lot_id = ANY($1::int[])`,
+      [lots.map(l => l.id)]
+    );
+    moeRes.rows.forEach(r => {
+      const qty = Number(r.qty) || 0;
+      const pu = Number(r.unit_price) || 0;
+      moeTotals[r.lot_id] = (moeTotals[r.lot_id] || 0) + qty * pu;
+    });
+
+    // Offres par phase / entreprise / lot
+    const offersRes = await query(
+      `SELECT o.company_id, o.round_id, o.amount, i.lot_id
+       FROM offers o
+       JOIN items i ON i.id = o.item_id
+       JOIN rounds r ON r.id = o.round_id
+       WHERE r.project_id = $1`,
+      [projectId]
+    );
+    const offersByRoundCompanyLot = {};
+    offersRes.rows.forEach(o => {
+      if (!offersByRoundCompanyLot[o.round_id]) offersByRoundCompanyLot[o.round_id] = {};
+      if (!offersByRoundCompanyLot[o.round_id][o.company_id]) offersByRoundCompanyLot[o.round_id][o.company_id] = {};
+      offersByRoundCompanyLot[o.round_id][o.company_id][o.lot_id] = (offersByRoundCompanyLot[o.round_id][o.company_id][o.lot_id] || 0) + Number(o.amount || 0);
+    });
+
+    // Questions par lot / entreprise
+    const questionsRes = await query(
+      `SELECT gq.*, i.num, i.designation, i.unit
+       FROM generated_questions gq
+       JOIN lots l ON l.id = gq.lot_id
+       JOIN items i ON i.id = gq.item_id
+       WHERE l.project_id = $1
+       ORDER BY gq.question_type, gq.company_id, i.num`,
+      [projectId]
+    );
+    const questions = questionsRes.rows;
+
+    // Construire le document Word
+    const children = [];
+
+    // Titre principal (Titre 1)
+    children.push(
+      new Paragraph({
+        text: `RAO - Rapport d'Analyse d'Offre`,
+        heading: HeadingLevel.HEADING_1,
+        bold: true,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 100 }
+      }),
+      new Paragraph({
+        text: `Projet: ${project.name}`,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 50 }
+      }),
+      new Paragraph({
+        text: `Date: ${new Date().toLocaleDateString('fr-FR')}`,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 }
+      })
+    );
+
+    const fmtMoney = v => Number.isFinite(v) ? `${v.toFixed(2)} €` : '-';
+
+    // Boucler sur chaque phase/tour
+    for (const round of rounds) {
+      // Titre Phase (Heading 2)
+      children.push(
+        new Paragraph({
+          text: `Phase ${round.round_number}: ${round.name || ''}`,
+          heading: HeadingLevel.HEADING_2,
+          bold: true,
+          spacing: { before: 300, after: 200 }
+        })
+      );
+
+      // Tableau récapitulatif global : Lot × Entreprises
+      children.push(
+        new Paragraph({
+          text: `Tableau Récapitulatif`,
+          heading: HeadingLevel.HEADING_3,
+          spacing: { before: 150, after: 100 }
+        })
+      );
+
+      const recapRows = [
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ text: 'Lot', bold: true })] }),
+            new TableCell({ children: [new Paragraph({ text: 'MOE Total (€)', bold: true })] }),
+            ...companies.map(c => new TableCell({ children: [new Paragraph({ text: c.name, bold: true })] }))
+          ]
+        })
+      ];
+
+      lots.forEach(lot => {
+        recapRows.push(
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph({ text: lot.name || lot.code || `Lot ${lot.id}` })] }),
+              new TableCell({ children: [new Paragraph({ text: fmtMoney(moeTotals[lot.id] || 0) })] }),
+              ...companies.map(c => {
+                const offer = offersByRoundCompanyLot[round.id]?.[c.id]?.[lot.id];
+                return new TableCell({ children: [new Paragraph({ text: fmtMoney(offer) })] });
+              })
+            ]
+          })
+        );
+      });
+
+      children.push(
+        new Table({ rows: recapRows, width: { size: 100, type: 'pct' } }),
+        new Paragraph({ text: '' })
+      );
+
+      // Pour chaque entreprise : récap offre + fiche questions + analyse technique
+      companies.forEach(company => {
+        // Titre entreprise (Heading 3)
+        children.push(
+          new Paragraph({
+            text: company.name,
+            heading: HeadingLevel.HEADING_3,
+            spacing: { before: 200, after: 150 }
+          })
+        );
+
+        // A. Récap de l'offre (tableau Lot/MOE/Offre)
+        children.push(
+          new Paragraph({
+            text: `A. Récapitulatif de l'offre`,
+            heading: HeadingLevel.HEADING_4,
+            spacing: { before: 100, after: 100 }
+          })
+        );
+
+        const offerRows = [
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph({ text: 'Lot', bold: true })] }),
+              new TableCell({ children: [new Paragraph({ text: 'MOE Total (€)', bold: true })] }),
+              new TableCell({ children: [new Paragraph({ text: 'Offre (€)', bold: true })] })
+            ]
+          })
+        ];
+
+        lots.forEach(lot => {
+          const offer = offersByRoundCompanyLot[round.id]?.[company.id]?.[lot.id];
+          offerRows.push(
+            new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph({ text: lot.name || lot.code || `Lot ${lot.id}` })] }),
+                new TableCell({ children: [new Paragraph({ text: fmtMoney(moeTotals[lot.id] || 0) })] }),
+                new TableCell({ children: [new Paragraph({ text: fmtMoney(offer) })] })
+              ]
+            })
+          );
+        });
+
+        children.push(
+          new Table({ rows: offerRows, width: { size: 100, type: 'pct' } }),
+          new Paragraph({ text: '' })
+        );
+
+        // B. Fiche questions
+        children.push(
+          new Paragraph({
+            text: `B. Fiche Questions`,
+            heading: HeadingLevel.HEADING_4,
+            spacing: { before: 150, after: 100 }
+          })
+        );
+
+        const companyQuestions = questions.filter(q => q.company_id === company.id);
+        if (companyQuestions.length > 0) {
+          const questionRows = [
+            new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph({ text: 'N°', bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: 'Article', bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: 'Question', bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: 'Commentaire', bold: true })] })
+              ]
+            })
+          ];
+
+          companyQuestions.forEach((q, idx) => {
+            const articleText = `${q.num ?? ''}${q.designation ? ` — ${q.designation}` : ''}`.trim();
+            questionRows.push(
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ text: `${idx + 1}` })] }),
+                  new TableCell({ children: [new Paragraph({ text: articleText || '-' })] }),
+                  new TableCell({ children: [new Paragraph({ text: q.question_text || '-' })] }),
+                  new TableCell({ children: [new Paragraph({ text: q.comment || '(À compléter)' })] })
+                ]
+              })
+            );
+          });
+
+          children.push(
+            new Table({ rows: questionRows, width: { size: 100, type: 'pct' } }),
+            new Paragraph({ text: '' })
+          );
+        } else {
+          children.push(
+            new Paragraph({
+              text: '(Aucune question pour cette entreprise)',
+              spacing: { after: 100 }
+            })
+          );
+        }
+
+        // C. Analyse technique
+        children.push(
+          new Paragraph({
+            text: `C. Analyse Technique`,
+            heading: HeadingLevel.HEADING_4,
+            spacing: { before: 150, after: 100 }
+          }),
+          new Paragraph({
+            text: '(À compléter par les responsables)',
+            italics: true,
+            spacing: { after: 200 }
+          }),
+          new Paragraph({ text: '' }),
+          new Paragraph({ text: '' })
+        );
+      });
+    }
+
+    // Créer le document
+    const doc = new Document({ 
+      sections: [{ 
+        children: children
+      }] 
+    });
+    const buffer = await Packer.toBuffer(doc);
+
+    const filename = `RAO_${project.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Erreur génération RAO:', err);
+    res.status(500).json({ error: 'Erreur lors de la génération du RAO: ' + err.message });
   }
 });
 

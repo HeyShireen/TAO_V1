@@ -17,49 +17,15 @@
 
   <div id="app">
 
-    <!-- ===== LOGIN ===== -->
-    <section id="login-view" class="card max-480">
-      <h1>TAO — Comparateur d'offres</h1>
-      <p class="muted">Accédez à votre espace de travail</p>
-      
-      <div class="login-options">
-        <details class="auth-details" open>
-          <summary>Se connecter avec un compte</summary>
-          <form class="auth-form" id="login-form">
-            <label class="field"><span>Email</span><input id="login-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
-            <label class="field"><span>Mot de passe</span><input id="login-password" name="password" type="password" placeholder="••••••••" autocomplete="current-password"/></label>
-            <div class="row gap">
-              <button id="login-btn" type="submit" class="btn">Se connecter</button>
-            </div>
-            <p class="muted" style="margin-top:0.5rem; font-size:0.85em;">
-              <a href="#" id="forgot-password-link" style="color:var(--primary);">Mot de passe oublié ?</a>
-            </p>
-          </form>
-        </details>
-        
-        <details class="auth-details">
-          <summary>Créer un compte</summary>
-          <form class="auth-form" id="register-form">
-            <label class="field"><span>Email</span><input id="register-email" name="register-email" type="email" placeholder="vous@exemple.fr" autocomplete="email"/></label>
-            <label class="field"><span>Mot de passe</span><input id="register-password" name="register-password" type="password" placeholder="Min. 8 caractères" autocomplete="new-password"/></label>
-            <label class="field"><span>Confirmer</span><input id="register-password-confirm" name="register-password-confirm" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password"/></label>
-            <div class="row gap">
-              <button id="register-btn" type="submit" class="btn btn-primary">S'inscrire</button>
-            </div>
-            <p class="muted" style="font-size: 0.85em; margin-top: 0.5rem;">
-              Votre compte sera créé avec un accès "visionneur". Un responsable devra vous partager des projets.
-            </p>
-          </form>
-        </details>
-      </div>
-      
-      <p id="login-msg" class="muted"></p>
-    </section>
+    <!-- Login déplacé sur /login -->
 
     <!-- ===== APP ===== -->
     <section id="dashboard" class="hidden">
       <header class="header">
         <div class="header-top">
+          <a href="/" title="Retour à l'accueil">
+            <img id="header-logo" src="./assets/logo.png" alt="Logo" class="header-logo" style="cursor:pointer" />
+          </a>
           <h1>TAO</h1>
           <nav class="main-nav">
             <button data-tab="tab-projects" class="nav-btn active">📁 Projets</button>
@@ -70,20 +36,10 @@
           <button id="logout" class="btn ghost">Déconnexion</button>
         </div>
         
-        <!-- Sous-navigation pour les tours -->
-        <div id="rounds-subnav" class="subnav hidden">
-          <div class="subnav-header">
-            <button id="back-to-projects" class="btn ghost">← Projets</button>
-            <h3 id="project-title-nav">Projet</h3>
-          </div>
-          <div class="subnav-tabs" id="rounds-tabs">
-            <!-- Les onglets de tours seront ajoutés dynamiquement -->
-          </div>
-        </div>
       </header>
 
       <!-- Onglet Projets -->
-      <section id="tab-projects" class="tabpanel">
+      <section id="tab-projects" class="tabpanel hidden">
         <!-- Création de projet (responsable/admin uniquement) -->
         <div id="create-project-section" class="card hidden">
           <h3>➕ Nouveau projet</h3>
@@ -153,8 +109,15 @@
         <!-- Vue: Liste des tours -->
         <div id="rounds-list-view" class="tour-tabpanel">
           <div class="card">
-            <h3>🔄 Gestion des Tours</h3>
-            <p class="muted">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <div>
+                <h3 style="margin:0">🔄 Gestion des Tours</h3>
+                <p class="muted" style="margin:4px 0 0 0">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
+              </div>
+              <div class="row gap">
+                <button id="export-rao" class="btn">📄 Générer RAO Word</button>
+              </div>
+            </div>
             
             <div class="rounds-container">
               <div class="rounds-list" id="rounds-list">
@@ -210,81 +173,48 @@
         </div>
       </section>
 
-      <!-- Sous-onglets pour chaque tour -->
+      <!-- Contenu d'un tour sélectionné (phases) -->
       <section id="round-content" class="tabpanel hidden">
-        <!-- Sous-navigation pour le tour sélectionné -->
-        <div class="tour-subnav">
-          <button data-tour-tab="tour-summary" class="tour-tab-btn active">📊 Récapitulatif</button>
-          <button data-tour-tab="tour-lots" class="tour-tab-btn">📦 Lots</button>
-          <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
-          <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
-        </div>
-
-        <!-- Onglet: Récapitulatif -->
-        <div id="tour-summary" class="tour-tabpanel">
-          <div class="card">
-            <h4>📊 Tableau Récapitulatif des Montants</h4>
-            <div class="row" style="gap:8px;margin-top:8px">
-              <button id="export-summary-pdf" class="btn ghost">🖨️ Export PDF</button>
-              <button id="export-summary-excel" class="btn ghost">📊 Export Excel</button>
-            </div>
-            
-            <div style="margin-top:20px">
-              <div class="table-wrapper">
-                <table id="summary-table" class="summary-table">
-                  <thead>
-                    <!-- Les en-têtes seront ajoutés dynamiquement: Lot | MOE | Entreprise1 | Entreprise2 | ... -->
-                  </thead>
-                  <tbody>
-                    <!-- Les lignes seront ajoutées dynamiquement -->
-                  </tbody>
-                  <tfoot>
-                    <!-- Les totaux seront ajoutés dynamiquement -->
-                  </tfoot>
-                </table>
-              </div>
-            </div>
+        <div class="subnav">
+          <button id="back-to-rounds" class="btn ghost">← Phases</button>
+          <div class="subnav-tabs">
+            <button data-tour-tab="tour-lots" class="tour-tab-btn active">📦 Lots</button>
+            <button data-tour-tab="tour-summary" class="tour-tab-btn">📊 Récapitulatif</button>
+            <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
+            <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
           </div>
         </div>
 
-        <!-- Onglet: Lots du tour -->
-        <div id="tour-lots" class="tour-tabpanel hidden">
-          <div class="card">
-            <h4>📦 Gestion des Lots</h4>
-            <p class="muted" id="current-round-name">Tour actuel</p>
-            
-            <div class="grid grid-3 gap">
-              <input id="lot-code" name="lot-code" placeholder="Code (ex: GO, ELE)"/>
-              <input id="lot-name" name="lot-name" placeholder="Nom du lot *"/>
-              <button id="add-lot" class="btn">➕ Ajouter</button>
-            </div>
-            
-            <div style="margin-top:20px">
-              <div class="table-wrapper">
-                <table id="lots-table">
-                  <thead><tr><th>ID</th><th>Code</th><th>Nom</th><th></th></tr></thead>
-                  <tbody></tbody>
-                </table>
-              </div>
+        <div class="card">
+          <h3 id="current-round-name">Phase</h3>
+          <!-- Panel: Lots de la phase -->
+          <div id="tour-lots" class="tour-tabpanel">
+            <div class="table-wrapper">
+              <table id="lots-table">
+                <thead>
+                  <tr><th>ID</th><th>Code</th><th>Nom</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+              </table>
             </div>
           </div>
-        </div>
 
-        <!-- Onglet: Config Questions -->
-        <div id="tour-config" class="tour-tabpanel hidden">
-          <div class="card">
-            <h4>⚙️ Configuration des Questions</h4>
-            <p class="muted">Configurez les seuils et questions pour ce tour</p>
-            <!-- Contenu à ajouter -->
+          <!-- Panel: Récapitulatif de la phase -->
+          <div id="tour-summary" class="tour-tabpanel hidden">
+            <div class="table-wrapper tall">
+              <table id="summary-table" class="summary-table">
+                <thead></thead>
+                <tbody></tbody>
+                <tfoot></tfoot>
+              </table>
+            </div>
           </div>
-        </div>
 
-        <!-- Onglet: Fiches Questions -->
-        <div id="tour-questions" class="tour-tabpanel hidden">
-          <div class="card">
-            <h4>📋 Fiches Questions</h4>
-            <p class="muted">Gérez les fiches questions de ce tour</p>
-            <!-- Contenu à ajouter -->
+          <!-- Panels placeholders to align avec app.js (désactivés par rôle) -->
+          <div id="tour-config" class="tour-tabpanel hidden">
+            <p class="muted">Configuration des questions (désactivé tant qu’aucun lot n’est sélectionné).</p>
+          </div>
+          <div id="tour-questions" class="tour-tabpanel hidden">
+            <p class="muted">Fiches questions (désactivé tant qu’aucun lot n’est sélectionné).</p>
           </div>
         </div>
       </section>
