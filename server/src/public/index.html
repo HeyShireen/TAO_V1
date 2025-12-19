@@ -8,6 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Archivo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css"/>
+  <link rel="icon" type="image/x-icon" href="./assets/favicon_io/favicon.ico" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon_io/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon_io/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicon_io/apple-touch-icon.png" />
+  <link rel="manifest" href="./assets/favicon_io/site.webmanifest" />
+  <meta name="theme-color" content="#0a0e14" />
 </head>
 <body>
   <!-- Spinner global -->
@@ -96,6 +102,54 @@
             </div>
           </div>
         </div>
+
+        <!-- Modal d'édition du projet -->
+        <div id="edit-project-modal" class="modal hidden">
+          <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+              <h3>✏️ Éditer le projet</h3>
+              <button class="close-edit-project-modal btn ghost">✕</button>
+            </div>
+            <div class="modal-body">
+              <div class="field">
+                <label for="edit-proj-name">Nom du projet *</label>
+                <input id="edit-proj-name" type="text" placeholder="Nom du projet" />
+              </div>
+              <div class="field">
+                <label for="edit-proj-ref">Référence</label>
+                <input id="edit-proj-ref" type="text" placeholder="Référence" />
+              </div>
+              <div class="field">
+                <label for="edit-proj-client">Client</label>
+                <input id="edit-proj-client" type="text" placeholder="Client" />
+              </div>
+              <div class="field">
+                <label for="edit-proj-date">Date</label>
+                <input id="edit-proj-date" type="date" />
+              </div>
+              <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
+              <h4 style="margin-bottom: 12px;">🔗 Partage du projet</h4>
+              <div class="field">
+                <label for="edit-share-viewer">Visionneur</label>
+                <select id="edit-share-viewer" name="edit-share-viewer">
+                  <option value="">-- Sélectionner un visionneur --</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>
+                  <input type="checkbox" id="edit-share-can-edit" name="edit-share-can-edit" />
+                  Autoriser la modification
+                </label>
+              </div>
+              <button id="edit-add-share-btn" class="btn ghost" style="margin-bottom: 12px;">+ Ajouter un partage</button>
+              <div id="edit-existing-shares" style="margin-top: 12px;"></div>
+              <div class="row gap" style="margin-top: 24px;">
+                <button id="save-edit-project" class="btn">Enregistrer</button>
+                <button class="close-edit-project-modal btn ghost">Annuler</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- Onglet Tours (Gestion des tours) -->
@@ -179,7 +233,6 @@
           <button id="back-to-rounds" class="btn ghost">← Phases</button>
           <div class="subnav-tabs">
             <button data-tour-tab="tour-lots" class="tour-tab-btn active">📦 Lots</button>
-            <button data-tour-tab="tour-summary" class="tour-tab-btn">📊 Récapitulatif</button>
             <button data-tour-tab="tour-config" class="tour-tab-btn">⚙️ Config Questions</button>
             <button data-tour-tab="tour-questions" class="tour-tab-btn">📋 Fiches Questions</button>
           </div>
@@ -198,16 +251,7 @@
             </div>
           </div>
 
-          <!-- Panel: Récapitulatif de la phase -->
-          <div id="tour-summary" class="tour-tabpanel hidden">
-            <div class="table-wrapper tall">
-              <table id="summary-table" class="summary-table">
-                <thead></thead>
-                <tbody></tbody>
-                <tfoot></tfoot>
-              </table>
-            </div>
-          </div>
+          
 
           <!-- Panels placeholders to align avec app.js (désactivés par rôle) -->
           <div id="tour-config" class="tour-tabpanel hidden">
@@ -226,6 +270,7 @@
           <button id="back-to-lots" class="btn ghost">← Lots</button>
           <div class="subnav-tabs">
             <button data-subtab="subtab-data" class="subnav-tab active">📊 Données</button>
+            <button data-subtab="subtab-questions-editor" class="subnav-tab">❓ Questions</button>
             <button data-subtab="subtab-config" class="subnav-tab">⚙️ Config Questions</button>
             <button data-subtab="subtab-questions" class="subnav-tab">📋 Fiches Questions</button>
           </div>
@@ -245,7 +290,7 @@
             <!-- Actions tableur -->
             <div id="sheet-actions" class="row gap hidden">
             <button id="add-row" class="btn">+ Ligne</button>
-            <input id="company-input" name="company-name" placeholder="Nom d'une entreprise"/>
+            <input id="company-input" name="company-input" placeholder="Nom d'une entreprise"/>
             <button id="add-company" class="btn ghost">+ Entreprise</button>
             <div id="lot-companies" class="chips"></div>
             <div class="spacer"></div>
@@ -269,6 +314,46 @@
               <tbody id="compare-body"></tbody>
             </table>
           </div>
+          </div>
+        </div>
+
+        <!-- Sous-onglet Questions (Éditeur) -->
+        <div id="subtab-questions-editor" class="subtabpanel hidden">
+          <div class="card">
+            <h3>❓ Éditeur de Questions</h3>
+            <p class="muted">Modifier, ajouter et supprimer les questions par ligne</p>
+            
+            <!-- Filtres et actions -->
+            <div class="row gap" style="margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
+              <label for="questions-view-filter" style="font-weight:600">Afficher:</label>
+              <select id="questions-view-filter" name="questions-view-filter" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <option value="all">Toutes les colonnes</option>
+                <option value="quantities">Quantités uniquement</option>
+                <option value="unit_prices">Prix unitaires uniquement</option>
+                <option value="totals">Montants totaux uniquement</option>
+              </select>
+              
+              <label for="questions-target-company" style="font-weight:600;margin-left:16px;color:var(--copper)">Entreprise ciblée:</label>
+              <select id="questions-target-company" name="questions-target-company" style="padding:8px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
+                <option value="">➜ Sélectionner une entreprise...</option>
+              </select>
+              
+              <div class="spacer"></div>
+              <button id="add-manual-question" class="btn">➕ Ajouter une question</button>
+              <button id="refresh-questions-editor" class="btn ghost">🔄 Actualiser</button>
+            </div>
+            
+            <!-- Tableau des questions éditables -->
+            <div class="table-wrapper tall">
+              <table id="questions-editor-table">
+                <thead id="questions-editor-head">
+                  <!-- En-têtes générées dynamiquement -->
+                </thead>
+                <tbody id="questions-editor-body">
+                  <tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Chargement...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -576,7 +661,7 @@
         <div id="approve-access-context" class="muted" style="margin-bottom:1rem;font-size:0.9em;"></div>
         <div class="field">
           <label for="approve-search">Rechercher un projet</label>
-          <input type="text" id="approve-search" name="project-search" placeholder="Tapez pour filtrer les projets..." autocomplete="off" />
+          <input type="text" id="approve-search" name="approve-search" placeholder="Tapez pour filtrer les projets..." autocomplete="off" />
         </div>
         <div class="field" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;">
           <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
@@ -631,6 +716,24 @@
           <button id="assign-company-cancel-btn" class="btn ghost">Annuler</button>
           <button id="assign-company-confirm-btn" class="btn btn-primary" disabled>Attribuer</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Popup modal pour sélection d'entreprise -->
+  <div id="company-select-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3 style="margin-top:0">⚠️ Entreprise requise</h3>
+      <p>Vous devez sélectionner une entreprise ciblée avant de sauvegarder une question.</p>
+      <div class="field">
+        <label for="modal-target-company-select">Entreprise:</label>
+        <select id="modal-target-company-select" style="width:100%;padding:10px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
+          <option value="">→ Sélectionner une entreprise...</option>
+        </select>
+      </div>
+      <div class="row gap" style="margin-top:24px;justify-content:flex-end">
+        <button id="cancel-company-modal" class="btn ghost">Annuler</button>
+        <button id="confirm-company-modal" class="btn">Confirmer</button>
       </div>
     </div>
   </div>

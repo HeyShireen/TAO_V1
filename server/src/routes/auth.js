@@ -5,7 +5,7 @@ import { query } from '../db.js';
 import { hashPassword, comparePassword } from '../utils.hash.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils.email.js';
 import { emailRateLimiter, resetEmailAttempts, resetAllCooldowns } from '../middleware.security.js';
-import { requireAuth } from '../middleware.auth.js';
+import { requireAuth, revokeToken } from '../middleware.auth.js';
 import { validatePassword } from '../utils.validation.js';
 
 const router = express.Router();
@@ -111,11 +111,28 @@ router.post('/login', emailRateLimiter, async (req, res) => {
   return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
 });
 
-// Déconnexion: suppression du cookie HttpOnly
-router.post('/logout', (req, res) => {
-  const opts = { httpOnly: true, secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, sameSite: 'lax', path: '/' };
-  res.clearCookie('auth', opts);
-  return res.json({ ok: true });
+// Déconnexion: SÉCURITÉ - Revoque le token et nettoie les cookies
+router.post('/logout', requireAuth, (req, res) => {
+  try {
+    // SÉCURITÉ: Révoquer le token (empêcher son réutilisation)
+    if (req.token) {
+      revokeToken(req.token);
+    }
+    
+    const opts = { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, 
+      sameSite: 'lax', 
+      path: '/' 
+    };
+    
+    res.clearCookie('auth', opts);
+    console.log(`✅ Logout: Utilisateur ${req.user?.email} (ID: ${req.user?.id}) déconnecté avec succès`);
+    return res.json({ ok: true, message: 'Déconnecté avec succès' });
+  } catch (err) {
+    console.error('Erreur logout:', err);
+    return res.status(500).json({ error: 'Erreur lors de la déconnexion' });
+  }
 });
 
 // Renvoyer l'email de vérification (avec cooldown)

@@ -120,8 +120,8 @@ router.post('/:id/reset-password', async (req, res) => {
     const { id } = req.params;
     const { password } = req.body;
 
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: 'Mot de passe trop court (min 6 caractères)' });
+    if (!password || password.length < 12) {
+      return res.status(400).json({ error: 'Mot de passe trop court (min 12 caractères)' });
     }
 
     const password_hash = await hashPassword(password);

@@ -74,6 +74,69 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Update a project (responsable/admin + vérification permission)
+router.put('/:id', isResponsableOrAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { name, ref, client, date } = req.body;
+    
+    // Vérifier que l'utilisateur peut éditer ce projet
+    const canEdit = await canEditProject(req.user.id, id, req.user.role);
+    if (!canEdit) {
+      return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce projet' });
+    }
+    
+    // Valider les champs
+    if (name !== undefined) validateMaxLength(name, 200, 'Le nom du projet');
+    if (ref !== undefined) validateMaxLength(ref, 100, 'La référence');
+    if (client !== undefined) validateMaxLength(client, 200, 'Le client');
+    
+    // Construire la requête dynamiquement selon les champs fournis
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+    
+    if (name !== undefined) {
+      updates.push(`name = $${paramIndex}`);
+      values.push(name ? name.trim() : null);
+      paramIndex++;
+    }
+    if (ref !== undefined) {
+      updates.push(`reference = $${paramIndex}`);
+      values.push(ref ? ref.trim() : null);
+      paramIndex++;
+    }
+    if (client !== undefined) {
+      updates.push(`client = $${paramIndex}`);
+      values.push(client ? client.trim() : null);
+      paramIndex++;
+    }
+    if (date !== undefined) {
+      updates.push(`study_date = $${paramIndex}`);
+      values.push(date || null);
+      paramIndex++;
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+    }
+    
+    values.push(id);
+    const sql = `UPDATE projects SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+    
+    const result = await query(sql, values);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Projet introuvable' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur mise à jour projet:', err);
+    const statusCode = err instanceof ValidationError ? 400 : 500;
+    res.status(statusCode).json({ error: err.message || 'Impossible de mettre à jour le projet' });
+  }
+});
+
 // Create a lot in a project (responsable/admin + vérification permission)
 router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
   try {

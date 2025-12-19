@@ -53,8 +53,13 @@ export function sanitizeString(value) {
 }
 
 export function validatePassword(password) {
-  if (!password || password.length < 8) {
-    throw new ValidationError('Le mot de passe doit contenir au moins 8 caractères');
+  // SÉCURITÉ: Minimum 12 caractères (NIST 2023 guidelines)
+  if (!password || password.length < 12) {
+    throw new ValidationError('Le mot de passe doit contenir au minimum 12 caractères');
+  }
+  
+  if (password.length > 128) {
+    throw new ValidationError('Le mot de passe est trop long (max 128 caractères)');
   }
   
   // Vérifier la présence d'au moins une majuscule
@@ -67,9 +72,9 @@ export function validatePassword(password) {
     throw new ValidationError('Le mot de passe doit contenir au moins un chiffre');
   }
   
-  // Vérifier la présence d'au moins un caractère spécial (.!:?,)
-  if (!/[.!:?,]/.test(password)) {
-    throw new ValidationError('Le mot de passe doit contenir au moins un caractère spécial (.!:?,)');
+  // Vérifier la présence d'au moins un caractère spécial
+  if (!/[!@#$%^&*()_+\-=\[\]{};':",./<>?]/.test(password)) {
+    throw new ValidationError('Le mot de passe doit contenir au moins un caractère spécial (!@#$%^&*...)');
   }
   
   return true;

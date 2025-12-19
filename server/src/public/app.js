@@ -203,9 +203,7 @@ function activateTourTab(id){
   panels.forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
   
   // Charger les données selon l'onglet
-  if (id === 'tour-summary') {
-    loadRoundSummary();
-  } else if (id === 'tour-lots') {
+  if (id === 'tour-lots') {
     loadLotsForRound();
   }
 }
@@ -232,6 +230,11 @@ function activateSubtab(id){
   // Charger les questions automatiquement quand on ouvre l'onglet
   if (id === 'subtab-questions' && currentLot) {
     refreshQuestions();
+  }
+  
+  // Charger l'éditeur de questions
+  if (id === 'subtab-questions-editor' && currentLot) {
+    loadQuestionsEditor();
   }
 }
 
@@ -603,6 +606,150 @@ function closeShareModal() {
   currentShareProjectId = null;
 }
 
+/* ================= Édition du projet ================= */
+let currentEditProjectId = null;
+
+async function openEditProjectModal(projectId) {
+  currentEditProjectId = projectId;
+  try {
+    // Récupérer les données du projet
+    const { project } = await api('/projects/' + projectId);
+    
+    // Remplir les champs
+    setValue('#edit-proj-name', project.name || '');
+    setValue('#edit-proj-ref', project.ref || '');
+    setValue('#edit-proj-client', project.client || '');
+    setValue('#edit-proj-date', project.date ? project.date.split('T')[0] : '');
+    
+    // Charger les visionneurs disponibles
+    await loadEditShareViewers();
+    
+    // Charger les partages existants
+    await loadEditExistingShares(projectId);
+    
+    show('#edit-project-modal');
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: 'Erreur lors du chargement du projet: ' + err.message, type: 'error' });
+  }
+}
+
+function closeEditProjectModal() {
+  hide('#edit-project-modal');
+  currentEditProjectId = null;
+}
+
+async function loadEditShareViewers() {
+  try {
+    const users = await api('/shares/available-viewers');
+    const select = qs('#edit-share-viewer');
+    select.innerHTML = '<option value="">-- Sélectionner un visionneur --</option>';
+    users.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.email;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Erreur chargement visionneurs:', err);
+  }
+}
+
+async function loadEditExistingShares(projectId) {
+  try {
+    const shares = await api(`/shares/projects/${projectId}`);
+    const container = qs('#edit-existing-shares');
+    container.innerHTML = '';
+    
+    if (!shares || shares.length === 0) {
+      container.innerHTML = '<p class="muted" style="font-size:12px;">Aucun partage pour le moment</p>';
+      return;
+    }
+    
+    shares.forEach(share => {
+      const badge = document.createElement('div');
+      badge.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;background:var(--input-bg);border-radius:6px;margin-bottom:6px;';
+      const userId = share.shared_with_user_id;
+      badge.innerHTML = `
+        <span>${escapeHtml(share.shared_with_email || share.viewer_email)} ${share.can_edit ? '(édition)' : '(lecture)'}</span>
+        <button class="btn ghost" style="font-size:12px;padding:2px;margin:0;" onclick="removeProjectShare(${userId})">×</button>
+      `;
+      container.appendChild(badge);
+    });
+  } catch (err) {
+    console.error('Erreur chargement partages:', err);
+  }
+}
+
+async function addEditProjectShare() {
+  const viewerId = qs('#edit-share-viewer').value;
+  const canEdit = qs('#edit-share-can-edit').checked;
+  
+  if (!viewerId) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez un visionneur', type: 'info' });
+    return;
+  }
+  
+  try {
+    await api(`/shares/projects/${currentEditProjectId}`, {
+      method: 'POST',
+      body: { userId: parseInt(viewerId), canEdit }
+    });
+    showNotify({ title: 'Succès', message: 'Partage ajouté', type: 'success' });
+    qs('#edit-share-viewer').value = '';
+    qs('#edit-share-can-edit').checked = false;
+    await loadEditExistingShares(currentEditProjectId);
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: 'Erreur lors de l\'ajout du partage: ' + err.message, type: 'error' });
+  }
+}
+
+async function removeProjectShare(shareId) {
+  if (!confirm('Retirer ce partage ?')) return;
+  
+  try {
+    // shareId est en réalité shared_with_user_id, donc on a besoin du projectId aussi
+    await api(`/shares/projects/${currentEditProjectId}/users/${shareId}`, { method: 'DELETE' });
+    showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
+    await loadEditExistingShares(currentEditProjectId);
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: 'Erreur lors de la suppression: ' + err.message, type: 'error' });
+  }
+}
+
+async function saveEditProject() {
+  const name = getValue('#edit-proj-name').trim();
+  const ref = getValue('#edit-proj-ref').trim();
+  const client = getValue('#edit-proj-client').trim();
+  const date = getValue('#edit-proj-date');
+  
+  if (!name) {
+    showNotify({ title: 'Validation', message: 'Le nom est obligatoire', type: 'info' });
+    return;
+  }
+  
+  try {
+    await api(`/projects/${currentEditProjectId}`, {
+      method: 'PUT',
+      body: { name, ref, client, date }
+    });
+    showNotify({ title: 'Succès', message: 'Projet mis à jour avec succès', type: 'success' });
+    await refreshProjects();
+    closeEditProjectModal();
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: 'Erreur lors de la sauvegarde: ' + err.message, type: 'error' });
+  }
+}
+
+function getValue(selector) {
+  const el = qs(selector);
+  return el ? el.value : '';
+}
+
+function setValue(selector, value) {
+  const el = qs(selector);
+  if (el) el.value = value;
+}
+
 /* ================= Demandes d'accès ================= */
 
 // Ouvrir la modal de demande d'accès
@@ -782,7 +929,7 @@ function renderApproveProjects() {
       ? approveState.selectedProjectId.includes(Number(p.id))
       : approveState.selectedProjectId === Number(p.id);
     return `<tr data-project-id="${p.id}" class="approve-project-row" style="cursor:pointer;">
-      <td style="padding:10px 12px;text-align:center;"><input type="checkbox" value="${p.id}" ${selected?'checked':''} data-select-project="${p.id}" /></td>
+      <td style="padding:10px 12px;text-align:center;"><input id="select-project-${p.id}" name="select-project-${p.id}" type="checkbox" value="${p.id}" ${selected?'checked':''} data-select-project="${p.id}" /></td>
       <td style="padding:10px 12px;font-weight:${selected?'600':'400'};">${p.name}</td>
       <td style="padding:10px 12px;">${p.reference || '—'}</td>
       <td style="padding:10px 12px;">${p.client || '—'}</td>
@@ -923,8 +1070,15 @@ function renderProjects(list){
   for (const p of list){
     const tr = document.createElement('tr');
     const shareBtn = canShareProject() ? `<button class="btn ghost btn-sm" data-share-id="${p.id}">🔗 Partager</button>` : '';
-    tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.reference||''}</td><td>${p.client||''}</td><td>${new Date(p.created_at).toLocaleString()}</td><td><button class="btn btn-sm">Ouvrir</button> ${shareBtn}</td>`;
+    const editBtn = canShareProject() ? `<button class="btn ghost btn-sm" data-edit-id="${p.id}">✏️ Éditer</button>` : '';
+    tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.reference||''}</td><td>${p.client||''}</td><td>${new Date(p.created_at).toLocaleString()}</td><td><button class="btn btn-sm">Ouvrir</button> ${editBtn} ${shareBtn}</td>`;
     tr.querySelector('button.btn:not(.ghost)').addEventListener('click', () => openProject(p.id));
+    
+    // Event listener pour le bouton Éditer
+    const editBtnEl = tr.querySelector('[data-edit-id]');
+    if (editBtnEl) {
+      editBtnEl.addEventListener('click', () => openEditProjectModal(p.id));
+    }
     
     // Event listener pour le bouton Partager
     const shareBtnEl = tr.querySelector('[data-share-id]');
@@ -1072,14 +1226,14 @@ async function selectRoundFromTab(round){
   
   // Afficher le contenu
   activateTab('round-content');
-  activateTourTab('tour-summary');
+  activateTourTab('tour-lots');
   setText('#current-round-name', `${round.name}`);
   
   // Désactiver Config Questions et Fiches Questions jusqu'à la sélection d'un lot
   disableTourTabs(['tour-config', 'tour-questions']);
   
-  // Charger le récapitulatif par défaut
-  await loadRoundSummary();
+  // Charger la liste des lots par défaut
+  await loadLotsForRound();
 }
 
 async function loadLotsForRound(){
@@ -1339,158 +1493,245 @@ async function loadRoundsComparison(){
     const roundToId = selectTo.value ? parseInt(selectTo.value) : null;
     const showAnalysis = roundFromId && roundToId && roundFromId !== roundToId;
     
-    // Construire les en-têtes: Lot | MOE | Tour 1 | Tour 2 | ... | Analyse
+    // Construire les en-têtes fusionnés au format du récap (Lot/MOE + groupes par tour)
     thead.innerHTML = '';
-    const headerRow = document.createElement('tr');
-    headerRow.innerHTML = '<th rowspan="2" class="sticky-col">Lot</th>' + (entrepriseMode ? '' : '<th rowspan="2" class="amount">MOE (€)</th>');
+    const headerRow1 = document.createElement('tr');
+    const headerRow2 = document.createElement('tr');
+
+    // Colonne Lot
+    const lotTh = document.createElement('th');
+    lotTh.rowSpan = 2;
+    lotTh.className = 'sticky-col';
+    lotTh.textContent = 'Lot';
+    headerRow1.appendChild(lotTh);
+
+    // Colonne MOE
+    if (!entrepriseMode) {
+      const moeTh = document.createElement('th');
+      moeTh.rowSpan = 2;
+      moeTh.className = 'amount';
+      moeTh.textContent = 'MOE (€)';
+      headerRow1.appendChild(moeTh);
+    }
+
+    // Groupes par tour (Montant, Écart €, Écart %)
     for (const round of rounds) {
-      const th = document.createElement('th');
-      th.className = 'amount';
-      th.textContent = round.name;
-      if (!showAnalysis) {
-        th.rowSpan = 2;
+      const grpTh = document.createElement('th');
+      grpTh.colSpan = entrepriseMode ? 1 : 3;
+      grpTh.className = 'amount';
+      grpTh.textContent = round.name;
+      headerRow1.appendChild(grpTh);
+
+      const thAmount = document.createElement('th'); thAmount.className = 'amount'; thAmount.textContent = 'Montant (€)';
+      headerRow2.appendChild(thAmount);
+      if (!entrepriseMode) {
+        const thEcartEur = document.createElement('th'); thEcartEur.className = 'amount'; thEcartEur.textContent = 'Écart (€)';
+        const thEcartPct = document.createElement('th'); thEcartPct.className = 'amount'; thEcartPct.textContent = 'Écart (%)';
+        headerRow2.appendChild(thEcartEur);
+        headerRow2.appendChild(thEcartPct);
       }
-      headerRow.appendChild(th);
     }
+
+    // Groupe Analyse
     if (showAnalysis) {
-      headerRow.innerHTML += '<th colspan="3" class="amount" style="background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)">🔍 Analyse</th>';
+      const grpAna = document.createElement('th');
+      grpAna.colSpan = 3;
+      grpAna.className = 'amount';
+      grpAna.style.cssText = 'background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)';
+      grpAna.textContent = '🔍 Analyse';
+      headerRow1.appendChild(grpAna);
+
+      const thDelta = document.createElement('th'); thDelta.className = 'amount'; thDelta.textContent = 'Δ Montant';
+      const thDeltaPct = document.createElement('th'); thDeltaPct.className = 'amount'; thDeltaPct.textContent = 'Δ %';
+      const thTrend = document.createElement('th'); thTrend.className = 'amount'; thTrend.textContent = 'Tendance';
+      headerRow2.appendChild(thDelta);
+      headerRow2.appendChild(thDeltaPct);
+      headerRow2.appendChild(thTrend);
     }
-    thead.appendChild(headerRow);
-    
-    // Suppression des sous-titres (ligne 2) en mode analyse
-    
-    // Construire les lignes: une ligne par lot avec détails entreprises
+
+    thead.appendChild(headerRow1);
+    thead.appendChild(headerRow2);
+
+    // Corps: une ligne d'en-tête par lot (MOE) + une ligne par entreprise
     tbody.innerHTML = '';
     let totalMoe = 0;
     const totalsByRound = {};
     rounds.forEach(r => totalsByRound[r.id] = 0);
-    
+
     for (const lot of lots) {
-      const row = document.createElement('tr');
-      
-      // Colonne Lot
+      // Ligne d'en-tête du lot
+      const lotRow = document.createElement('tr');
+      lotRow.className = 'lot-header-row';
+
       const lotCell = document.createElement('td');
       lotCell.className = 'lot-name-cell sticky-col';
-      lotCell.innerHTML = lot.lot_code 
-        ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>` 
+      lotCell.innerHTML = lot.lot_code
+        ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>`
         : `<strong>${lot.lot_name}</strong>`;
-      row.appendChild(lotCell);
-      
-      // Colonne MOE
-      const moeCell = document.createElement('td');
+      lotRow.appendChild(lotCell);
+
       if (!entrepriseMode) {
+        const moeCell = document.createElement('td');
         moeCell.className = 'amount moe-amount';
-        moeCell.textContent = fmtEuro(lot.moe_total);
-        row.appendChild(moeCell);
+        moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
+        lotRow.appendChild(moeCell);
         totalMoe += lot.moe_total;
       }
-      
-      // Colonnes tours avec détails entreprises
+
+      // Pour chaque tour, remplir des cellules vides au format du récap
+      for (const round of rounds) {
+        const total = lot.round_totals?.[round.id] || 0;
+        const tdAmount = document.createElement('td'); tdAmount.className = 'amount'; tdAmount.innerHTML = `<strong>${fmtEuro(total)}</strong>`;
+        lotRow.appendChild(tdAmount);
+        if (!entrepriseMode) {
+          const ecart = total - (lot.moe_total || 0);
+          const cls = ecart > 0 ? 'ecart-positive' : (ecart < 0 ? 'ecart-negative' : 'ecart-zero');
+          const sign = ecart > 0 ? '+' : '';
+          const tdEur = document.createElement('td'); tdEur.className = 'amount'; tdEur.innerHTML = `<span class="${cls}">${sign}${fmtEuro(Math.abs(ecart))}</span>`;
+          const pct = (lot.moe_total || 0) > 0 ? (ecart / lot.moe_total) * 100 : 0;
+          const clsPct = pct > 0 ? 'ecart-positive' : (pct < 0 ? 'ecart-negative' : 'ecart-zero');
+          const signPct = pct > 0 ? '+' : '';
+          const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.innerHTML = `<span class="${clsPct}">${signPct}${pct.toFixed(1)}%</span>`;
+          lotRow.appendChild(tdEur);
+          lotRow.appendChild(tdPct);
+        }
+        totalsByRound[round.id] += total;
+      }
+
+      // Analyse (totaux par lot)
+      if (showAnalysis) {
+        const fromTotal = lot.round_totals?.[roundFromId] || 0;
+        const toTotal = lot.round_totals?.[roundToId] || 0;
+        const delta = toTotal - fromTotal;
+        const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
+        const tdDelta = document.createElement('td'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
+        const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
+        const tdTrend = document.createElement('td'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
+        lotRow.appendChild(tdDelta);
+        lotRow.appendChild(tdPct);
+        lotRow.appendChild(tdTrend);
+      }
+
+      tbody.appendChild(lotRow);
+
+      // Lignes entreprises pour ce lot
+      // Construire la liste des entreprises présentes dans au moins un tour
+      const companiesMap = new Map(); // company_id -> name
       for (const round of rounds) {
         const companies = lot.companies_by_round?.[round.id] || [];
-        
-        // En mode entreprise, utiliser le total de l'entreprise, sinon le total global
-        let roundTotal;
-        if (entrepriseMode && companies.length > 0) {
-          // Somme des montants de l'entreprise (il ne devrait y en avoir qu'une)
-          roundTotal = companies.reduce((sum, c) => sum + c.total, 0);
-        } else {
-          roundTotal = lot.round_totals[round.id] || 0;
+        for (const c of companies) {
+          companiesMap.set(c.company_id, c.company_name);
         }
-        
-        const roundCell = document.createElement('td');
-        roundCell.className = 'amount';
-        
-        if (showAnalysis && !entrepriseMode) {
-          // Afficher les entreprises sous le total (pas en mode entreprise)
-          let html = `<div style="font-weight:600;margin-bottom:4px">${fmtEuro(roundTotal)}</div>`;
-          if (companies.length > 0) {
-            html += '<div style="font-size:11px;color:var(--muted);line-height:1.4">';
-            companies.forEach(c => {
-              html += `<div>${c.company_name}: ${fmtEuro(c.total)}</div>`;
-            });
-            html += '</div>';
-          }
-          roundCell.innerHTML = html;
-        } else {
-          roundCell.textContent = fmtEuro(roundTotal);
-        }
-        
-        row.appendChild(roundCell);
-        totalsByRound[round.id] += roundTotal;
       }
-      
-      // Colonnes d'analyse si deux tours sélectionnés
-      if (showAnalysis) {
-        let fromTotal, toTotal;
-        
-        if (entrepriseMode) {
-          // Utiliser les montants de l'entreprise
+
+      for (const [companyId, companyName] of companiesMap.entries()) {
+        const row = document.createElement('tr');
+        row.className = 'company-row';
+
+        const nameCell = document.createElement('td');
+        nameCell.className = 'amount company-name-cell';
+        nameCell.textContent = companyName;
+        row.appendChild(nameCell);
+
+        if (!entrepriseMode) {
+          // Colonne MOE vide pour les lignes entreprises (format récap)
+          const emptyMoe = document.createElement('td'); emptyMoe.className = 'amount empty-cell'; emptyMoe.textContent = '—';
+          row.appendChild(emptyMoe);
+        }
+
+        for (const round of rounds) {
+          const companies = lot.companies_by_round?.[round.id] || [];
+          const found = companies.find(c => c.company_id === companyId);
+          const amount = found ? found.total : 0;
+
+          const tdAmount = document.createElement('td');
+          tdAmount.className = 'amount';
+          tdAmount.textContent = fmtEuro(amount);
+          row.appendChild(tdAmount);
+
+          if (!entrepriseMode) {
+            const ecart = amount - (lot.moe_total || 0);
+            const cls = ecart > 0 ? 'ecart-positive' : (ecart < 0 ? 'ecart-negative' : 'ecart-zero');
+            const sign = ecart > 0 ? '+' : '';
+            const tdEur = document.createElement('td'); tdEur.className = 'amount'; tdEur.innerHTML = `<span class="${cls}">${sign}${fmtEuro(Math.abs(ecart))}</span>`;
+            const pct = (lot.moe_total || 0) > 0 ? (ecart / lot.moe_total) * 100 : 0;
+            const clsPct = pct > 0 ? 'ecart-positive' : (pct < 0 ? 'ecart-negative' : 'ecart-zero');
+            const signPct = pct > 0 ? '+' : '';
+            const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.innerHTML = `<span class="${clsPct}">${signPct}${pct.toFixed(1)}%</span>`;
+            row.appendChild(tdEur);
+            row.appendChild(tdPct);
+          }
+        }
+
+        // Analyse par entreprise
+        if (showAnalysis) {
           const fromCompanies = lot.companies_by_round?.[roundFromId] || [];
           const toCompanies = lot.companies_by_round?.[roundToId] || [];
-          fromTotal = fromCompanies.reduce((sum, c) => sum + c.total, 0);
-          toTotal = toCompanies.reduce((sum, c) => sum + c.total, 0);
-        } else {
-          fromTotal = lot.round_totals[roundFromId] || 0;
-          toTotal = lot.round_totals[roundToId] || 0;
+          const fromTotal = (fromCompanies.find(c => c.company_id === companyId)?.total) || 0;
+          const toTotal = (toCompanies.find(c => c.company_id === companyId)?.total) || 0;
+          const delta = toTotal - fromTotal;
+          const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
+
+          const tdDelta = document.createElement('td'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
+          const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
+          const tdTrend = document.createElement('td'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
+          row.appendChild(tdDelta);
+          row.appendChild(tdPct);
+          row.appendChild(tdTrend);
         }
-        
-        const delta = toTotal - fromTotal;
-        const deltaPct = fromTotal > 0 ? ((delta / fromTotal) * 100) : 0;
-        
-        // Δ Montant
-        const deltaCell = document.createElement('td');
-        deltaCell.className = 'amount';
-        deltaCell.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600';
-        deltaCell.style.color = delta < 0 ? 'var(--success)' : delta > 0 ? 'var(--danger)' : 'var(--fg)';
-        deltaCell.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
-        row.appendChild(deltaCell);
-        
-        // Δ %
-        const deltaPctCell = document.createElement('td');
-        deltaPctCell.className = 'amount';
-        deltaPctCell.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600';
-        deltaPctCell.style.color = deltaPct < 0 ? 'var(--success)' : deltaPct > 0 ? 'var(--danger)' : 'var(--fg)';
-        deltaPctCell.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
-        row.appendChild(deltaPctCell);
-        
-        // Tendance
-        const trendCell = document.createElement('td');
-        trendCell.className = 'amount';
-        trendCell.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px';
-        trendCell.textContent = delta < 0 ? '↓' : delta > 0 ? '↑' : '↔';
-        trendCell.style.color = delta < 0 ? 'var(--success)' : delta > 0 ? 'var(--danger)' : 'var(--muted)';
-        row.appendChild(trendCell);
+
+        tbody.appendChild(row);
       }
-      
-      tbody.appendChild(row);
     }
-    
-    // Ligne de totaux
+
+    // Pied: totaux par tour au format récap
     tfoot.innerHTML = '';
     const totalRow = document.createElement('tr');
-    totalRow.className = 'total-row';
-    
+    totalRow.className = 'total-row lot-header-row';
+
     const totalLabelCell = document.createElement('th');
     totalLabelCell.textContent = 'TOTAL';
     totalRow.appendChild(totalLabelCell);
-    
+
     if (!entrepriseMode) {
       const totalMoeCell = document.createElement('th');
-      totalMoeCell.className = 'amount';
+      totalMoeCell.className = 'amount moe-total-cell';
       totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
       totalRow.appendChild(totalMoeCell);
     }
-    
-    // Totaux par tour
+
     for (const round of rounds) {
-      const roundTotal = totalsByRound[round.id];
-      const roundTotalCell = document.createElement('th');
-      roundTotalCell.className = 'amount';
-      roundTotalCell.innerHTML = `<strong>${fmtEuro(roundTotal)}</strong>`;
-      totalRow.appendChild(roundTotalCell);
+      const total = totalsByRound[round.id] || 0;
+      const tdAmount = document.createElement('th'); tdAmount.className = 'amount'; tdAmount.innerHTML = `<strong>${fmtEuro(total)}</strong>`;
+      totalRow.appendChild(tdAmount);
+      if (!entrepriseMode) {
+        const ecart = total - totalMoe;
+        const cls = ecart > 0 ? 'ecart-positive' : (ecart < 0 ? 'ecart-negative' : 'ecart-zero');
+        const sign = ecart > 0 ? '+' : '';
+        const tdEur = document.createElement('th'); tdEur.className = 'amount'; tdEur.innerHTML = `<strong><span class="${cls}">${sign}${fmtEuro(Math.abs(ecart))}</span></strong>`;
+        const pct = totalMoe > 0 ? (ecart / totalMoe) * 100 : 0;
+        const clsPct = pct > 0 ? 'ecart-positive' : (pct < 0 ? 'ecart-negative' : 'ecart-zero');
+        const signPct = pct > 0 ? '+' : '';
+        const tdPct = document.createElement('th'); tdPct.className = 'amount'; tdPct.innerHTML = `<strong><span class="${clsPct}">${signPct}${pct.toFixed(1)}%</span></strong>`;
+        totalRow.appendChild(tdEur);
+        totalRow.appendChild(tdPct);
+      }
     }
-    
+
+    // Totaux d'analyse
+    if (showAnalysis) {
+      const fromTotal = totalsByRound[roundFromId] || 0;
+      const toTotal = totalsByRound[roundToId] || 0;
+      const delta = toTotal - fromTotal;
+      const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
+      const tdDelta = document.createElement('th'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.innerHTML = `<strong>${(delta > 0 ? '+' : '') + fmtEuro(delta)}</strong>`;
+      const tdPct = document.createElement('th'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.innerHTML = `<strong>${(deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1)}%</strong>`;
+      const tdTrend = document.createElement('th'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
+      totalRow.appendChild(tdDelta);
+      totalRow.appendChild(tdPct);
+      totalRow.appendChild(tdTrend);
+    }
+
     tfoot.appendChild(totalRow);
     
   } catch (err) {
@@ -2044,6 +2285,386 @@ async function refreshQuestions(){
     showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
 }
+
+/* ================= Éditeur de Questions ================= */
+async function loadQuestionsEditor(){
+  if (!currentLot || !currentRound) return;
+  
+  try {
+    // Sauvegarder la sélection actuelle d'entreprise ciblée
+    const targetCompanySelect = qs('#questions-target-company');
+    const previousSelection = targetCompanySelect?.value || '';
+    
+    // Charger les données du lot et les questions
+    const roundParam = `?round_id=${currentRound.id}`;
+    const lotData = await api(`/lots/${currentLot.id}${roundParam}`);
+    const questionsData = await api(`/question-config/lot/${currentLot.id}${roundParam}`);
+    
+    // Peupler le sélecteur d'entreprise ciblée (header)
+    const targetCompany = qs('#questions-target-company');
+    targetCompany.innerHTML = '<option value="">→ Sélectionner une entreprise...</option>';
+    for (const c of lotData.companies || []) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      targetCompany.appendChild(opt);
+    }
+    
+    // Restaurer la sélection précédente si elle existe toujours
+    if (previousSelection && targetCompany.querySelector(`option[value="${previousSelection}"]`)) {
+      targetCompany.value = previousSelection;
+    }
+    
+    // Peupler le sélecteur dans le modal
+    const modalTargetCompany = qs('#modal-target-company-select');
+    modalTargetCompany.innerHTML = '<option value="">→ Sélectionner une entreprise...</option>';
+    for (const c of lotData.companies || []) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      modalTargetCompany.appendChild(opt);
+    }
+    
+    // Construire le tableau
+    renderQuestionsEditorTable(lotData, questionsData);
+    
+  } catch (err) {
+    console.error('Erreur chargement éditeur questions:', err);
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
+  }
+}
+
+function renderQuestionsEditorTable(lotData, questionsData) {
+  const viewFilter = qs('#questions-view-filter').value;
+  const targetCompany = qs('#questions-target-company').value;
+  const thead = qs('#questions-editor-head');
+  const tbody = qs('#questions-editor-body');
+  
+  if (!lotData.items || lotData.items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Aucune donnée disponible</td></tr>';
+    return;
+  }
+  
+  // Afficher toutes les entreprises dans les colonnes de comparaison
+  let companies = lotData.companies || [];
+  
+  // Créer une map des questions par item_id + company_id
+  const questionsMap = new Map();
+  for (const q of questionsData || []) {
+    const key = `${q.item_id}_${q.company_id}`;
+    questionsMap.set(key, q);
+  }
+  let headerHTML = '<tr>';
+  headerHTML += '<th style="width:50px">#</th>';
+  headerHTML += '<th style="width:200px">Désignation</th>';
+  headerHTML += '<th style="width:80px">Unité</th>';
+  
+  if (viewFilter === 'all' || viewFilter === 'quantities') {
+    headerHTML += '<th style="width:100px" class="moe-highlight">Qté MOE</th>';
+    for (const c of companies) {
+      headerHTML += `<th style="width:100px">Qté ${c.name}</th>`;
+    }
+  }
+  
+  if (viewFilter === 'all' || viewFilter === 'unit_prices') {
+    headerHTML += '<th style="width:100px" class="moe-highlight">PU MOE</th>';
+    for (const c of companies) {
+      headerHTML += `<th style="width:100px">PU ${c.name}</th>`;
+    }
+  }
+  
+  if (viewFilter === 'all' || viewFilter === 'totals') {
+    headerHTML += '<th style="width:120px" class="moe-highlight">Total MOE</th>';
+    for (const c of companies) {
+      headerHTML += `<th style="width:120px">Total ${c.name}</th>`;
+    }
+  }
+  
+  headerHTML += '<th style="min-width:220px">Question</th>';
+  headerHTML += '<th style="width:100px">Statut</th>';
+  headerHTML += '<th style="width:100px">Actions</th>';
+  headerHTML += '</tr>';
+  thead.innerHTML = headerHTML;
+  
+  let html = '';
+  
+  // Pour chaque ligne du lot (une ligne par item, pas par entreprise)
+  for (const item of lotData.items) {
+    const moeQty = item.quantity_moe || 0;
+    const moePU = item.unit_price_moe || 0;
+    const moeTotal = moeQty * moePU;
+    
+    // Collecter les offres de toutes les entreprises pour cet item
+    const itemOffers = companies.map(company => {
+      const offer = (lotData.offers || []).find(o => 
+        o.item_id === item.id && o.company_id === company.id
+      );
+      return {
+        company_id: company.id,
+        company_name: company.name,
+        quantity: offer?.quantity || 0,
+        unit_price: offer?.unit_price || 0,
+        total: (offer?.quantity || 0) * (offer?.unit_price || 0)
+      };
+    });
+    
+    // Trouver la question pour cette entreprise ciblée
+    let existingQuestion = null;
+    if (targetCompany) {
+      const questionKey = `${item.id}_${targetCompany}`;
+      existingQuestion = questionsMap.get(questionKey);
+    }
+    
+    const questionId = existingQuestion?.id || '';
+    const questionText = existingQuestion?.question_text || '';
+    const questionStatus = existingQuestion?.status || 'pending';
+    const questionCompanyId = existingQuestion?.company_id || '';
+    
+    const statusBadge = {
+      'pending': '⏳ En attente',
+      'answered': '✅ Répondue',
+      'dismissed': '❌ Ignorée'
+    }[questionStatus] || questionStatus;
+    
+    html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}">`;
+    html += `<td>${item.num || ''}</td>`;
+    html += `<td>${item.designation || ''}</td>`;
+    html += `<td>${item.unit || ''}</td>`;
+    
+    // Colonnes quantités
+    if (viewFilter === 'all' || viewFilter === 'quantities') {
+      html += `<td class="moe-cell">${fmtNum(moeQty)}</td>`;
+      for (const offer of itemOffers) {
+        const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
+        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
+        html += `<td class="${deviationClass}">${fmtNum(offer.quantity)}</td>`;
+      }
+    }
+    
+    // Colonnes prix unitaires
+    if (viewFilter === 'all' || viewFilter === 'unit_prices') {
+      html += `<td class="moe-cell">${fmtEuro(moePU)}</td>`;
+      for (const offer of itemOffers) {
+        const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
+        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
+        html += `<td class="${deviationClass}">${fmtEuro(offer.unit_price)}</td>`;
+      }
+    }
+    
+    // Colonnes totaux
+    if (viewFilter === 'all' || viewFilter === 'totals') {
+      html += `<td class="moe-cell">${fmtEuro(moeTotal)}</td>`;
+      for (const offer of itemOffers) {
+        const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
+        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
+        html += `<td class="${deviationClass}">${fmtEuro(offer.total)}</td>`;
+      }
+    }
+    
+    
+    // Question avec statut sauvegarde
+    html += '<td style="position:relative">';
+    html += `<textarea 
+      id="question-${item.id}"
+      name="question-${item.id}"
+      class="question-text-editor" 
+      data-item-id="${item.id}"
+      data-question-id="${questionId}"
+      rows="2" 
+      style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"
+      placeholder="Saisir une question..."
+      ${isVisionneur() || isEntreprise() ? 'disabled' : ''}
+    >${questionText}</textarea>`;
+    html += `<div class="save-status" data-item-id="${item.id}" style="position:absolute;top:6px;right:6px;font-size:14px;display:none">💾</div>`;
+    html += '</td>';
+    
+    // Statut
+    html += `<td>${statusBadge}</td>`;
+    
+    // Actions
+    html += '<td>';
+    if (questionId) {
+      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" style="padding:4px 8px;font-size:12px" title="Supprimer">🗑️</button>`;
+    }
+    html += '</td>';
+    
+    html += '</tr>';
+  }
+  
+  tbody.innerHTML = html || '<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Aucune ligne correspondante</td></tr>';
+  
+  // Bind events
+  if (!isVisionneur() && !isEntreprise()) {
+    bindQuestionsEditorEvents();
+  }
+}
+
+function bindQuestionsEditorEvents() {
+  // Map pour garder les timers de debounce par item
+  const saveTimers = new Map();
+  
+  // Auto-save pour chaque textarea
+  qsa('.question-text-editor').forEach(textarea => {
+    textarea.addEventListener('input', async (e) => {
+      const itemId = textarea.dataset.itemId;
+      const questionId = textarea.dataset.questionId;
+      const questionText = textarea.value.trim();
+      const statusIndicator = qs(`.save-status[data-item-id="${itemId}"]`);
+      
+      // Annuler le timer précédent
+      if (saveTimers.has(itemId)) {
+        clearTimeout(saveTimers.get(itemId));
+      }
+      
+      // Si vide, ne pas sauvegarder
+      if (!questionText) {
+        statusIndicator.style.display = 'none';
+        return;
+      }
+      
+      // Montrer l'indicateur "en attente"
+      statusIndicator.style.display = 'block';
+      statusIndicator.textContent = '⏳';
+      statusIndicator.style.color = 'var(--muted)';
+      
+      // Créer un nouveau timer (debounce 2s)
+      const timer = setTimeout(async () => {
+        try {
+          // Vérifier si une entreprise est sélectionnée
+          let companyId = qs('#questions-target-company')?.value;
+          
+          if (!companyId) {
+            // Afficher le modal
+            showCompanySelectModal(itemId, questionId, questionText);
+            statusIndicator.textContent = '⚠️';
+            statusIndicator.style.color = 'var(--copper)';
+            return;
+          }
+          
+          // Sauvegarder
+          if (questionId) {
+            await api(`/question-config/question/${questionId}`, {
+              method: 'PUT',
+              body: { 
+                question_text: questionText,
+                company_id: parseInt(companyId)
+              }
+            });
+          } else {
+            const result = await api('/question-config/question', {
+              method: 'POST',
+              body: {
+                lot_id: currentLot.id,
+                round_id: currentRound.id,
+                item_id: parseInt(itemId),
+                company_id: parseInt(companyId),
+                question_text: questionText,
+                question_type: 'manual',
+                status: 'pending'
+              }
+            });
+            
+            // Mettre à jour le data-question-id après création
+            const row = textarea.closest('tr');
+            if (result && result.id) {
+              row.dataset.questionId = result.id;
+              textarea.dataset.questionId = result.id;
+            }
+          }
+          
+          // Afficher le succès
+          statusIndicator.textContent = '✅';
+          statusIndicator.style.color = 'var(--success)';
+          
+          // Cacher après 2s
+          setTimeout(() => {
+            statusIndicator.style.display = 'none';
+          }, 2000);
+          
+          // Rafraîchir les fiches questions
+          await refreshQuestions();
+          
+        } catch (err) {
+          console.error('Erreur auto-save:', err);
+          statusIndicator.textContent = '❌';
+          statusIndicator.style.color = 'var(--danger)';
+        }
+      }, 2000);
+      
+      saveTimers.set(itemId, timer);
+    });
+  });
+  
+  // Supprimer une question
+  qsa('.btn-delete-editor-question').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const questionId = e.target.dataset.questionId;
+      
+      if (!confirm('Supprimer cette question ?')) return;
+      
+      try {
+        await api(`/question-config/question/${questionId}`, {
+          method: 'DELETE'
+        });
+        
+        showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
+        await loadQuestionsEditor();
+        await refreshQuestions();
+        
+      } catch (err) {
+        showNotify({ title:'Erreur', message: err.message, type:'error' });
+      }
+    });
+  });
+}
+
+// Fonction pour afficher le modal de sélection d'entreprise
+function showCompanySelectModal(itemId, questionId, questionText) {
+  const modal = qs('#company-select-modal');
+  const modalSelect = qs('#modal-target-company-select');
+  const headerSelect = qs('#questions-target-company');
+  
+  // Synchroniser le modal avec la sélection du header
+  modalSelect.value = headerSelect.value;
+  
+  // Afficher le modal
+  modal.classList.remove('hidden');
+  
+  // Gestionnaire pour le bouton Annuler
+  const cancelBtn = qs('#cancel-company-modal');
+  const cancelHandler = () => {
+    modal.classList.add('hidden');
+    cancelBtn.removeEventListener('click', cancelHandler);
+    confirmBtn.removeEventListener('click', confirmHandler);
+  };
+  
+  // Gestionnaire pour le bouton Confirmer
+  const confirmBtn = qs('#confirm-company-modal');
+  const confirmHandler = async () => {
+    const companyId = modalSelect.value;
+    
+    if (!companyId) {
+      showNotify({ title:'Validation', message:'Veuillez sélectionner une entreprise', type:'info' });
+      return;
+    }
+    
+    // Synchroniser avec le header
+    headerSelect.value = companyId;
+    
+    // Masquer le modal
+    modal.classList.add('hidden');
+    cancelBtn.removeEventListener('click', cancelHandler);
+    confirmBtn.removeEventListener('click', confirmHandler);
+    
+    // Sauvegarder la question
+    await saveQuestionWithCompany(itemId, questionId, companyId, questionText);
+  };
+  
+  cancelBtn.addEventListener('click', cancelHandler);
+  confirmBtn.addEventListener('click', confirmHandler);
+}
+
+// Fonction pour sauvegarder une question avec l'entreprise
 
 /* ================= Comparatif (lecture) ================= */
 function fmtPct(p){ if (p==null || isNaN(p)) return ''; const cls = p>0?'delta-neg':(p<0?'delta-pos':''); const s=(p>0?'+':'')+p.toFixed(1)+'%'; return `<span class="${cls}">${s}</span>`; }
@@ -2754,10 +3375,7 @@ async function saveGrid(){
     // Rafraîchir uniquement le comparatif (vue lecture seule)
     await refreshCompare();
     
-    // Rafraîchir le récapitulatif du tour (toujours, si un round est sélectionné)
-    if (currentRound) {
-      await loadRoundSummary();
-    }
+    // Le récapitulatif par tour a été supprimé; plus de rafraîchissement dédié
     
     // Rafraîchir la comparaison des tours si visible
     const compareView = qs('#rounds-compare-view');
@@ -3164,6 +3782,33 @@ function bindUI(){
   qs('#filter-price')?.addEventListener('input', refreshQuestions);
   qs('#filter-question')?.addEventListener('input', refreshQuestions);
 
+  // Éditeur de questions
+  qs('#questions-view-filter')?.addEventListener('change', loadQuestionsEditor);
+  qs('#questions-target-company')?.addEventListener('change', loadQuestionsEditor);
+  qs('#refresh-questions-editor')?.addEventListener('click', loadQuestionsEditor);
+  qs('#add-manual-question')?.addEventListener('click', async () => {
+    const questionText = prompt('Texte de la question:');
+    if (!questionText) return;
+    
+    try {
+      await api('/question-config/question', {
+        method: 'POST',
+        body: {
+          lot_id: currentLot.id,
+          round_id: currentRound.id,
+          question_text: questionText,
+          question_type: 'manual',
+          status: 'pending'
+        }
+      });
+      showNotify({ title:'Succès', message:'Question ajoutée', type:'success' });
+      await loadQuestionsEditor();
+      await refreshQuestions();
+    } catch (err) {
+      showNotify({ title:'Erreur', message: err.message, type:'error' });
+    }
+  });
+
   renderSheetBindings();
   
   // Gestion du thème
@@ -3236,6 +3881,16 @@ function bindUI(){
   qs('#share-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'share-modal') closeShareModal();
   });
+  
+  // Modal d'édition du projet
+  document.querySelectorAll('.close-edit-project-modal')?.forEach(btn => {
+    btn.addEventListener('click', closeEditProjectModal);
+  });
+  qs('#edit-project-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'edit-project-modal') closeEditProjectModal();
+  });
+  qs('#save-edit-project')?.addEventListener('click', saveEditProject);
+  qs('#edit-add-share-btn')?.addEventListener('click', addEditProjectShare);
   
   // Modal demande d'accès (visionneur)
   qs('#open-access-request-modal')?.addEventListener('click', openAccessRequestModal);
@@ -3319,27 +3974,24 @@ function exportTableToPDF(tableSelector, title) {
     showNotify({ title:'Validation', message:'Tableau introuvable', type:'info' });
     return;
   }
-  const win = window.open('', '_blank');
-  if (!win) {
-    showNotify({ title:'Erreur', message:'Impossible d\'ouvrir la fenêtre d\'export (pop-up bloquée ?)', type:'error' });
-    return;
-  }
-  const now = new Date();
-  const dateStr = now.toLocaleString('fr-FR');
-  const style = `
-    <style>
-      @page { size: A4 landscape; margin: 12mm; }
-      body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
-      h2 { margin: 0 0 6px 0; font-size: 18px; }
-      .meta { color:#666; font-size: 12px; margin-bottom: 12px; }
-      table { width: 100%; border-collapse: collapse; font-size: 10px; }
-      th, td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
+  
+  try {
+    const now = new Date();
+    const dateStr = now.toLocaleString('fr-FR');
+    const style = `
+      <style>
+        @page { size: A4 landscape; margin: 12mm; }
+        body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
+        h2 { margin: 0 0 6px 0; font-size: 18px; }
+        .meta { color:#666; font-size: 12px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        th, td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
       thead th { background: #f4f6f8; position: static; }
       .sticky-col, .sticky-col2 { position: static; }
       /* Eviter les scroll wrappers en impression */
       .table-wrapper { overflow: visible !important; }
     </style>`;
-  const html = `
+    const html = `
     <html>
     <head><title>${escapeHtml(title)}</title>${style}</head>
     <body>
@@ -3348,11 +4000,32 @@ function exportTableToPDF(tableSelector, title) {
       ${table.outerHTML}
     </body>
     </html>`;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  // Attendre un peu que le rendu s'applique puis imprimer
-  setTimeout(() => { win.focus(); win.print(); }, 300);
+    
+    // Utiliser un iframe caché (plus fiable que window.open)
+    let iframe = document.getElementById('print-iframe');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'print-iframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+    }
+    
+    const doc = iframe.contentDocument || iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    
+    // Attendre le rendu puis imprimer
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      showNotify({ title:'Impression', message:'Fenêtre d\'impression ouverte', type:'success' });
+    }, 500);
+    
+  } catch (err) {
+    console.error('Erreur lors de l\'export PDF:', err);
+    showNotify({ title:'Erreur', message:'Erreur lors de la génération du PDF: ' + err.message, type:'error' });
+  }
 }
 
 function escapeHtml(s) {

@@ -8,6 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Archivo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css"/>
+  <link rel="icon" type="image/x-icon" href="./assets/favicon_io/favicon.ico" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon_io/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon_io/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicon_io/apple-touch-icon.png" />
+  <link rel="manifest" href="./assets/favicon_io/site.webmanifest" />
+  <meta name="theme-color" content="#0a0e14" />
   <style>
     .home-header {
       position: fixed;
@@ -34,10 +40,22 @@
       width: auto;
     }
     .home-title {
-      font-size: 1.8em;
-      font-weight: 600;
-      color: var(--primary);
       margin: 0;
+      font-size: 16px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      color: var(--copper);
+      position: relative;
+      padding-left: 12px;
+    }
+    .home-title::before {
+      content: '▸';
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
     }
     .home-nav {
       display: flex;
@@ -335,7 +353,7 @@
       <p style="font-size:1.2em;margin:20px 0 40px 0;color:var(--muted)">
         Rejoignez TAO et simplifiez la gestion de vos appels d'offres dès aujourd'hui.
       </p>
-      <a href="/login" class="btn" style="padding:18px 50px;font-size:1.3em;background:var(--primary);color:white">
+      <a href="/login" class="btn btn-lg btn-chroma" aria-label="Accéder à TAO">
         🚀 Accéder à TAO
       </a>
     </section>

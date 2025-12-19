@@ -1,5 +1,9 @@
 // server/src/server.js
 import 'dotenv/config'
+
+// 🔒 SÉCURITÉ: Valider la configuration au démarrage AVANT toute autre chose
+import './security-init.js'
+
 import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
@@ -22,19 +26,6 @@ import shareRoutes from './routes/shares.js'
 import accessRequestRoutes from './routes/access-requests.js'
 import exportRoutes from './routes/exports.js'
 
-// Validation des variables d'environnement critiques
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'change-me' || process.env.JWT_SECRET.length < 32) {
-  console.error('❌ ERREUR: JWT_SECRET doit être défini et sécurisé (min 32 caractères)');
-  console.error('   Ajoutez dans votre .env: JWT_SECRET=votre-secret-très-long-et-sécurisé');
-  process.exit(1);
-}
-
-if (!process.env.DATABASE_URL) {
-  console.error('❌ ERREUR: DATABASE_URL doit être défini');
-  console.error('   Ajoutez dans votre .env: DATABASE_URL=postgresql://...');
-  process.exit(1);
-}
-
 const app = express()
 
 // Trust proxy: nécessaire pour Render et autres hébergeurs derrière un proxy
@@ -43,35 +34,48 @@ if (process.env.RENDER || process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-// CORS : autoriser same-origin + origines configurées
+// CORS : Whitelist stricte - SÉCURITÉ CRITIQUE
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : [];
+
+// Valider que les origines sont configurées en production
+if ((process.env.RENDER || process.env.NODE_ENV === 'production') && allowedOrigins.length === 0) {
+  console.error('❌ ERREUR CRITIQUE: ALLOWED_ORIGINS doit être défini en production');
+  console.error('   Exemple: ALLOWED_ORIGINS=https://monsite.com,https://app.monsite.com');
+  process.exit(1);
+}
 
 app.use(cors({ 
   origin: (origin, callback) => {
     // 1. Pas d'origin = requête same-origin (curl, mobile, même serveur)
     if (!origin) return callback(null, true);
     
-    // 2. En production sur Render, autoriser l'URL publique même si pas configurée
-    // (le frontend fetch depuis https://xxx.onrender.com vers /api sur le même domaine)
+    // 2. Production: vérifier strictement la whitelist
     if (process.env.RENDER || process.env.NODE_ENV === 'production') {
-      return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`🚫 Tentative CORS bloquée: ${origin}`);
+        callback(new Error('CORS policy: Origin not allowed'));
+      }
+      return;
     }
     
-    // 3. Développement : vérifier liste ou accepter tout si vide
-    if (allowedOrigins.length === 0) {
-      return callback(null, true);
-    }
+    // 3. Développement : utiliser whitelist ou localhost
+    const devOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080', 'http://localhost:4000'];
+    const allowedInDev = [...devOrigins, ...allowedOrigins];
     
-    if (allowedOrigins.includes(origin)) {
+    if (allowedInDev.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`⚠️ Origine bloquée par CORS: ${origin}`);
+      console.warn(`⚠️ Origine bloquée par CORS (dev): ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true 
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token']
 }))
 app.use(express.json({ limit: '10mb' }))
 app.use(morgan('dev'))
@@ -79,18 +83,29 @@ app.disable('x-powered-by')
 
 // Sécurité: Headers HTTP avec Helmet
 app.use(helmet({
-  contentSecurityPolicy: {
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline pour app.js inline
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  } : {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
     },
-  },
+  }, // Dev: autoriser inline pour flexibilité, Prod: CSP strict
+
   hsts: {
     maxAge: 31536000, // 1 an
     includeSubDomains: true,
