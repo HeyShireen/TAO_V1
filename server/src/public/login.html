@@ -21,7 +21,12 @@
       <img id="login-logo" src="./assets/logo.png" alt="Logo" class="login-logo" />
     </div>
     <h1>TAO — Connexion</h1>
-    <p class="muted">Accédez à votre espace de travail</p>
+    <p class="muted">Accédez à votre espace de travail ou créez un compte</p>
+
+    <div class="row gap" style="margin: 12px 0 20px 0;">
+      <button id="tab-login" class="btn" type="button">Connexion</button>
+      <button id="tab-register" class="btn ghost" type="button">Créer un compte</button>
+    </div>
 
     <form class="auth-form" id="login-form">
       <label class="field"><span>Email</span><input id="login-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email" required/></label>
@@ -34,6 +39,17 @@
       <p class="muted forgot-pwd-text">
         <a href="#" id="forgot-password-link" class="link-primary">Mot de passe oublié ?</a>
       </p>
+    </form>
+
+    <form class="auth-form hidden" id="register-form">
+      <label class="field"><span>Email</span><input id="register-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email" required/></label>
+      <label class="field"><span>Mot de passe</span><input id="register-password" name="password" type="password" placeholder="••••••••" autocomplete="new-password" required/></label>
+      <label class="field"><span>Confirmer</span><input id="register-password-confirm" name="password_confirm" type="password" placeholder="••••••••" autocomplete="new-password" required/></label>
+      <div class="row gap">
+        <button id="register-btn" type="submit" class="btn">Créer mon compte</button>
+        <button type="button" class="btn ghost" id="back-to-login">J'ai déjà un compte</button>
+      </div>
+      <p class="muted" style="margin-top:8px">Un email de confirmation sera envoyé pour activer votre compte.</p>
     </form>
   </div>
 
