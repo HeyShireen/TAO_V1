@@ -1298,7 +1298,7 @@ async function loadRoundSummary(){
         moeCell.className = 'amount moe-amount';
         moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
         lotRow.appendChild(moeCell);
-        lotRow.innerHTML += '<td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td>';
+        lotRow.innerHTML += '<td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td><td class="amount empty-cell">—</td>';
       } else {
         // En mode entreprise on ne montre que l'en-tête du lot
         lotRow.innerHTML += '<td class="amount empty-cell">—</td>';
@@ -1380,7 +1380,7 @@ async function loadRoundSummary(){
       totalMoeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(totalMoe)}`;
       totalMoeRow.appendChild(totalMoeCell);
     
-      totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
+      totalMoeRow.innerHTML += '<th class="amount">—</th><th class="amount">—</th><th class="amount">—</th><th class="amount">—</th>';
       tfoot.appendChild(totalMoeRow);
     }
     
@@ -1509,7 +1509,7 @@ async function loadRoundsComparison(){
     if (!entrepriseMode) {
       const moeTh = document.createElement('th');
       moeTh.rowSpan = 2;
-      moeTh.className = 'amount';
+      moeTh.className = 'sticky-col2 amount';
       moeTh.textContent = 'MOE (€)';
       headerRow1.appendChild(moeTh);
     }
@@ -1572,30 +1572,44 @@ async function loadRoundsComparison(){
 
       if (!entrepriseMode) {
         const moeCell = document.createElement('td');
-        moeCell.className = 'amount moe-amount';
+        moeCell.className = 'amount moe-amount sticky-col2';
         moeCell.innerHTML = `<strong>MOE</strong><br>${fmtEuro(lot.moe_total)}`;
         lotRow.appendChild(moeCell);
         totalMoe += lot.moe_total;
       }
 
-      // Pour chaque tour, remplir des cellules vides au format du récap
+      // Pour chaque tour, remplir des cellules avec le meilleur prix (pour ligne MOE)
       for (const round of rounds) {
-        const total = lot.round_totals?.[round.id] || 0;
-        const tdAmount = document.createElement('td'); tdAmount.className = 'amount'; tdAmount.innerHTML = `<strong>${fmtEuro(total)}</strong>`;
+        const companies = lot.companies_by_round?.[round.id] || [];
+        let bestPrice = null;
+        let bestCompanyName = '';
+        
+        if (companies.length > 0) {
+          const minTotal = Math.min(...companies.map(c => c.total));
+          const bestCompany = companies.find(c => c.total === minTotal);
+          bestPrice = minTotal;
+          bestCompanyName = bestCompany?.company_name || '';
+        }
+        
+        const tdAmount = document.createElement('td'); 
+        tdAmount.className = 'amount'; 
+        tdAmount.innerHTML = bestPrice !== null 
+          ? `<strong>${fmtEuro(bestPrice)}</strong><br><small>(${bestCompanyName})</small>`
+          : '—';
         lotRow.appendChild(tdAmount);
         if (!entrepriseMode) {
-          const ecart = total - (lot.moe_total || 0);
+          const ecart = (bestPrice || 0) - (lot.moe_total || 0);
           const cls = ecart > 0 ? 'ecart-positive' : (ecart < 0 ? 'ecart-negative' : 'ecart-zero');
           const sign = ecart > 0 ? '+' : '';
-          const tdEur = document.createElement('td'); tdEur.className = 'amount'; tdEur.innerHTML = `<span class="${cls}">${sign}${fmtEuro(Math.abs(ecart))}</span>`;
-          const pct = (lot.moe_total || 0) > 0 ? (ecart / lot.moe_total) * 100 : 0;
+          const tdEur = document.createElement('td'); tdEur.className = 'amount'; tdEur.innerHTML = bestPrice !== null ? `<span class="${cls}">${sign}${fmtEuro(Math.abs(ecart))}</span>` : '—';
+          const pct = (lot.moe_total || 0) > 0 && bestPrice !== null ? (ecart / lot.moe_total) * 100 : 0;
           const clsPct = pct > 0 ? 'ecart-positive' : (pct < 0 ? 'ecart-negative' : 'ecart-zero');
           const signPct = pct > 0 ? '+' : '';
-          const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.innerHTML = `<span class="${clsPct}">${signPct}${pct.toFixed(1)}%</span>`;
+          const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.innerHTML = bestPrice !== null ? `<span class="${clsPct}">${signPct}${pct.toFixed(1)}%</span>` : '—';
           lotRow.appendChild(tdEur);
           lotRow.appendChild(tdPct);
         }
-        totalsByRound[round.id] += total;
+        totalsByRound[round.id] += bestPrice || 0;
       }
 
       // Analyse (totaux par lot)
@@ -1635,7 +1649,9 @@ async function loadRoundsComparison(){
 
         if (!entrepriseMode) {
           // Colonne MOE vide pour les lignes entreprises (format récap)
-          const emptyMoe = document.createElement('td'); emptyMoe.className = 'amount empty-cell'; emptyMoe.textContent = '—';
+          const emptyMoe = document.createElement('td'); 
+          emptyMoe.className = 'amount empty-cell'; 
+          emptyMoe.textContent = '—';
           row.appendChild(emptyMoe);
         }
 
@@ -1690,12 +1706,13 @@ async function loadRoundsComparison(){
     totalRow.className = 'total-row lot-header-row';
 
     const totalLabelCell = document.createElement('th');
+    totalLabelCell.className = 'sticky-col';
     totalLabelCell.textContent = 'TOTAL';
     totalRow.appendChild(totalLabelCell);
 
     if (!entrepriseMode) {
       const totalMoeCell = document.createElement('th');
-      totalMoeCell.className = 'amount moe-total-cell';
+      totalMoeCell.className = 'amount moe-total-cell sticky-col2';
       totalMoeCell.innerHTML = `<strong>${fmtEuro(totalMoe)}</strong>`;
       totalRow.appendChild(totalMoeCell);
     }
@@ -2362,21 +2379,24 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   if (viewFilter === 'all' || viewFilter === 'quantities') {
     headerHTML += '<th style="width:100px" class="moe-highlight">Qté MOE</th>';
     for (const c of companies) {
-      headerHTML += `<th style="width:100px">Qté ${c.name}</th>`;
+      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+      headerHTML += `<th style="width:100px" class="${highlightClass}">Qté ${c.name}</th>`;
     }
   }
   
   if (viewFilter === 'all' || viewFilter === 'unit_prices') {
     headerHTML += '<th style="width:100px" class="moe-highlight">PU MOE</th>';
     for (const c of companies) {
-      headerHTML += `<th style="width:100px">PU ${c.name}</th>`;
+      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+      headerHTML += `<th style="width:100px" class="${highlightClass}">PU ${c.name}</th>`;
     }
   }
   
   if (viewFilter === 'all' || viewFilter === 'totals') {
     headerHTML += '<th style="width:120px" class="moe-highlight">Total MOE</th>';
     for (const c of companies) {
-      headerHTML += `<th style="width:120px">Total ${c.name}</th>`;
+      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+      headerHTML += `<th style="width:120px" class="${highlightClass}">Total ${c.name}</th>`;
     }
   }
   
@@ -2437,7 +2457,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       for (const offer of itemOffers) {
         const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
         const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
-        html += `<td class="${deviationClass}">${fmtNum(offer.quantity)}</td>`;
+        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+        html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}</td>`;
       }
     }
     
@@ -2447,7 +2468,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       for (const offer of itemOffers) {
         const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
         const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
-        html += `<td class="${deviationClass}">${fmtEuro(offer.unit_price)}</td>`;
+        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+        html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
       }
     }
     
@@ -2457,7 +2479,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       for (const offer of itemOffers) {
         const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
         const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
-        html += `<td class="${deviationClass}">${fmtEuro(offer.total)}</td>`;
+        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+        html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}</td>`;
       }
     }
     
@@ -3786,28 +3809,6 @@ function bindUI(){
   qs('#questions-view-filter')?.addEventListener('change', loadQuestionsEditor);
   qs('#questions-target-company')?.addEventListener('change', loadQuestionsEditor);
   qs('#refresh-questions-editor')?.addEventListener('click', loadQuestionsEditor);
-  qs('#add-manual-question')?.addEventListener('click', async () => {
-    const questionText = prompt('Texte de la question:');
-    if (!questionText) return;
-    
-    try {
-      await api('/question-config/question', {
-        method: 'POST',
-        body: {
-          lot_id: currentLot.id,
-          round_id: currentRound.id,
-          question_text: questionText,
-          question_type: 'manual',
-          status: 'pending'
-        }
-      });
-      showNotify({ title:'Succès', message:'Question ajoutée', type:'success' });
-      await loadQuestionsEditor();
-      await refreshQuestions();
-    } catch (err) {
-      showNotify({ title:'Erreur', message: err.message, type:'error' });
-    }
-  });
 
   renderSheetBindings();
   

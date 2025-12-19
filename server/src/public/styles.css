@@ -115,7 +115,17 @@ h1,h2{
   box-shadow: inset 0 0 0 1px var(--accent), 0 2px 8px rgba(255,140,66,0.15);
 }
 .btn.warning{ background:var(--danger); color:#fff; }
-.active-mode{ filter:brightness(1.05) }
+.btn.ghost.active-mode{ 
+  background:var(--accent); 
+  color:var(--bg);
+  border-color:var(--accent);
+  box-shadow: 0 2px 8px rgba(255,140,66,0.25);
+}
+.btn.active-mode{
+  background:var(--accent);
+  color:var(--bg);
+  box-shadow: 0 2px 8px rgba(255,140,66,0.25);
+}
 
 /* Large button variant for CTAs */
 .btn-lg{
@@ -637,14 +647,115 @@ thead th{
 thead .sticky-col, thead .sticky-col2{ 
   background:var(--sticky);
   z-index:100;
+  top:0;
+  position:sticky;
+}
+thead th{
+  position:sticky;
+  top:0;
+  z-index:99;
+  background:var(--sticky);
 }
 /* Assurer l'opacité sur le corps du tableau pour masquer ce qui est derrière */
 tbody .sticky-col, tbody .sticky-col2{
   background: var(--card);
+  opacity: 1 !important;
 }
 tbody tr:hover .sticky-col,
 tbody tr:hover .sticky-col2{
   background: var(--card);
+  opacity: 1 !important;
+}
+
+/* Style pour summary-table sticky columns */
+.summary-table .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 40;
+  background: var(--card);
+  min-width: 120px;
+  width: 120px;
+  max-width: 120px;
+  font-weight: 500;
+  border-right: 2px solid var(--accent) !important;
+  padding: 12px 16px;
+}
+
+.summary-table .sticky-col2 {
+  position: sticky;
+  left: 120px;
+  z-index: 40;
+  background: var(--card);
+  min-width: 150px;
+  font-weight: 400;
+  border-right: 2px solid var(--accent) !important;
+  padding: 12px 16px;
+}
+
+.summary-table thead .sticky-col {
+  background: var(--sticky);
+  z-index: 100;
+  top: 0;
+  position: sticky;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table thead .sticky-col2 {
+  background: var(--sticky);
+  z-index: 100;
+  top: 0;
+  position: sticky;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table tbody .sticky-col {
+  background: var(--card);
+  opacity: 1 !important;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table tbody .sticky-col2 {
+  background: var(--card);
+  opacity: 1 !important;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table tbody tr:hover .sticky-col {
+  background: rgba(255,140,66,0.05);
+  opacity: 1 !important;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table tbody tr:hover .sticky-col2 {
+  background: rgba(255,140,66,0.05);
+  opacity: 1 !important;
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table .lot-header-row .sticky-col {
+  background: rgba(255,140,66,0.12);
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table .lot-header-row .sticky-col2 {
+  background: rgba(255,140,66,0.12);
+  border-right: 2px solid var(--accent) !important;
+}
+
+.summary-table .total-row .sticky-col {
+  background: rgba(255,140,66,0.12);
+  border-right: 2px solid var(--accent) !important;
+  position: sticky;
+  left: 0;
+  z-index: 40;
+}
+
+.summary-table .total-row .sticky-col2 {
+  background: rgba(255,140,66,0.12);
+  border-right: 2px solid var(--accent) !important;
+  position: sticky;
+  left: 120px;
+  z-index: 40;
 }
 /* Multi-lignes header sticky : la seconde ligne est décalée */
 thead tr.head-row-1 th { top:0; }
@@ -1146,6 +1257,23 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 #questions-editor-table .ecart-high {
   color: var(--danger);
   font-weight: 600;
+}
+/* Surbrillance de l'entreprise ciblée */
+#questions-editor-table th.target-company-highlight {
+  background: rgba(31, 111, 235, 0.15);
+  border-left: 3px solid var(--blueprint);
+  border-right: 3px solid var(--blueprint);
+  font-weight: 700;
+  color: var(--blueprint);
+}
+#questions-editor-table td.target-company-highlight {
+  background: rgba(31, 111, 235, 0.12);
+  border-left: 3px solid var(--blueprint);
+  border-right: 3px solid var(--blueprint);
+  font-weight: 600;
+}
+#questions-editor-table tbody tr:hover td.target-company-highlight {
+  background: rgba(31, 111, 235, 0.18);
 }
 .question-text-editor {
   font-size: 12px;
