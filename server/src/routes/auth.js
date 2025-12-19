@@ -12,7 +12,9 @@ const router = express.Router();
 
 // Helper: create token
 function sign(user) {
-  return jwt.sign({ id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) throw new Error('JWT_SECRET missing');
+  return jwt.sign({ id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }, jwtSecret, { expiresIn: '7d' });
 }
 
 // Register: auto-inscription publique (toujours visionneur sauf premier = admin)
@@ -77,38 +79,40 @@ router.post('/register', emailRateLimiter, async (req, res) => {
 });
 
 router.post('/login', emailRateLimiter, async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-  const r = await query('SELECT * FROM users WHERE email=$1', [email]);
-  if (r.rowCount === 0) return res.status(401).json({ error: 'Identifiants invalides' });
-  const user = r.rows[0];
-  const ok = await comparePassword(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Identifiants invalides' });
-  
-  // Vérifier que l'email est confirmé
-  if (!user.email_verified) {
-    return res.status(403).json({ 
-      error: 'Votre email n\'est pas encore vérifié.',
-      emailNotVerified: true,
-      userId: user.id,
-      email: user.email
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
+    const r = await query('SELECT * FROM users WHERE email=$1', [email]);
+    if (r.rowCount === 0) return res.status(401).json({ error: 'Identifiants invalides' });
+    const user = r.rows[0];
+    const ok = await comparePassword(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Identifiants invalides' });
+    
+    if (!user.email_verified) {
+      return res.status(403).json({ 
+        error: 'Votre email n\'est pas encore vérifié.',
+        emailNotVerified: true,
+        userId: user.id,
+        email: user.email
+      });
+    }
+    
+    resetEmailAttempts(email);
+    
+    const token = sign(user);
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    res.cookie('auth', token, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+    return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Erreur serveur (login)' });
   }
-  
-  // Login réussi: réinitialiser les tentatives
-  resetEmailAttempts(email);
-  
-  const token = sign(user);
-  // Déposer un cookie HttpOnly pour plus de sécurité (tout en renvoyant le token pour compat SPA)
-  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-  res.cookie('auth', token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
-  return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
 });
 
 // Déconnexion: SÉCURITÉ - Revoque le token et nettoie les cookies
