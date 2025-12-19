@@ -127,14 +127,15 @@
       }
 
       if (data.emailSent) {
-        registerMsg.innerHTML = `
-          <div style="background: #d4edda; padding: 1.5rem; border-radius: 8px; border: 2px solid #28a745; text-align: center; color:#155724;">
-            <div style="font-size: 2.4rem; margin-bottom: 0.5rem;">📧</div>
-            <div><strong>Compte créé</strong> — vérifiez votre boîte mail pour activer votre compte.</div>
-          </div>`;
         const regEmailEl = qs('#register-email');
         const regPassEl = qs('#register-password');
         const regConfirmEl = qs('#register-password-confirm');
+        
+        // Afficher le popup modal de vérification email
+        if (typeof window.parent.showVerifyEmailPopup === 'function') {
+          window.parent.showVerifyEmailPopup(email);
+        }
+        
         if (regEmailEl && regPassEl) {
           // Pré-remplir le formulaire de connexion avec l'email/mdp saisis pour éviter de retaper
           emailEl.value = regEmailEl.value;
