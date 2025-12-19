@@ -88,7 +88,7 @@ router.get('/lot/:lotId/excel', async (req, res) => {
   }
 })
 
-// Export comparaison des tours
+// Export comparaison des tours (structure hiérarchique: Lot -> Entreprises -> Montants/Écarts)
 router.get('/comparison/rounds/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params
@@ -121,29 +121,30 @@ router.get('/comparison/rounds/:projectId', async (req, res) => {
     const worksheet = workbook.addWorksheet('Comparaison Tours')
 
     // Titre
-    worksheet.mergeCells('A1:E1')
     const titleCell = worksheet.getCell('A1')
     titleCell.value = `Comparaison des Tours - ${project.name}`
-    titleCell.font = { size: 16, bold: true }
-    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
-    worksheet.getRow(1).height = 30
-
+    titleCell.font = { size: 14, bold: true }
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' }
+    worksheet.getRow(1).height = 25
     worksheet.addRow([])
 
-    // En-têtes
-    const headerRow = worksheet.addRow([
-      'Lot',
-      'MOE (€)',
-      ...rounds.map(r => `Tour ${r.round_number}${r.name ? ` - ${r.name}` : ''} (€)`)
-    ])
-
-    headerRow.font = { bold: true }
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD3D3D3' } }
+    // En-têtes avec structure: Lot | MOE | Pour chaque tour: Montant | Écart € | Écart %
+    const headerCells = ['Lot', 'MOE (€)']
+    for (const round of rounds) {
+      headerCells.push(`${round.name}`)
+      headerCells.push(`Écart (€)`)
+      headerCells.push(`Écart (%)`)
+    }
+    const headerRow = worksheet.addRow(headerCells)
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF366092' } }
 
     // Données pour chaque lot
-    for (const lot of lots) {
-      const row = [lot.name || lot.code, '']
+    let totalMoe = 0
+    const totalByRound = {}
+    rounds.forEach(r => totalByRound[r.id] = 0)
 
+    for (const lot of lots) {
       // MOE pour ce lot
       const moeSql = `
         SELECT COALESCE(SUM(m.qty * m.unit_price), 0) as total
@@ -152,41 +153,102 @@ router.get('/comparison/rounds/:projectId', async (req, res) => {
         WHERE i.lot_id = $1
       `
       const moeRes = await query(moeSql, [lot.id])
-      row[1] = moeRes.rows[0].total || 0
+      const lotMoe = moeRes.rows[0].total || 0
+      totalMoe += lotMoe
 
-      // Pour chaque tour, montant total des offres
+      // Récupérer les entreprises avec offres pour ce lot
+      const companiesSql = `
+        SELECT DISTINCT c.id, c.name
+        FROM companies c
+        JOIN offers o ON c.id = o.company_id
+        JOIN items i ON o.item_id = i.id
+        WHERE i.lot_id = $1
+        ORDER BY c.name
+      `
+      const companiesRes = await query(companiesSql, [lot.id])
+      const companies = companiesRes.rows
+
+      // Ligne d'en-tête du lot (avec meilleur prix par tour)
+      const lotRow = [lot.name || lot.code, lotMoe]
+      const lotTotals = {}
+      
       for (const round of rounds) {
-        const offerSql = `
-          SELECT COALESCE(SUM(o.amount), 0) as total
+        // Trouver le meilleur prix pour ce lot/tour
+        const bestSql = `
+          SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total, c.id, c.name
           FROM offers o
           JOIN items i ON o.item_id = i.id
+          JOIN companies c ON o.company_id = c.id
           WHERE i.lot_id = $1 AND o.round_id = $2
+          GROUP BY c.id, c.name
+          ORDER BY total ASC
+          LIMIT 1
         `
-        const offerRes = await query(offerSql, [lot.id, round.id])
-        row.push(offerRes.rows[0].total || 0)
+        const bestRes = await query(bestSql, [lot.id, round.id])
+        const bestPrice = bestRes.rows[0]?.total || 0
+        
+        lotRow.push(bestPrice)
+        lotRow.push(bestPrice - lotMoe)
+        lotRow.push(lotMoe > 0 ? ((bestPrice - lotMoe) / lotMoe * 100).toFixed(1) : '0.0')
+        
+        lotTotals[round.id] = bestPrice
+        totalByRound[round.id] += bestPrice
       }
 
-      const rowNum = worksheet.addRow(row)
-      rowNum.getCell(1).alignment = { horizontal: 'left' }
-      for (let c = 2; c <= row.length; c++) {
-        rowNum.getCell(c).numFmt = '#,##0.00'
-        rowNum.getCell(c).alignment = { horizontal: 'right' }
-      }
-    }
+      worksheet.addRow(lotRow)
 
-    // Format cellules
-    const headerCols = 2 + rounds.length
-    for (let r = 3; r <= worksheet.rowCount; r++) {
-      for (let c = 1; c <= headerCols; c++) {
-        const cell = worksheet.getCell(r, c)
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
+      // Lignes des entreprises pour ce lot
+      for (const company of companies) {
+        const companyRow = ['  ' + company.name, '']
+        
+        for (const round of rounds) {
+          const totalSql = `
+            SELECT COALESCE(SUM(o.qty * o.unit_price), 0) as total
+            FROM offers o
+            JOIN items i ON o.item_id = i.id
+            WHERE i.lot_id = $1 AND o.company_id = $2 AND o.round_id = $3
+          `
+          const totalRes = await query(totalSql, [lot.id, company.id, round.id])
+          const total = totalRes.rows[0].total || 0
+          
+          companyRow.push(total)
+          companyRow.push(total - lotMoe)
+          companyRow.push(lotMoe > 0 ? ((total - lotMoe) / lotMoe * 100).toFixed(1) : '0.0')
         }
+
+        worksheet.addRow(companyRow)
       }
     }
+
+    // Ligne totale
+    const totalRow = ['TOTAL', totalMoe]
+    
+    for (const round of rounds) {
+      const total = totalByRound[round.id] || 0
+      totalRow.push(total)
+      totalRow.push(total - totalMoe)
+      totalRow.push(totalMoe > 0 ? ((total - totalMoe) / totalMoe * 100).toFixed(1) : '0.0')
+    }
+
+    const totalRowNum = worksheet.addRow(totalRow)
+    totalRowNum.font = { bold: true }
+    totalRowNum.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCCCC' } }
+
+    // Formatage
+    for (let r = 3; r <= worksheet.rowCount; r++) {
+      for (let c = 2; c <= headerCells.length; c++) {
+        const cell = worksheet.getCell(r, c)
+        cell.numFmt = '#,##0.00'
+        cell.alignment = { horizontal: 'right' }
+      }
+    }
+
+    // Largeurs de colonnes
+    worksheet.columns = [
+      { width: 25 },
+      { width: 15 },
+      ...Array(rounds.length * 3).fill({ width: 15 })
+    ]
 
     const buffer = await workbook.xlsx.writeBuffer()
     const filename = `ComparaisonTours_${project.name.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`
@@ -366,9 +428,15 @@ router.get('/rao/:projectId', async (req, res) => {
           new TableRow({
             cells: [
               new TableCell({ children: [new Paragraph({ text: 'Article', bold: true })] }),
+              new TableCell({ children: [new Paragraph({ text: 'Unité', bold: true })] }),
               new TableCell({ children: [new Paragraph({ text: 'MOE Qté', bold: true })] }),
               new TableCell({ children: [new Paragraph({ text: 'MOE PU', bold: true })] }),
-              ...companies.map(c => new TableCell({ children: [new Paragraph({ text: c.name, bold: true })] }))
+              new TableCell({ children: [new Paragraph({ text: 'MOE MT', bold: true })] }),
+              ...companies.flatMap(c => [
+                new TableCell({ children: [new Paragraph({ text: `${c.name} Qté`, bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: `${c.name} PU`, bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: `${c.name} MT`, bold: true })] })
+              ])
             ]
           })
         ]
@@ -377,19 +445,30 @@ router.get('/rao/:projectId', async (req, res) => {
         items.forEach(item => {
           const cells = [
             new TableCell({ children: [new Paragraph({ text: `${item.num} - ${item.designation}` })] }),
+            new TableCell({ children: [new Paragraph({ text: item.unit || '-' })] }),
             new TableCell({ children: [new Paragraph({ text: item.qty ? item.qty.toString() : '-' })] }),
-            new TableCell({ children: [new Paragraph({ text: item.pu ? item.pu.toString() : '-' })] })
+            new TableCell({ children: [new Paragraph({ text: item.pu ? item.pu.toString() : '-' })] }),
+            new TableCell({ children: [new Paragraph({ text: item.mt ? item.mt.toFixed(2) : '-' })] })
           ]
 
           companies.forEach(company => {
             const offer = (offersByRound[round.round_number] || []).find(
               o => o.item_id === item.id && o.company_id === company.id
             )
-            cells.push(
-              new TableCell({ 
-                children: [new Paragraph({ text: offer ? `${offer.qty} x ${offer.pu}€` : '-' })] 
-              })
-            )
+            if (offer) {
+              const offerMT = (offer.qty * offer.pu).toFixed(2)
+              cells.push(
+                new TableCell({ children: [new Paragraph({ text: offer.qty.toString() })] }),
+                new TableCell({ children: [new Paragraph({ text: offer.pu.toString() })] }),
+                new TableCell({ children: [new Paragraph({ text: offerMT })] })
+              )
+            } else {
+              cells.push(
+                new TableCell({ children: [new Paragraph({ text: '-' })] }),
+                new TableCell({ children: [new Paragraph({ text: '-' })] }),
+                new TableCell({ children: [new Paragraph({ text: '-' })] })
+              )
+            }
           })
 
           tableRows.push(new TableRow({ cells }))

@@ -2,7 +2,7 @@
 
 Architecture:
 - **server/** — API Node.js + PostgreSQL (Express)
-- **frontend/** — Mini UI HTML/JS (peut être packagée avec Electron plus tard)
+- **frontend/** — Mini UI HTML/JS 
 
 ## 1) Lancer la base et l'API
 

@@ -177,6 +177,7 @@
               <div class="rounds-list" id="rounds-list">
                 <!-- Les tours seront ajoutés ici dynamiquement -->
               </div>
+              <span class="muted" style="font-size:12px;margin-top:8px">Glissez-déposez les cartes pour réordonner</span>
               <button id="add-round" class="btn ghost" style="margin-top:12px">➕ Nouveau tour</button>
             </div>
           </div>
@@ -242,10 +243,14 @@
           <h3 id="current-round-name">Phase</h3>
           <!-- Panel: Lots de la phase -->
           <div id="tour-lots" class="tour-tabpanel">
+            <div style="margin-bottom: 16px; display:flex; gap:12px; align-items:center;">
+              <button id="add-lot" class="btn">➕ Ajouter un lot</button>
+              <span class="muted" style="font-size:12px">Glissez-déposez les lignes pour réordonner</span>
+            </div>
             <div class="table-wrapper">
               <table id="lots-table">
                 <thead>
-                  <tr><th>ID</th><th>Code</th><th>Nom</th><th>Actions</th></tr></thead>
+                  <tr><th style="width:32px">#</th><th>ID</th><th>Code</th><th>Nom</th><th>Actions</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
@@ -299,6 +304,12 @@
             <button id="save-grid" class="btn">Sauvegarder</button>
           </div>
 
+          <!-- PANEL OPTIONS (ADDITIFS COCHABLES) -->
+          <div id="lot-options-panel" style="margin-top:20px;padding:12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px">
+            <h4 style="margin:0 0 12px 0">➕ Options (Additifs cochables)</h4>
+            <div id="lot-options-list" class="muted">Chargement...</div>
+          </div>
+
           <!-- VUE TABLEUR -->
           <div id="sheet-view" class="table-wrapper tall hidden">
             <table id="sheet-table">
@@ -307,11 +318,34 @@
             </table>
           </div>
 
+          <!-- VUE TABLEUR OPTIONS (édition sous le tableau principal) -->
+          <div id="options-sheet-view" class="table-wrapper tall hidden" style="margin-top:12px">
+            <div id="options-sheet-controls" style="display:flex;gap:8px;align-items:center;padding:8px 0">
+              <label class="field" style="min-width:280px">
+                <span>Option</span>
+                <select id="options-add-select"></select>
+              </label>
+              <button id="options-add-btn" class="btn ghost">➕ Ajouter article</button>
+            </div>
+            <table id="options-sheet-table">
+              <thead id="options-sheet-head"></thead>
+              <tbody id="options-sheet-body"></tbody>
+            </table>
+          </div>
+
           <!-- VUE COMPARATIF -->
           <div id="compare-view" class="table-wrapper tall">
             <table id="compare-table">
               <thead id="compare-head"></thead>
               <tbody id="compare-body"></tbody>
+            </table>
+          </div>
+
+          <!-- VUE COMPARATIF OPTIONS (sous le total) -->
+          <div id="options-compare-view" class="table-wrapper tall" style="margin-top:12px">
+            <table id="options-compare-table">
+              <thead id="options-compare-head"></thead>
+              <tbody id="options-compare-body"></tbody>
             </table>
           </div>
           </div>
@@ -457,6 +491,83 @@
           </div>
         </div>
       </section>
+
+      <!-- Modal création/édition Lot -->
+      <div id="lot-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="lot-modal-title">Créer un lot</h3>
+            <button id="lot-modal-close" type="button" style="background:none;border:none;cursor:pointer;font-size:1.5rem;color:var(--muted)">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+              <label class="field" style="min-width:220px"><span>Code</span><input id="lot-code" type="text" placeholder="Ex: LOT 1" maxlength="50"/></label>
+              <label class="field" style="min-width:320px"><span>Nom</span><input id="lot-name" type="text" placeholder="Ex: Gros Oeuvre" maxlength="200" required/></label>
+            </div>
+            <p id="lot-modal-msg" class="muted" style="margin-top:8px"></p>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="lot-modal-save" class="btn">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal création/édition Tour -->
+      <div id="round-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="round-modal-title">Modifier le tour</h3>
+            <button id="round-modal-close" type="button" style="background:none;border:none;cursor:pointer;font-size:1.5rem;color:var(--muted)">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+              <label class="field" style="min-width:320px"><span>Nom *</span><input id="round-name" type="text" placeholder="Ex: 1er tour" maxlength="200" required/></label>
+              <label class="field" style="min-width:480px"><span>Description</span><input id="round-description" type="text" placeholder="Notes du tour" maxlength="400"/></label>
+            </div>
+            <p id="round-modal-msg" class="muted" style="margin-top:8px"></p>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="round-modal-save" class="btn">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal création/édition Option -->
+      <div id="option-modal" class="modal hidden">
+        <div class="modal-content" style="width:90%;max-width:900px">
+          <div class="modal-header">
+            <h3 id="option-modal-title">Créer une option</h3>
+            <button id="option-modal-close" type="button" style="background:none;border:none;cursor:pointer;font-size:1.5rem;color:var(--muted)">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="field" style="margin-bottom:16px"><span>Désignation de l'option *</span><input id="option-designation" type="text" placeholder="Ex: Option chauffage" maxlength="200" required/></label>
+            
+            <h4 style="margin:16px 0 8px 0">Articles de l'option</h4>
+            <div style="overflow-x:auto;border:1px solid var(--border);border-radius:4px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead style="background:var(--input-bg);border-bottom:1px solid var(--border)">
+                  <tr>
+                    <th style="padding:8px;text-align:left;border-right:1px solid var(--border)">Num</th>
+                    <th style="padding:8px;text-align:left;border-right:1px solid var(--border)">Désignation</th>
+                    <th style="padding:8px;text-align:left;border-right:1px solid var(--border)">Unité</th>
+                    <th style="padding:8px;text-align:right;border-right:1px solid var(--border);min-width:80px">MOE Qté</th>
+                    <th style="padding:8px;text-align:right;border-right:1px solid var(--border);min-width:80px">MOE PU</th>
+                    <th style="padding:8px;text-align:center;width:40px">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="option-items-tbody">
+                </tbody>
+              </table>
+            </div>
+            
+            <button id="add-option-item-btn" class="btn ghost" style="margin-top:12px">➕ Ajouter article</button>
+            <p id="option-modal-msg" class="muted" style="margin-top:12px"></p>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="option-modal-save" class="btn">Enregistrer</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Onglet Paramètres -->
       <section id="tab-settings" class="tabpanel hidden">

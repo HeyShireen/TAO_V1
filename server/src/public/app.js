@@ -30,7 +30,8 @@ let currentLot = null;
 
 let lotCompanies = [];      // [{id,name}]
 let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
-let colModel = [];          // [{ key, editable, wide, cls }]
+let lotOptions = [];        // [{ id, designation, unit, offers:[{company_id,qty,unit_price}], checked:bool }]
+let selectedOptions = {};   // { option_id: true/false } - track which options are active
 const undoStack = [];
 const redoStack = [];
 
@@ -1169,14 +1170,18 @@ async function loadRounds(){
       const stats = round.stats || { total_items:0, companies_count:0, pending_questions:0 };
       const card = document.createElement('div');
       card.className = 'round-card';
+      if (!isVisionneur()) {
+        card.setAttribute('draggable', 'true');
+      }
       card.dataset.roundId = round.id;
       const actionsHTML = isVisionneur() ? '' : `
+            <button class="edit-round" title="Modifier">✏️</button>
             <button class="duplicate-round" title="Dupliquer">📋</button>
             <button class="delete-round" title="Supprimer">🗑️</button>
           `;
       card.innerHTML = `
         <div class="round-card-header">
-          <span class="round-number">${round.round_number}</span>
+          <span class="round-number" style="cursor:grab">${round.round_number}</span>
           <div class="round-actions">${actionsHTML}</div>
         </div>
         <div class="round-name" contenteditable="false">${round.name}</div>
@@ -1222,12 +1227,25 @@ async function loadRounds(){
           if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
           else if (e.key === 'Escape') { nameEl.textContent = round.name; nameEl.blur(); }
         });
+        const editBtn = card.querySelector('.edit-round');
+        editBtn?.addEventListener('click', (e) => { e.stopPropagation(); openRoundEditModal(round); });
         const duplicateBtn = card.querySelector('.duplicate-round');
         duplicateBtn?.addEventListener('click', (e) => { e.stopPropagation(); duplicateRound(round.id); });
         const deleteBtn = card.querySelector('.delete-round');
         deleteBtn?.addEventListener('click', (e) => { e.stopPropagation(); deleteRound(round.id); });
       }
       container.appendChild(card);
+    }
+
+    // init drag & drop ordering for rounds
+    if (!isVisionneur()) {
+      if (typeof initRoundsDragAndDrop === 'function') {
+        initRoundsDragAndDrop(container);
+      } else if (typeof window !== 'undefined' && typeof window.initRoundsDragAndDrop === 'function') {
+        window.initRoundsDragAndDrop(container);
+      } else {
+        console.warn('Drag & drop init manquant: initRoundsDragAndDrop');
+      }
     }
   } catch (err) {
     console.error('Erreur chargement tours:', err);
@@ -1295,11 +1313,34 @@ async function loadLotsForRound(){
   }
   tbody.innerHTML='';
   
+  // enable drag-n-drop
+  tbody.dataset.dragEnabled = 'true';
+
   for (const l of lots){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${l.id}</td><td>${l.code||''}</td><td>${l.name}</td><td><button class="btn">${isVisionneur() ? '👁️ Voir' : 'Ouvrir'}</button></td>`;
-    tr.querySelector('button').addEventListener('click', () => openLot(l.id, l));
+    tr.setAttribute('draggable', 'true');
+    tr.dataset.lotId = String(l.id);
+    tr.innerHTML = `
+      <td class="drag-handle" style="cursor:grab">⋮⋮</td>
+      <td>${l.id}</td>
+      <td>${l.code||''}</td>
+      <td>${l.name}</td>
+      <td style="display:flex;gap:8px;align-items:center">
+        <button class="btn">${isVisionneur() ? '👁️ Voir' : 'Ouvrir'}</button>
+        ${isVisionneur() ? '' : '<button class="btn ghost btn-edit-lot">✏️ Modifier</button>'}
+      </td>`;
+    tr.querySelector('button.btn').addEventListener('click', () => openLot(l.id, l));
+    const editBtn = tr.querySelector('.btn-edit-lot');
+    if (editBtn) editBtn.addEventListener('click', () => openLotEditModal(l));
     tbody.appendChild(tr);
+  }
+
+  if (typeof initLotsDragAndDrop === 'function') {
+    initLotsDragAndDrop(tbody);
+  } else if (typeof window !== 'undefined' && typeof window.initLotsDragAndDrop === 'function') {
+    window.initLotsDragAndDrop(tbody);
+  } else {
+    console.warn('Drag & drop init manquant: initLotsDragAndDrop');
   }
 }
 
@@ -1361,7 +1402,7 @@ async function loadRoundSummary(){
         
         // Colonne entreprise (nom)
         const companyNameCell = document.createElement('td');
-        companyNameCell.className = 'amount company-name-cell';
+        companyNameCell.className = 'amount company-name-cell sticky-col';
         companyNameCell.textContent = companyData.company_name;
         companyRow.appendChild(companyNameCell);
         
@@ -1691,14 +1732,14 @@ async function loadRoundsComparison(){
         row.className = 'company-row';
 
         const nameCell = document.createElement('td');
-        nameCell.className = 'amount company-name-cell';
+        nameCell.className = 'amount company-name-cell sticky-col';
         nameCell.textContent = companyName;
         row.appendChild(nameCell);
 
         if (!entrepriseMode) {
           // Colonne MOE vide pour les lignes entreprises (format récap)
           const emptyMoe = document.createElement('td'); 
-          emptyMoe.className = 'amount empty-cell'; 
+          emptyMoe.className = 'amount empty-cell sticky-col2'; 
           emptyMoe.textContent = '—';
           row.appendChild(emptyMoe);
         }
@@ -1903,6 +1944,9 @@ async function openLot(id, lotMeta){
   const raw = await api(`/lots/${id}${roundParam}`); // { lot, items, moe, companies, offers }
   lotCompanies = raw.companies || [];
   buildSheetModel(raw);
+  
+  // Charger les options du lot
+  await loadLotOptions();
 
   // Afficher comparatif par défaut
   await refreshCompare();
@@ -1945,6 +1989,268 @@ async function openLot(id, lotMeta){
   }
   populateCompanyFilter();
 }
+
+/* ================= Options (Additifs cochables) ================= */
+async function loadLotOptions(){
+  if (!currentLot || !currentRound) return;
+  try {
+    const options = await api(`/options/lot/${currentLot.id}?round_id=${currentRound.id}`);
+    lotOptions = options.map(opt => ({
+      ...opt,
+      checked: false // décoché par défaut
+    }));
+    selectedOptions = {};
+    renderLotOptions();
+    const optSheet = qs('#options-sheet-view');
+    if (optSheet && !optSheet.classList.contains('hidden')) {
+      renderOptionsSheetTable();
+      setupOptionsSheetControls();
+    }
+  } catch (err) {
+    console.error('Erreur chargement options:', err);
+  }
+}
+
+function setupOptionsSheetControls(){
+  const sel = qs('#options-add-select');
+  const btn = qs('#options-add-btn');
+  if (!sel || !btn) return;
+  sel.innerHTML = '';
+  for (const opt of lotOptions){
+    const o = document.createElement('option');
+    o.value = String(opt.id); o.textContent = opt.designation;
+    sel.appendChild(o);
+  }
+  btn.onclick = async () => {
+    const optionId = Number(sel.value);
+    if (!optionId) return;
+    try {
+      // Crée un article vide (modifiable ensuite)
+      await api(`/options/${optionId}/items`, { method:'POST', body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null } });
+      await loadLotOptions();
+      renderOptionsSheetTable();
+      showNotify({ title:'Option', message:'Article ajouté', type:'success' });
+    } catch (err) {
+      showNotify({ title:'Erreur', message: err.message, type:'error' });
+    }
+  };
+}
+
+function renderLotOptions(){
+  const container = qs('#lot-options-list');
+  if (!container) return;
+  
+  if (lotOptions.length === 0) {
+    container.innerHTML = '<p class="muted">Aucune option</p>';
+    if (!isVisionneur()) {
+      container.innerHTML += '<button id="add-option-btn" class="btn ghost" style="margin-top:8px">➕ Ajouter option</button>';
+      qs('#add-option-btn')?.addEventListener('click', async () => {
+        const design = prompt('Désignation de l\'option:');
+        if (!design) return;
+        try {
+          await api(`/options/lot/${currentLot.id}`, {
+            method: 'POST',
+            body: { round_id: currentRound.id, designation: design }
+          });
+          await loadLotOptions();
+        } catch (err) {
+          showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+        }
+      });
+    }
+    return;
+  }
+  
+  let html = '<div style="display:flex;flex-direction:column;gap:12px">';
+  for (const opt of lotOptions) {
+    const checked = selectedOptions[opt.id] ? 'checked' : '';
+    const itemCount = opt.items?.length || 0;
+    html += `<div style="display:flex;gap:8px;align-items:center;padding:8px;background:var(--input-bg);border-radius:4px;border:1px solid var(--border)">
+      <input type="checkbox" data-option-id="${opt.id}" class="option-checkbox" ${checked} />
+      <span style="flex:1;font-weight:500">${opt.designation}</span>
+      <span class="muted" style="font-size:12px">${itemCount} article(s)</span>
+      ${isVisionneur() ? '' : `<button class="btn ghost" style="padding:4px 8px;font-size:11px" data-delete-option="${opt.id}">🗑️</button>`}
+    </div>`;
+  }
+  html += '</div>';
+  if (!isVisionneur()) {
+    html += '<button id="add-option-btn" class="btn ghost" style="margin-top:12px">➕ Ajouter option</button>';
+  }
+  container.innerHTML = html;
+  
+  // Event listeners
+  qsa('.option-checkbox').forEach(chk => {
+    chk.addEventListener('change', async (e) => {
+      const optId = parseInt(e.target.dataset.optionId, 10);
+      selectedOptions[optId] = e.target.checked;
+      await refreshCompare();
+      // Rafraîchir le tableau options en mode édition si visible
+      const optSheet = qs('#options-sheet-view');
+      if (optSheet && !optSheet.classList.contains('hidden')) {
+        renderOptionsSheetTable();
+      }
+    });
+  });
+  
+  qsa('[data-delete-option]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const optId = parseInt(e.target.dataset.deleteOption, 10);
+      if (confirm('Supprimer cette option?')) {
+        try {
+          await api(`/options/${optId}`, { method: 'DELETE' });
+          await loadLotOptions();
+        } catch (err) {
+          showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+        }
+      }
+    });
+  });
+  
+  qs('#add-option-btn')?.addEventListener('click', async () => {
+    const design = prompt('Désignation de l\'option:');
+    if (!design) return;
+    try {
+      await api(`/options/lot/${currentLot.id}`, {
+        method: 'POST', body: { round_id: currentRound.id, designation: design }
+      });
+      await loadLotOptions();
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    }
+  });
+}
+
+let editingOptionId = null;
+function openOptionCreateModal(){
+  if (isVisionneur()) return;
+  editingOptionId = null;
+  qs('#option-modal-title').textContent = 'Créer une option';
+  qs('#option-designation').value = '';
+  qs('#option-items-tbody').innerHTML = '';
+  qs('#option-modal').classList.remove('hidden');
+}
+
+function openOptionEditModal(option){
+  if (isVisionneur()) return;
+  editingOptionId = option.id;
+  qs('#option-modal-title').textContent = `Modifier: ${option.designation}`;
+  qs('#option-designation').value = option.designation;
+  
+  // Charger les items
+  const tbody = qs('#option-items-tbody');
+  tbody.innerHTML = '';
+  for (const item of (option.items || [])) {
+    const tr = document.createElement('tr');
+    tr.dataset.itemId = item.id;
+    tr.innerHTML = `
+      <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-num" value="${item.num || ''}" placeholder="Num" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+      <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-designation" value="${item.designation || ''}" placeholder="Désignation" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+      <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-unit" value="${item.unit || ''}" placeholder="Unité" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+      <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right"><input type="number" class="item-moe-qty" value="${item.moe_qty || ''}" placeholder="Qté" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px;text-align:right" step="0.01" /></td>
+      <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right"><input type="number" class="item-moe-pu" value="${item.moe_unit_price || ''}" placeholder="PU" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px;text-align:right" step="0.01" /></td>
+      <td style="padding:6px;border-bottom:1px solid var(--border);text-align:center"><button class="btn ghost" style="padding:4px 8px;font-size:11px" data-delete-item="${item.id}">🗑️</button></td>
+    `;
+    tbody.appendChild(tr);
+    
+    // Ajouter event listener pour delete
+    tr.querySelector('[data-delete-item]')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const itemId = parseInt(e.target.dataset.deleteItem, 10);
+      tr.remove();
+    });
+  }
+  
+  qs('#option-modal').classList.remove('hidden');
+}
+
+qs('#option-modal-close')?.addEventListener('click', () => {
+  qs('#option-modal').classList.add('hidden');
+  editingOptionId = null;
+});
+
+qs('#option-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'option-modal') {
+    qs('#option-modal').classList.add('hidden');
+    editingOptionId = null;
+  }
+});
+
+qs('#add-option-item-btn')?.addEventListener('click', () => {
+  const tbody = qs('#option-items-tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-num" placeholder="Num" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+    <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-designation" placeholder="Désignation" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+    <td style="padding:6px;border-bottom:1px solid var(--border)"><input type="text" class="item-unit" placeholder="Unité" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px" /></td>
+    <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right"><input type="number" class="item-moe-qty" placeholder="Qté" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px;text-align:right" step="0.01" /></td>
+    <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right"><input type="number" class="item-moe-pu" placeholder="PU" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:3px;text-align:right" step="0.01" /></td>
+    <td style="padding:6px;border-bottom:1px solid var(--border);text-align:center"></td>
+  `;
+  tbody.appendChild(tr);
+});
+
+qs('#option-modal-save')?.addEventListener('click', async () => {
+  try {
+    const designation = qs('#option-designation').value.trim();
+    if (!designation) {
+      showNotify({ title: 'Erreur', message: 'Désignation requise', type: 'error' });
+      return;
+    }
+
+    let optionId = editingOptionId;
+    
+    // Créer ou mettre à jour l'option
+    if (optionId) {
+      await api(`/options/${optionId}`, { method: 'PUT', body: { designation } });
+    } else {
+      const newOpt = await api(`/options/lot/${currentLot.id}`, {
+        method: 'POST',
+        body: { round_id: currentRound.id, designation }
+      });
+      optionId = newOpt.id;
+    }
+
+    // Sauvegarder les items
+    const tbody = qs('#option-items-tbody');
+    for (const tr of tbody.querySelectorAll('tr')) {
+      const num = tr.querySelector('.item-num').value.trim();
+      const des = tr.querySelector('.item-designation').value.trim();
+      const unit = tr.querySelector('.item-unit').value.trim();
+      const moeQty = tr.querySelector('.item-moe-qty').value;
+      const moePu = tr.querySelector('.item-moe-pu').value;
+      
+      const itemId = tr.dataset.itemId;
+      
+      if (itemId) {
+        // Mettre à jour item existant
+        if (des) {
+          await api(`/options/items/${itemId}`, {
+            method: 'PUT',
+            body: { num, designation: des, unit, moe_qty: moeQty ? parseFloat(moeQty) : null, moe_unit_price: moePu ? parseFloat(moePu) : null }
+          });
+        } else {
+          // Supprimer si vide
+          await api(`/options/items/${itemId}`, { method: 'DELETE' });
+        }
+      } else {
+        // Créer nouveau item
+        if (des) {
+          await api(`/options/${optionId}/items`, {
+            method: 'POST',
+            body: { num, designation: des, unit, moe_qty: moeQty ? parseFloat(moeQty) : null, moe_unit_price: moePu ? parseFloat(moePu) : null }
+          });
+        }
+      }
+    }
+
+    qs('#option-modal').classList.add('hidden');
+    editingOptionId = null;
+    await loadLotOptions();
+    await refreshCompare();
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+});
 
 /* ================= Configuration Questions (Projet) ================= */
 async function loadProjectQuestionConfig(){
@@ -2831,6 +3137,8 @@ async function refreshCompare(){
     tr += '</tr>'; body.insertAdjacentHTML('beforeend', tr);
   }
   
+  // Les options sont maintenant rendues dans un tableau séparé sous le total.
+  
   // Ajouter la ligne de totaux
   let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td>`;
   if (!entrepriseMode) {
@@ -2846,6 +3154,9 @@ async function refreshCompare(){
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
+
+  // Rendre le tableau des options séparé (sous le total)
+  renderOptionsCompareTable(data.companies, entrepriseMode);
   } catch (err) {
     console.error('[refreshCompare] Erreur:', err);
     const head = qs('#compare-head'), body = qs('#compare-body');
@@ -2882,6 +3193,199 @@ window.addEventListener('resize', () => {
 window.addEventListener('load', recalcCompareHeaderOffsets);
 
 /* ================= Tableur (édition) ================= */
+/** Rendu du comparatif des options sous le tableau principal */
+function renderOptionsCompareTable(companies, entrepriseMode){
+  const head = qs('#options-compare-head');
+  const body = qs('#options-compare-body');
+  if (!head || !body) return;
+  head.innerHTML = '';
+  body.innerHTML = '';
+
+  // Filtrer options cochées et construire une liste d'items
+  const selected = lotOptions.filter(o => selectedOptions[o.id]);
+  const items = [];
+  for (const opt of selected){
+    for (const item of (opt.items || [])){
+      items.push({ option: opt, item });
+    }
+  }
+  if (items.length === 0){
+    head.innerHTML = '';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Aucune option cochée</td></tr>';
+    return;
+  }
+
+  // En-tête ligne 1
+  let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Option / Désignation</th><th rowspan="2">Unité</th>`;
+  if (!entrepriseMode) h1 += `<th colspan="3" class="moe-col">MOE</th>`;
+  for (const c of companies) h1 += `<th colspan="${entrepriseMode ? '4' : '6'}" class="company-col">${c.name}</th>`;
+  h1 += '</tr>';
+  
+  // En-tête ligne 2
+  let h2 = `<tr class="head-row-2">`;
+  if (!entrepriseMode) h2 += `<th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`;
+  for (let i=0;i<companies.length;i++){
+    if (entrepriseMode) {
+      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th>';
+    } else {
+      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>ΔQté</th><th>PU</th><th>Mt</th><th>ΔPU</th>';
+    }
+  }
+  h2 += '</tr>';
+  head.innerHTML = h1 + h2;
+
+  // Totaux options
+  let totalMoe = 0;
+  const totalsByCompany = {}; companies.forEach(c => totalsByCompany[c.id] = 0);
+
+  for (const { option: opt, item } of items){
+    let tr = `<tr><td class="sticky-col">${item.num||''}</td><td class="sticky-col2"><span class="muted">${opt.designation}</span> — ${item.designation||''}</td><td>${item.unit||''}</td>`;
+    if (!entrepriseMode){
+      const moeQty = parseNum(item.moe_qty); const moePu = parseNum(item.moe_unit_price);
+      const moeMt = (moeQty !== null && moePu !== null) ? moeQty * moePu : null;
+      tr += `<td class="moe-border">${fmtNum(moeQty)}</td><td>${fmtEuro(moePu)}</td><td>${fmtEuro(moeMt)}</td>`;
+      if (moeMt != null) totalMoe += moeMt;
+    }
+    for (const c of companies){
+      const off = (item.offers||[]).find(o => Number(o.company_id) === Number(c.id));
+      const qty = off?.qty || 0; const pu = off?.unit_price || 0; const mt = (parseNum(qty)||0) * (parseNum(pu)||0);
+      if (entrepriseMode){
+        tr += `<td class="company-border"></td><td>${fmtNum(qty)}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td>`;
+      } else {
+        tr += `<td class="company-border"></td><td>${fmtNum(qty)}</td><td></td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td><td></td>`;
+      }
+      if (mt) totalsByCompany[c.id] = (totalsByCompany[c.id] || 0) + mt;
+    }
+    tr += '</tr>';
+    body.insertAdjacentHTML('beforeend', tr);
+  }
+
+  // Ligne totaux options
+  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL OPTIONS</strong></td><td class="sticky-col2"></td><td></td>`;
+  if (!entrepriseMode) totalRow += `<td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+  for (const c of companies){
+    const t = totalsByCompany[c.id] || 0;
+    if (entrepriseMode) totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(t)}</strong></td>`;
+    else totalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(t)}</strong></td><td></td>`;
+  }
+  totalRow += '</tr>';
+  body.insertAdjacentHTML('beforeend', totalRow);
+}
+
+  /** Rendu du tableau d'édition des options sous le tableau principal */
+  let optionsSheetDelegatesAttached = false;
+  function renderOptionsSheetTable(){
+    const head = qs('#options-sheet-head');
+    const body = qs('#options-sheet-body');
+    if (!head || !body) return;
+    head.innerHTML = '';
+    body.innerHTML = '';
+
+    const entrepriseMode = isEntreprise();
+    const companies = lotCompanies || [];
+    // En édition: afficher toutes les options (pas uniquement cochées)
+    const items = [];
+    for (const opt of lotOptions){
+      for (const item of (opt.items || [])) items.push({ option: opt, item });
+    }
+    if (items.length === 0){
+      head.innerHTML = '';
+      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Aucune option cochée</td></tr>';
+      return;
+    }
+
+    // En-tête similaire au tableur
+    const tr1 = document.createElement('tr');
+    const baseHeaders = ['Num', 'Option / Désignation', 'Unité'];
+    for (const h of baseHeaders){ const th = document.createElement('th'); th.textContent = h; th.rowSpan = 2; tr1.appendChild(th); }
+    if (!entrepriseMode){ const th = document.createElement('th'); th.textContent = 'MOE'; th.colSpan = 3; th.classList.add('moe-col'); tr1.appendChild(th); }
+    for (const c of companies){ const th = document.createElement('th'); th.textContent = c.name; th.colSpan = entrepriseMode ? 3 : 5; th.classList.add('company-col'); tr1.appendChild(th); }
+    head.appendChild(tr1);
+    const tr2 = document.createElement('tr');
+    if (!entrepriseMode){ ['Qté','PU','Mt'].forEach(t => { const th = document.createElement('th'); th.textContent = t; tr2.appendChild(th); }); }
+    for (let i=0;i<companies.length;i++){
+      if (entrepriseMode){ ['Qté','PU','Mt'].forEach(t => { const th = document.createElement('th'); th.textContent = t; tr2.appendChild(th); }); }
+      else { ['Qté','ΔQté','PU','Mt','ΔPU'].forEach(t => { const th = document.createElement('th'); th.textContent = t; tr2.appendChild(th); }); }
+    }
+    head.appendChild(tr2);
+
+    // Corps: cellules éditables basiques
+    for (const { option: opt, item } of items){
+      const tr = document.createElement('tr');
+      tr.dataset.itemId = item.id;
+      // Num, Désignation (afficher option), Unité
+      const tdNum = document.createElement('td'); tdNum.contentEditable = true; tdNum.textContent = item.num || ''; tr.appendChild(tdNum);
+      const tdDes = document.createElement('td'); tdDes.contentEditable = true; tdDes.textContent = `${opt.designation} — ${item.designation||''}`; tdDes.dataset.isOptionDesignation = 'true'; tr.appendChild(tdDes);
+      const tdUnit = document.createElement('td'); tdUnit.contentEditable = true; tdUnit.textContent = item.unit || ''; tr.appendChild(tdUnit);
+
+      // MOE
+      if (!entrepriseMode){
+        const tdMoeQty = document.createElement('td'); tdMoeQty.contentEditable = true; tdMoeQty.textContent = item.moe_qty ?? ''; tr.appendChild(tdMoeQty);
+        const tdMoePu  = document.createElement('td'); tdMoePu.contentEditable  = true; tdMoePu.textContent  = item.moe_unit_price ?? ''; tr.appendChild(tdMoePu);
+        const tdMoeMt  = document.createElement('td'); tdMoeMt.classList.add('cell-readonly'); tdMoeMt.textContent  = amountOf(item.moe_qty, item.moe_unit_price); tr.appendChild(tdMoeMt);
+      }
+
+      // Entreprises
+      for (const c of companies){
+        const off = (item.offers||[]).find(o => Number(o.company_id) === Number(c.id)) || {};
+        const tdQty = document.createElement('td'); tdQty.contentEditable = true; tdQty.textContent = off.qty ?? ''; tdQty.dataset.companyId = String(c.id); tdQty.dataset.sub = 'qty'; tr.appendChild(tdQty);
+        if (!entrepriseMode){ // ΔQté (lecture seule)
+          const tdDeltaQty = document.createElement('td'); tdDeltaQty.classList.add('cell-readonly'); tdDeltaQty.textContent = ''; tr.appendChild(tdDeltaQty);
+        }
+        const tdPu  = document.createElement('td'); tdPu.contentEditable  = true; tdPu.textContent  = off.unit_price ?? ''; tdPu.dataset.companyId = String(c.id); tdPu.dataset.sub = 'pu'; tr.appendChild(tdPu);
+        const tdMt  = document.createElement('td'); tdMt.classList.add('cell-readonly'); tdMt.textContent  = amountOf(off.qty, off.unit_price); tr.appendChild(tdMt);
+        if (!entrepriseMode){ // ΔPU (lecture seule)
+          const tdDeltaPu = document.createElement('td'); tdDeltaPu.classList.add('cell-readonly'); tdDeltaPu.textContent = ''; tr.appendChild(tdDeltaPu);
+        }
+      }
+      body.appendChild(tr);
+    }
+
+    // Délégation simple pour sauvegarder sur blur
+    if (!optionsSheetDelegatesAttached){
+      optionsSheetDelegatesAttached = true;
+      body.addEventListener('blur', async (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      const tr = td.closest('tr'); const itemId = tr?.dataset.itemId; if (!itemId) return;
+      const cols = Array.from(tr.children);
+      const num = cols[0].textContent.trim();
+      const fullDes = cols[1].textContent.trim();
+      const unit = cols[2].textContent.trim();
+      let designation = fullDes;
+      // retirer préfixe option "Option — ..."
+      const sep = '—'; if (designation.includes(sep)) designation = designation.split(sep).slice(1).join(sep).trim();
+
+      // MOE
+      let moe_qty = null, moe_unit_price = null;
+      let shift = 3;
+      if (!entrepriseMode){
+        moe_qty = cols[3].textContent.trim() || null;
+        moe_unit_price = cols[4].textContent.trim() || null;
+        shift = 6; // after MOE mt
+        // Sauvegarder item + MOE
+        await api(`/options/items/${itemId}`, { method:'PUT', body:{ num, designation, unit, moe_qty: moe_qty ? parseFloat(moe_qty) : null, moe_unit_price: moe_unit_price ? parseFloat(moe_unit_price) : null } });
+      } else {
+        // Sauvegarder item sans MOE
+        await api(`/options/items/${itemId}`, { method:'PUT', body:{ num, designation, unit } });
+      }
+
+      // Entreprises offers
+      for (let i=shift;i<cols.length;i++){
+        const cell = cols[i]; if (!cell.dataset.companyId) continue;
+        const company_id = Number(cell.dataset.companyId);
+        const offRow = Math.floor((i-shift) / (entrepriseMode ? 3 : 5));
+        const baseIndex = shift + offRow * (entrepriseMode ? 3 : 5);
+        const qty = cols[baseIndex].textContent.trim() || null;
+        const pu  = cols[baseIndex + (entrepriseMode ? 1 : 2)].textContent.trim() || null;
+        await api(`/options/items/${itemId}/offers`, { method:'POST', body:{ company_id, qty: qty ? parseFloat(qty) : null, unit_price: pu ? parseFloat(pu) : null, round_id: currentRound?.id } });
+      }
+
+        // Recalcul local
+        renderOptionsSheetTable();
+        await refreshCompare();
+      }, true);
+    }
+  }
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
   const moeByItem = new Map(raw.moe.map(m => [Number(m.item_id), m]));
@@ -3492,6 +3996,7 @@ function renderSheetBindings(){
   // bascule modes
   qs('#mode-compare')?.addEventListener('click', () => {
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
+    hide('#options-sheet-view');
     qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
   });
   qs('#mode-edit')?.addEventListener('click', () => {
@@ -3500,7 +4005,10 @@ function renderSheetBindings(){
       return;
     }
     show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
+    show('#options-sheet-view');
     qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
+    renderOptionsSheetTable();
+    setupOptionsSheetControls();
   });
 
   // Raccourcis globaux
@@ -3800,12 +4308,201 @@ function bindUI(){
     if (isVisionneur()){ showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas ajouter de lots.', type:'error' }); return; }
     if(!currentProject){ showNotify({ title:'Validation', message:'Ouvrir un projet d\'abord', type:'info' }); return; }
     if(!currentRound){ showNotify({ title:'Validation', message:'Sélectionner un tour d\'abord', type:'info' }); return; }
-    const code=qs('#lot-code').value.trim(); const name=qs('#lot-name').value.trim();
-    if(!name){ showNotify({ title:'Validation', message:'Nom du lot requis', type:'info' }); return; }
-    await api(`/projects/${currentProject.id}/lots`,{method:'POST',body:{code,name}});
-    qsa('#lot-code,#lot-name').forEach(i=>i.value=''); 
-    await loadLotsForRound();
+    openLotCreateModal();
   }catch(e){ showNotify({ title:'Erreur', message:e.message, type:'error' }); } });
+  // ===== Modals Round: edit =====
+  let editingRoundId = null;
+  function openRoundEditModal(round){
+    if (isVisionneur()) { return; }
+    editingRoundId = round.id;
+    const modal = qs('#round-modal');
+    qs('#round-modal-title').textContent = 'Modifier le tour';
+    qs('#round-name').value = round.name || '';
+    qs('#round-description').value = round.description || '';
+    qs('#round-modal-msg').textContent = '';
+    modal.classList.remove('hidden'); modal.style.display='flex';
+  }
+  qs('#round-modal-close')?.addEventListener('click', ()=>{ const m=qs('#round-modal'); m.classList.add('hidden'); m.style.display='none'; editingRoundId=null; });
+  qs('#round-modal')?.addEventListener('click', (e)=>{ if (e.target.id==='round-modal'){ const m=qs('#round-modal'); m.classList.add('hidden'); m.style.display='none'; editingRoundId=null; } });
+  qs('#round-modal-save')?.addEventListener('click', async ()=>{ try{
+    if (!editingRoundId) return;
+    const name = qs('#round-name').value.trim();
+    const description = qs('#round-description').value.trim();
+    if (!name) { qs('#round-modal-msg').textContent = 'Le nom du tour est requis'; return; }
+    await api(`/rounds/${editingRoundId}`, { method:'PUT', body:{ name, description, status: 'active' } });
+    const m=qs('#round-modal'); m.classList.add('hidden'); m.style.display='none'; editingRoundId=null;
+    await loadRounds();
+  }catch(e){ qs('#round-modal-msg').textContent = e.message; }});
+// ===== Modals Lot: create/edit =====
+let editingLotId = null;
+function openLotCreateModal(){
+  editingLotId = null;
+  const modal = qs('#lot-modal');
+  qs('#lot-modal-title').textContent = 'Créer un lot';
+  qs('#lot-code').value = '';
+  qs('#lot-name').value = '';
+  qs('#lot-modal-msg').textContent = '';
+  modal.classList.remove('hidden'); modal.style.display='flex';
+}
+function openLotEditModal(lot){
+  editingLotId = lot.id;
+  const modal = qs('#lot-modal');
+  qs('#lot-modal-title').textContent = 'Modifier le lot';
+  qs('#lot-code').value = lot.code || '';
+  qs('#lot-name').value = lot.name || '';
+  qs('#lot-modal-msg').textContent = '';
+  modal.classList.remove('hidden'); modal.style.display='flex';
+}
+qs('#lot-modal-close')?.addEventListener('click', ()=>{ const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none'; });
+qs('#lot-modal')?.addEventListener('click', (e)=>{ if (e.target.id==='lot-modal'){ const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none'; } });
+qs('#lot-modal-save')?.addEventListener('click', async ()=>{ try{
+  const code = qs('#lot-code').value.trim();
+  const name = qs('#lot-name').value.trim();
+  if (!name) { qs('#lot-modal-msg').textContent = 'Le nom du lot est requis'; return; }
+  if (editingLotId){
+    await api(`/projects/lots/${editingLotId}`, { method:'PUT', body:{ code, name } });
+  } else {
+    await api(`/projects/${currentProject.id}/lots`, { method:'POST', body:{ code, name } });
+  }
+  const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none';
+  await loadLotsForRound();
+}catch(e){ qs('#lot-modal-msg').textContent = e.message; }});
+
+// ===== Drag & Drop lots order =====
+function initLotsDragAndDrop(tbody){
+  let dragSrcEl = null;
+
+  // Helper: find element after which to insert based on cursor Y
+  function getDragAfterElement(container, y) {
+    const rows = [...container.querySelectorAll('tr[draggable="true"]:not(.dragging)')];
+    return rows.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      } else {
+        return closest;
+      }
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  tbody.addEventListener('dragstart', (e)=>{
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    dragSrcEl = tr;
+    tr.classList.add('dragging');
+    tr.style.opacity = '0.5';
+    try { e.dataTransfer.setData('text/plain', tr.dataset.lotId || ''); } catch(_) {}
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  tbody.addEventListener('dragend', (e)=>{
+    const tr = e.target.closest('tr');
+    if (tr) { tr.style.opacity=''; tr.classList.remove('dragging'); }
+  });
+
+  tbody.addEventListener('dragover', (e)=>{
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!dragSrcEl) return;
+    const afterElement = getDragAfterElement(tbody, e.clientY);
+    if (afterElement == null) {
+      tbody.appendChild(dragSrcEl);
+    } else {
+      tbody.insertBefore(dragSrcEl, afterElement);
+    }
+  });
+
+  tbody.addEventListener('drop', async (e)=>{
+    e.preventDefault();
+    // Persist new order
+    const order = Array
+      .from(tbody.querySelectorAll('tr[data-lot-id], tr'))
+      .map(r => parseInt(r.dataset.lotId, 10))
+      .filter(Number.isFinite);
+    try {
+      await api(`/projects/${currentProject.id}/lots/order`, { method:'POST', body:{ order } });
+    } catch(err) {
+      showNotify({ title:'Erreur', message:'Mise à jour de l\'ordre: '+err.message, type:'error' });
+    }
+  });
+}
+
+// Expose for safety in case of scoping differences
+if (typeof window !== 'undefined') {
+  window.initLotsDragAndDrop = initLotsDragAndDrop;
+}
+
+// ===== Drag & Drop rounds order =====
+function initRoundsDragAndDrop(container){
+  let dragSrcEl = null;
+
+  function getAfterElement(container, y) {
+    const cards = [...container.querySelectorAll('.round-card[draggable="true"]:not(.dragging)')];
+    // Si on est au-dessus du premier élément, retourner le premier élément
+    if (cards.length > 0) {
+      const firstBox = cards[0].getBoundingClientRect();
+      if (y < firstBox.top + firstBox.height / 2) {
+        return cards[0]; // Place BEFORE the first element
+      }
+    }
+    return cards.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      } else {
+        return closest;
+      }
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  container.addEventListener('dragstart', (e)=>{
+    const card = e.target.closest('.round-card');
+    if (!card) return;
+    dragSrcEl = card;
+    card.classList.add('dragging');
+    card.style.opacity = '0.6';
+    try { e.dataTransfer.setData('text/plain', card.dataset.roundId || ''); } catch(_) {}
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  container.addEventListener('dragend', (e)=>{
+    const card = e.target.closest('.round-card');
+    if (card) { card.style.opacity=''; card.classList.remove('dragging'); }
+  });
+
+  container.addEventListener('dragover', (e)=>{
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!dragSrcEl) return;
+    const afterElement = getAfterElement(container, e.clientY);
+    if (afterElement == null) {
+      container.appendChild(dragSrcEl);
+    } else {
+      container.insertBefore(dragSrcEl, afterElement);
+    }
+  });
+
+  container.addEventListener('drop', async (e)=>{
+    e.preventDefault();
+    const order = Array
+      .from(container.querySelectorAll('.round-card[data-round-id]'))
+      .map(c => parseInt(c.dataset.roundId, 10))
+      .filter(Number.isFinite);
+    try {
+      await api(`/rounds/project/${currentProject.id}/order`, { method:'POST', body:{ order } });
+      // Refresh card numbers (round_number) after server update
+      await loadRounds();
+    } catch(err) {
+      showNotify({ title:'Erreur', message:'Mise à jour de l\'ordre des tours: '+err.message, type:'error' });
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.initRoundsDragAndDrop = initRoundsDragAndDrop;
+}
 
   // Config questions projet
   qs('#save-project-questions')?.addEventListener('click', saveProjectQuestionConfig);

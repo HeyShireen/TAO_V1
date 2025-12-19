@@ -21,6 +21,7 @@ import lotRoutes from './routes/lots.js'
 import roundRoutes from './routes/rounds.js'
 import questionRoutes from './routes/questions.js'
 import questionConfigRoutes from './routes/question-config.js'
+import optionsRoutes from './routes/options.js'
 import userRoutes from './routes/users.js'
 import shareRoutes from './routes/shares.js'
 import accessRequestRoutes from './routes/access-requests.js'
@@ -152,6 +153,7 @@ app.use('/api/shares', shareRoutes)
 app.use('/api/access-requests', accessRequestRoutes)
 app.use('/api/questions', questionRoutes)
 app.use('/api/question-config', questionConfigRoutes)
+app.use('/api/options', optionsRoutes)
 app.use('/api/exports', exportRoutes)
 
 // Front same-origin

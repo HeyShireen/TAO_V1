@@ -23,6 +23,42 @@ router.get('/project/:projectId', async (req, res) => {
   }
 });
 
+// Réordonner les tours d'un projet (maj des round_number)
+router.post('/project/:projectId/order', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { order } = req.body || {};
+
+    if (!Array.isArray(order)) {
+      return res.status(400).json({ error: 'Payload invalid: order[] requis' });
+    }
+
+    // Récupérer les tours existants
+    const roundsRes = await query('SELECT id FROM rounds WHERE project_id = $1 ORDER BY round_number ASC, id ASC', [projectId]);
+    const roundIds = roundsRes.rows.map(r => Number(r.id));
+
+    // Filtrer les IDs au sein du projet et compléter les manquants
+    const filtered = order.map(n => Number(n)).filter(n => Number.isFinite(n) && roundIds.includes(n));
+    const missing = roundIds.filter(id => !filtered.includes(id));
+    const finalOrder = [...filtered, ...missing];
+
+    // Appliquer le nouvel ordre : utiliser des nombres négatifs temporaires pour éviter les conflits de contrainte unique
+    for (let i = 0; i < finalOrder.length; i++) {
+      await query('UPDATE rounds SET round_number = $1 WHERE id = $2 AND project_id = $3', [-(i + 1), finalOrder[i], projectId]);
+    }
+    
+    // Ensuite appliquer les numéros positifs finaux
+    for (let i = 0; i < finalOrder.length; i++) {
+      await query('UPDATE rounds SET round_number = $1 WHERE id = $2 AND project_id = $3', [i, finalOrder[i], projectId]);
+    }
+
+    res.json({ ok: true, order: finalOrder });
+  } catch (err) {
+    console.error('Erreur réordonnancement tours:', err);
+    res.status(500).json({ error: 'Impossible de réordonner les tours' });
+  }
+});
+
 // Lister les tours d'un projet avec statistiques agrégées (évite N requêtes côté client)
 router.get('/project/:projectId/with-stats', async (req, res) => {
   try {

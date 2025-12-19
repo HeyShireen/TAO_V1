@@ -66,7 +66,7 @@ router.get('/:id', async (req, res) => {
     
     const project = await query('SELECT * FROM projects WHERE id=$1', [id]);
     if (project.rowCount === 0) return res.status(404).json({ error: 'Not found' });
-    const lots = await query('SELECT * FROM lots WHERE project_id=$1 ORDER BY id', [id]);
+    const lots = await query('SELECT * FROM lots WHERE project_id=$1 ORDER BY sort_order ASC, id ASC', [id]);
     res.json({ project: project.rows[0], lots: lots.rows });
   } catch (err) {
     console.error('Erreur récupération projet:', err);
@@ -168,6 +168,69 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
     console.error('Erreur création lot:', err);
     const statusCode = err instanceof ValidationError ? 400 : 500;
     res.status(statusCode).json({ error: err.message || 'Impossible de créer le lot' });
+  }
+});
+
+// Update a lot (code, name)
+router.put('/lots/:lotId', isResponsableOrAdmin, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const { code, name } = req.body;
+
+    // Vérifier que le lot existe et droits via projet
+    const lotRes = await query('SELECT id, project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+    const projectId = lotRes.rows[0].project_id;
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce lot' });
+
+    if (name !== undefined) validateMaxLength(name, 200, 'Le nom du lot');
+    if (code !== undefined && code !== null) validateMaxLength(code, 50, 'Le code du lot');
+
+    const result = await query(
+      'UPDATE lots SET code = $1, name = $2 WHERE id = $3 RETURNING *',
+      [code ? code.trim() : null, name ? name.trim() : null, lotId]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur mise à jour lot:', err);
+    const statusCode = err instanceof ValidationError ? 400 : 500;
+    res.status(statusCode).json({ error: err.message || 'Impossible de mettre à jour le lot' });
+  }
+});
+
+// Update lots order for a project
+router.post('/:id/lots/order', isResponsableOrAdmin, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const { order } = req.body; // array of lotIds in desired order
+
+    if (!Array.isArray(order) || order.length === 0) {
+      return res.status(400).json({ error: 'Ordre invalide' });
+    }
+
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
+    // Validate/normalize: only keep lots that belong to the project
+    const lotsRes = await query('SELECT id FROM lots WHERE project_id = $1 ORDER BY sort_order ASC, id ASC', [projectId]);
+    const projectLotIds = lotsRes.rows.map(r => r.id);
+    const lotIdsSet = new Set(projectLotIds);
+    const filteredOrder = order.filter(id => lotIdsSet.has(id));
+    // Append any remaining lots not included to preserve a complete ordering
+    const remaining = projectLotIds.filter(id => !filteredOrder.includes(id));
+    const finalOrder = [...filteredOrder, ...remaining];
+
+    // Apply order
+    let position = 1;
+    for (const lotId of finalOrder) {
+      await query('UPDATE lots SET sort_order = $1 WHERE id = $2', [position++, lotId]);
+    }
+
+    res.json({ ok: true, order: finalOrder });
+  } catch (err) {
+    console.error('Erreur mise à jour ordre des lots:', err);
+    res.status(500).json({ error: 'Impossible de mettre à jour l\'ordre des lots' });
   }
 });
 
