@@ -17,6 +17,73 @@
     logo.addEventListener('error', () => { logo.style.display = 'none'; });
   }
 
+  // Modal de vérification email après inscription
+  function showVerifyEmailModalAfterRegister(email) {
+    const modal = qs('#notify-modal');
+    const titleEl = qs('#notify-title');
+    const msgEl = qs('#notify-message');
+    const okBtn = qs('#notify-ok');
+    const closeBtn = qs('#notify-close');
+    
+    // Si le modal n'existe pas, créer une alerte simple
+    if (!modal || !titleEl || !msgEl) {
+      registerMsg.innerHTML = `
+        <div style="background: #d4edda; padding: 1rem; border-radius: 8px; border: 2px solid #28a745; text-align: center; color:#155724;">
+          <div style="font-size: 2rem; margin-bottom: 0.5rem;">📧</div>
+          <strong>Compte créé !</strong><br>
+          Un email de confirmation a été envoyé à <strong>${email}</strong>.<br>
+          Cliquez sur le lien dans l'email pour activer votre compte.
+        </div>
+      `;
+      return;
+    }
+
+    titleEl.textContent = 'Vérification email requise';
+    msgEl.innerHTML = `
+      <p style="margin:0 0 12px 0;">Un email de confirmation a été envoyé à <strong>${email}</strong>.</p>
+      <p style="margin:0 0 12px 0;">Cliquez sur le lien dans l'email pour activer votre compte.</p>
+      <div class="row gap" style="flex-wrap:wrap;align-items:center">
+        <button id="resend-verif-register" class="btn">📧 Renvoyer l'email</button>
+        <span class="muted" style="font-size:12px">Vérifiez aussi vos spams / promotions.</span>
+      </div>
+    `;
+
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    modal.classList.remove('notify-success','notify-error','notify-info');
+    modal.classList.add('notify-info');
+    if (okBtn) okBtn.textContent = 'Fermer';
+
+    const close = () => { modal.classList.add('hidden'); modal.style.display='none'; };
+    okBtn?.addEventListener('click', close, { once: true });
+    closeBtn?.addEventListener('click', close, { once: true });
+    modal.addEventListener('click', (e)=>{ if (e.target.id === 'notify-modal') close(); }, { once: true });
+
+    qs('#resend-verif-register')?.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Envoi...';
+      try {
+        const resp = await fetch('/api/auth/resend-verification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const res = await resp.json();
+        if (!resp.ok) throw new Error(res.error || 'Erreur d\'envoi');
+        msgEl.innerHTML = `<p style="color:#28a745;margin:0;">✅ ${res.message}</p>`;
+      } catch (err) {
+        if (err.cooldown) {
+          msgEl.innerHTML = `<p style="color:#dc3545;margin:0;">⏰ ${err.message}</p>`;
+        } else {
+          msgEl.innerHTML = `<p style="color:#dc3545;margin:0;">❌ ${err.message}</p>`;
+        }
+        btn.disabled = false;
+        btn.textContent = "📧 Renvoyer l'email";
+      }
+    }, { once:true });
+  }
+
    function showLogin(){
     form?.classList.remove('hidden');
     registerForm?.classList.add('hidden');
@@ -131,10 +198,8 @@
         const regPassEl = qs('#register-password');
         const regConfirmEl = qs('#register-password-confirm');
         
-        // Afficher le popup modal de vérification email
-        if (typeof window.parent.showVerifyEmailPopup === 'function') {
-          window.parent.showVerifyEmailPopup(email);
-        }
+        // Afficher le modal de vérification email
+        showVerifyEmailModalAfterRegister(email);
         
         if (regEmailEl && regPassEl) {
           // Pré-remplir le formulaire de connexion avec l'email/mdp saisis pour éviter de retaper
