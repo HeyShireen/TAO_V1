@@ -54,9 +54,9 @@ if (!process.env.NODE_ENV) {
 }
 console.log(`✅ NODE_ENV: ${process.env.NODE_ENV}`);
 
-// 5. VÉRIFIER EMAIL_USER et EMAIL_PASSWORD (pour notifications)
-if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-  console.warn('⚠️  EMAIL_USER/PASSWORD non configurés - emails de vérification désactivés');
+// 5. VÉRIFIER EMAIL_USER et EMAIL_PASS (pour notifications)
+if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+  console.warn('⚠️  EMAIL_USER/PASS non configurés - emails de vérification désactivés');
 } else {
   console.log('✅ Email: Configuré');
 }
@@ -75,7 +75,7 @@ const CRITICAL_VARS = [
 
 const OPTIONAL_VARS = [
   'EMAIL_USER',
-  'EMAIL_PASSWORD',
+  'EMAIL_PASS',
   'ALLOWED_ORIGINS'
 ];
 
