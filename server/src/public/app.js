@@ -157,6 +157,54 @@ function showNotify({ title = 'Info', message = '', type = 'info' }) {
   modal.addEventListener('click', (e)=>{ if (e.target.id === 'notify-modal') close(); }, { once: true });
 }
 
+// Popup dédié à la vérification d'email avec renvoi de lien
+async function showVerifyEmailPopup(email) {
+  const modal = qs('#notify-modal');
+  const titleEl = qs('#notify-title');
+  const msgEl = qs('#notify-message');
+  const okBtn = qs('#notify-ok');
+  const closeBtn = qs('#notify-close');
+  if (!modal || !titleEl || !msgEl) return;
+
+  titleEl.textContent = 'Vérification email requise';
+  msgEl.innerHTML = `
+    <p style="margin:0 0 12px 0;">Votre email <strong>${email}</strong> doit être vérifié avant connexion.</p>
+    <div class="row gap" style="flex-wrap:wrap;align-items:center">
+      <button id="resend-verif" class="btn">📧 Renvoyer l'email</button>
+      <span class="muted" style="font-size:12px">Pensez à vérifier vos spams / promotions.</span>
+    </div>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  modal.classList.remove('notify-success','notify-error','notify-info');
+  modal.classList.add('notify-info');
+  if (okBtn) okBtn.textContent = 'Fermer';
+
+  const close = () => { modal.classList.add('hidden'); modal.style.display='none'; };
+  okBtn?.addEventListener('click', close, { once: true });
+  closeBtn?.addEventListener('click', close, { once: true });
+  modal.addEventListener('click', (e)=>{ if (e.target.id === 'notify-modal') close(); }, { once: true });
+
+  qs('#resend-verif')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Envoi...';
+    try {
+      const res = await api('/auth/resend-verification', { method:'POST', body:{ email }, showLoader:false });
+      msgEl.innerHTML = `<p style="color:#28a745;margin:0;">✅ ${res.message}</p>`;
+    } catch (err) {
+      if (err.cooldown) {
+        msgEl.innerHTML = `<p style="color:#dc3545;margin:0;">⏰ ${err.message}</p>`;
+      } else {
+        msgEl.innerHTML = `<p style="color:#dc3545;margin:0;">❌ ${err.message}</p>`;
+      }
+      btn.disabled = false;
+      btn.textContent = "📧 Renvoyer l'email";
+    }
+  }, { once:true });
+}
+
 /* ================= Onglets ================= */
 function activateTab(id){
   // Mettre à jour la navigation principale
@@ -3607,32 +3655,8 @@ function bindUI(){
     } catch(e){ 
       // Si email non vérifié, proposer de renvoyer
       if (e.emailNotVerified) {
-        msgEl.innerHTML = `
-          <div style="background: #fff3cd; padding: 1rem; border-radius: 8px; border: 1px solid #ffc107;">
-            <p style="margin: 0 0 0.5rem 0; color: #856404;">⚠️ ${e.message}</p>
-            <button id="resend-verification-btn" class="btn btn-sm" style="background: #ffc107; color: #000;">📧 Renvoyer l'email de vérification</button>
-          </div>
-        `;
-        
-        // Ajouter l'événement au bouton
-        qs('#resend-verification-btn')?.addEventListener('click', async () => {
-          const btn = qs('#resend-verification-btn');
-          btn.disabled = true;
-          btn.textContent = 'Envoi...';
-          
-          try {
-            const res = await api('/auth/resend-verification', { method: 'POST', body: { email } });
-            msgEl.innerHTML = `<p style="color: #28a745;">✅ ${res.message}</p>`;
-          } catch (err) {
-            if (err.cooldown) {
-              msgEl.innerHTML = `<p style="color: #dc3545;">⏰ ${err.message}</p>`;
-            } else {
-              msgEl.innerHTML = `<p style="color: #dc3545;">❌ ${err.message}</p>`;
-            }
-            btn.disabled = false;
-            btn.textContent = '📧 Renvoyer l\'email';
-          }
-        });
+        showVerifyEmailPopup(email);
+        return;
       } else {
         setText('#login-msg', '❌ ' + e.message); 
       }

@@ -28,9 +28,13 @@
       <button id="tab-register" class="btn ghost" type="button">Créer un compte</button>
     </div>
 
-    <form class="auth-form" id="login-form">
+    <form class="auth-form" id="login-form" autocomplete="on">
       <label class="field"><span>Email</span><input id="login-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email" required/></label>
       <label class="field"><span>Mot de passe</span><input id="login-password" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required/></label>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px">
+        <input id="remember-me" type="checkbox" style="width:18px;height:18px;margin:0"/>
+        <span>Se souvenir sur ce navigateur</span>
+      </label>
       <div class="row gap">
         <button id="login-btn" type="submit" class="btn">Se connecter</button>
         <a href="/" class="btn ghost">Retour</a>
@@ -41,7 +45,7 @@
       </p>
     </form>
 
-    <form class="auth-form hidden" id="register-form">
+    <form class="auth-form hidden" id="register-form" autocomplete="on">
       <label class="field"><span>Email</span><input id="register-email" name="email" type="email" placeholder="vous@exemple.fr" autocomplete="email" required/></label>
       <label class="field"><span>Mot de passe</span><input id="register-password" name="password" type="password" placeholder="••••••••" autocomplete="new-password" required/></label>
       <label class="field"><span>Confirmer</span><input id="register-password-confirm" name="password_confirm" type="password" placeholder="••••••••" autocomplete="new-password" required/></label>
