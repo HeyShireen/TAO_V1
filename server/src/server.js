@@ -83,18 +83,7 @@ app.disable('x-powered-by')
 
 // Sécurité: Headers HTTP avec Helmet
 app.use(helmet({
-  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "https://fonts.googleapis.com"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
-    },
-  } : {
+  contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
@@ -103,8 +92,9 @@ app.use(helmet({
       connectSrc: ["'self'"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
     },
-  }, // Dev: autoriser inline pour flexibilité, Prod: CSP strict
+  }, // Allow inline styles and scripts for dynamic UI
 
   hsts: {
     maxAge: 31536000, // 1 an
@@ -192,13 +182,13 @@ function isValidJwt(token){
   }
 }
 
-// Page de login dédiée avec CSP plus stricte
+// Page de login dédiée avec CSP permettant les styles inline
 const loginCsp = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", 'https://fonts.googleapis.com'],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       imgSrc: ["'self'", 'data:'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       connectSrc: ["'self'"],
