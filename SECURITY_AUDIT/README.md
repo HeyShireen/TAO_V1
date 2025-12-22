@@ -87,7 +87,7 @@ Security Score:      23/100  🔴 CRITIQUE
 Vulnerabilities:     15      (6 critiques)
 Production-Ready:    ❌ NON - À CORRIGER
 Temps de Fix:        2-3 semaines
-Coût de Breach:      20M€
+Coût de Breach:      Potentiellement élevé
 ROI de Correction:   267x
 ```
 

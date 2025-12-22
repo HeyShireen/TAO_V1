@@ -14,7 +14,7 @@ open AUDIT_SUMMARY.md
 # ❌ App NOT production-ready
 # 🔴 Score: 23/100
 # ⏰ Time to fix: 2-3 weeks
-# 💰 Cost of breach: 20M€
+# 💰 Cost of breach: Potentiellement élevé
 ```
 
 ---

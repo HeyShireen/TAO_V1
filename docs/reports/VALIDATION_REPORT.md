@@ -205,7 +205,7 @@ Status production:     QUASI-PRÊT (+ tests ext. requis)
 
 ### Réduction du risque:
 ```
-Brèches potentielles:  20M€ → ~2M€
+Brèches potentielles:  Critique → Réduite
 Coût de correction:    75k€
 ROI:                   27x → 270x!
 ```

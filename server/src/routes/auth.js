@@ -7,6 +7,8 @@ import { sendVerificationEmail, sendPasswordResetEmail } from '../utils.email.js
 import { emailRateLimiter, resetEmailAttempts, resetAllCooldowns } from '../middleware.security.js';
 import { requireAuth, revokeToken } from '../middleware.auth.js';
 import { validatePassword } from '../utils.validation.js';
+import { honeypotValidator } from '../middleware.honeypot.js';
+import { generateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllUserTokens, detectTokenAbusePatterns } from '../utils.refresh-tokens.js';
 
 const router = express.Router();
 
@@ -17,8 +19,8 @@ function sign(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }, jwtSecret, { expiresIn: '7d' });
 }
 
-// Register: auto-inscription publique (toujours visionneur sauf premier = admin)
-router.post('/register', emailRateLimiter, async (req, res) => {
+// Register: auto-inscription publique avec honeypot anti-bot
+router.post('/register', emailRateLimiter, honeypotValidator, async (req, res) => {
   const { email, password } = req.body;
   
   // Validation
@@ -78,7 +80,7 @@ router.post('/register', emailRateLimiter, async (req, res) => {
   }
 });
 
-router.post('/login', emailRateLimiter, async (req, res) => {
+router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
@@ -99,16 +101,34 @@ router.post('/login', emailRateLimiter, async (req, res) => {
     
     resetEmailAttempts(email);
     
+    // Générer JWT court terme (15 min) + refresh token long terme (30 j)
     const token = sign(user);
+    const { refreshToken } = await generateRefreshToken(user.id);
+    
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    
+    // JWT en cookie HttpOnly
     res.cookie('auth', token, {
       httpOnly: true,
       secure: isProd,
       sameSite: 'lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 15 * 60 * 1000, // 15 minutes
     });
-    return res.json({ token, user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null } });
+    
+    // Refresh token en cookie HttpOnly séparé
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    });
+    
+    return res.json({ 
+      token, 
+      user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }
+    });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Erreur serveur (login)' });
@@ -116,11 +136,23 @@ router.post('/login', emailRateLimiter, async (req, res) => {
 });
 
 // Déconnexion: SÉCURITÉ - Revoque le token et nettoie les cookies
-router.post('/logout', requireAuth, (req, res) => {
+router.post('/logout', requireAuth, async (req, res) => {
   try {
-    // SÉCURITÉ: Révoquer le token (empêcher son réutilisation)
+    const userId = req.user?.id;
+    
+    // SÉCURITÉ: Révoquer le token (empêcher sa réutilisation)
     if (req.token) {
       revokeToken(req.token);
+    }
+    
+    // Révoquer le refresh token si présent
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      try {
+        await revokeRefreshToken(refreshToken);
+      } catch (err) {
+        console.error('Erreur révocation refresh token:', err);
+      }
     }
     
     const opts = { 
@@ -131,7 +163,9 @@ router.post('/logout', requireAuth, (req, res) => {
     };
     
     res.clearCookie('auth', opts);
-    console.log(`✅ Logout: Utilisateur ${req.user?.email} (ID: ${req.user?.id}) déconnecté avec succès`);
+    res.clearCookie('refreshToken', opts);
+    
+    console.log(`✅ Logout: Utilisateur ${req.user?.email} (ID: ${userId}) déconnecté avec succès`);
     return res.json({ ok: true, message: 'Déconnecté avec succès' });
   } catch (err) {
     console.error('Erreur logout:', err);
@@ -569,6 +603,103 @@ router.post('/refresh-token', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Erreur rafraîchissement token:', err);
     res.status(500).json({ error: 'Impossible de rafraîchir le token' });
+  }
+});
+
+// Refresh Token Endpoint: Rotation automatique des tokens
+// Les tokens JWT sont courts (15 min), les refresh tokens longs (30 j)
+// À appeler quand JWT expire pour obtenir un nouveau JWT sans re-login
+router.post('/refresh', async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
+    
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Refresh token manquant' });
+    }
+    
+    // Rotation du token avec détection d'abus
+    const result = await rotateRefreshToken(
+      refreshToken,
+      req.ip,
+      req.get('user-agent')
+    );
+    
+    // Vérifier les patterns d'abus
+    const hasAbuse = await detectTokenAbusePatterns(result.user.id);
+    if (hasAbuse) {
+      console.warn(`⚠️ Alerte: Abus de refresh token pour utilisateur ${result.user.id}`);
+      // À faire: envoyer email d'alerte
+    }
+    
+    // Générer un nouveau JWT court terme
+    const newJWT = sign(result.user);
+    
+    // Mettre à jour les cookies
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    
+    res.cookie('auth', newJWT, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+    
+    res.cookie('refreshToken', result.newRefreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    });
+    
+    return res.json({
+      token: newJWT,
+      refreshToken: result.newRefreshToken,
+      user: result.user,
+      message: 'Token rafraîchi avec succès'
+    });
+  } catch (err) {
+    console.error('Erreur refresh token:', err.message);
+    return res.status(401).json({ error: err.message || 'Refresh token invalide' });
+  }
+});
+
+// Logout Everywhere: Révoquer TOUS les tokens (sécurité si compte compromis)
+router.post('/logout-everywhere', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'Non authentifié' });
+    }
+    
+    // Révoquer TOUS les refresh tokens de cet utilisateur
+    await revokeAllUserTokens(userId);
+    
+    // Révoquer le JWT actuel
+    if (req.token) {
+      revokeToken(req.token);
+    }
+    
+    const opts = { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, 
+      sameSite: 'lax', 
+      path: '/' 
+    };
+    
+    res.clearCookie('auth', opts);
+    res.clearCookie('refreshToken', opts);
+    
+    console.log(`🔐 Logout Everywhere: Tous les tokens utilisateur ${userId} révoqués`);
+    return res.json({ 
+      ok: true, 
+      message: 'Déconnecté de tous les appareils. Reconnecter-vous pour continuer.'
+    });
+  } catch (err) {
+    console.error('Erreur logout everywhere:', err);
+    return res.status(500).json({ error: 'Erreur lors de la déconnexion' });
   }
 });
 

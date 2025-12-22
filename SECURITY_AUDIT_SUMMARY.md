@@ -9,8 +9,7 @@
 |----------|-------|-------|
 | **Score Sécurité** | 23/100 ❌ | ~65/100 ✅ |
 | **Vulnérabilités** | 15 (6 critiques CVSS 8+) | ~9 (0 critiques) |
-| **Risque Brèche** | 20M€ 💸 | ~2M€ 💰 |
-| **ROI** | — | **267x** ✨ |
+| **Risque Brèche** | Critique 🔴 | Réduit 🟢 |
 
 ---
 
@@ -270,7 +269,7 @@ FRONTEND_URL=https://monsite.com
 
 ✅ **6 vulnérabilités critiques corrigées**  
 ✅ **Score sécurité:** 23/100 → ~65/100  
-✅ **Risque:** 20M€ → ~2M€  
+✅ **Risque:** Réduit significativement  
 ✅ **Serveur:** Opérationnel et testé  
 ✅ **Documentation:** Complète  
 

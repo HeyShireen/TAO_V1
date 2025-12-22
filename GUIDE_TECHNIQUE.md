@@ -76,58 +76,53 @@ TAO V1 est un système de gestion et de comparaison d'offres permettant de :
 - **Fichiers statiques**: Serveur Express intégré
 - **Stockage**: PostgreSQL uniquement (pas de S3/blob storage)
 
-### Structure du projet
+### Architecture SPA et Routing
 
-```
-TAO_V1/
-├── server/                      # Backend Node.js
-│   ├── src/
-│   │   ├── server.js           # Point d'entrée principal
-│   │   ├── db.js               # Connexion PostgreSQL + migrations
-│   │   ├── security-init.js    # Vérifications sécurité au startup
-│   │   ├── schema.sql          # Schéma de base initial
-│   │   ├── middleware.*.js     # Middlewares (auth, errors, security, roles)
-│   │   ├── utils.*.js          # Utilitaires (email, hash, validation, permissions)
-│   │   ├── routes/             # Routes API REST
-│   │   │   ├── auth.js         # Authentification (login, register, reset)
-│   │   │   ├── projects.js     # CRUD projets
-│   │   │   ├── lots.js         # CRUD lots
-│   │   │   ├── rounds.js       # CRUD rondes
-│   │   │   ├── questions.js    # Articles + MOE + Offres
-│   │   │   ├── options.js      # Options (mini-lots) + items + offres
-│   │   │   ├── question-config.js # Configuration RAO
-│   │   │   ├── shares.js       # Partages inter-utilisateurs
-│   │   │   ├── users.js        # Gestion utilisateurs
-│   │   │   ├── access-requests.js # Demandes d'accès
-│   │   │   └── exports.js      # Export Excel/Word
-│   │   ├── migrations/         # Migrations SQL versionnées
-│   │   │   ├── 001_add_rao_system.sql
-│   │   │   ├── ...
-│   │   │   └── 018_fix_options_tables.sql
-│   │   ├── public/             # Frontend SPA
-│   │   │   ├── index.html      # Application principale
-│   │   │   ├── app.js          # Logique métier (2000+ lignes)
-│   │   │   ├── login.html      # Page connexion
-│   │   │   ├── login.js        # Logique authentification
-│   │   │   ├── home.html       # Page d'accueil publique
-│   │   │   ├── styles.css      # Styles globaux
-│   │   │   └── assets/         # Images, icônes
-│   │   ├── importers/          # Importeurs de données
-│   │   │   ├── excel.js        # Import fichiers .xlsx
-│   │   │   └── clipboard.js    # Import depuis presse-papiers
-│   │   └── tools/              # Scripts utilitaires
-│   │       ├── init-db.js      # Initialisation BDD
-│   │       ├── check-users.js  # Vérification utilisateurs
-│   │       └── ...
-│   ├── package.json            # Dépendances backend
-│   ├── .env.example            # Template variables environnement
-│   └── .env                    # Variables réelles (git ignored)
-├── docs/                       # Documentation
-│   ├── audit/                  # Audits sécurité
-│   └── reports/                # Rapports et guides de maintenance 
-├── SECURITY_AUDIT/             # Dossier audit sécurité structuré
-├── README.md                   # ;]
-├── GUIDE_TECHNIQUE.md          # Ce fichier
-└── render.yaml                 # Configuration déploiement Render
+TAO V1 utilise une architecture **Single Page Application (SPA)** avec un système de routing côté serveur pour gérer l'authentification.
 
-```
+#### Pages principales
+
+Le serveur Express expose trois routes HTML distinctes :
+
+1. **`/` (Page d'accueil publique)**
+   - Fichier servi : `public/home.html`
+   - Page de présentation et point d'entrée pour les visiteurs
+   - Redirection vers `/login` pour se connecter
+
+2. **`/login` (Page de connexion)**
+   - Fichier servi : `public/login.html`
+   - Script : `public/login.js`
+   - Formulaire d'authentification (email + mot de passe)
+   - Fonctionnalités :
+     - Connexion utilisateur existant
+     - Création de compte 
+     - Réinitialisation mot de passe
+     - Vérification email
+   - Après connexion réussie : redirection automatique vers `/app`
+
+3. **`/app` (Application principale - SPA)**
+   - Fichier servi : `public/index.html`
+   - Script : `public/app.js` 
+   - **Authentification requise** : vérifie le token JWT avant de servir la page
+   - Si non authentifié : redirection automatique vers `/login`
+   - Contient toute l'interface utilisateur pour :
+     - Gestion des projets, lots, rondes
+     - Saisie et comparaison des offres
+     - Gestion des options
+     - Système RAO
+     - Exports Excel/Word
+     - Administration utilisateurs
+
+#### Sécurité des routes
+
+**Routes publiques** (pas d'auth requise) :
+- `GET /` → home.html
+- `GET /login` → login.html
+- `POST /api/auth/login` → Authentification
+- `POST /api/auth/register` → Création compte
+- `POST /api/auth/reset-password` → Réinitialisation
+
+**Routes protégées** (auth requise) :
+- `GET /app` → index.html (vérifie JWT côté serveur)
+- `GET /api/*` → Toutes les API (vérifie JWT via middleware)
+

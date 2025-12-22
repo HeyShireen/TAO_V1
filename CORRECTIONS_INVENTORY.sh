@@ -6,12 +6,12 @@
 
 cat << "EOF"
 
-╔════════════════════════════════════════════════════════════════════════════╗
-║                   ✅ CORRECTIONS DE SÉCURITÉ APPLIQUÉES                     ║
-║                                                                            ║
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                   ✅ CORRECTIONS DE SÉCURITÉ APPLIQUÉES                   ║
+║                                                                           ║
 ║   6 vulnérabilités critiques corrigées dans TAO V1                        ║
 ║   Serveur testé et fonctionnel avec sécurité stricte                      ║
-╚════════════════════════════════════════════════════════════════════════════╝
+╚═══════════════════════════════════════════════════════════════════════════╝
 
 📊 STATUS: 6/6 corrections implémentées
 🔒 Sécurité: Validée au startup
@@ -108,16 +108,16 @@ cat << "EOF"
     ❌ Tokens non-revocables après logout
     ❌ Passwords trop faibles (6 caractères)
     ❌ Pas de validation .env
-    ❌ Risque de brèche: 20M€
+    ❌ Risque de brèche: Critique
 
   APRÈS (65/100 score):
     ✅ CORS whitelist stricte
     ✅ Tokens révocables + logout sécurisé
     ✅ Passwords 12 chars + complexité NIST
     ✅ Validation stricte au startup
-    ✅ Risque de brèche: ~2M€
+    ✅ Risque de brèche: Réduit
 
-  💰 ROI: 75k€ investis vs 20M€ sauvés = 267x!
+  💰 ROI: Très positif (corrections critiques appliquées)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -14,7 +14,7 @@ Tous les rapports et analyses de l'audit de sécurité.
   - Verdict global (CVSS 23/100)
   - Top 5 vulnérabilités critiques
   - Timeline + Budget
-  - Impact financier (20M€ de risque)
+  - Impact financier (risque potentiellement élevé)
 
 ### 2. **SECURITY_AUDIT.md**
 - **Format:** Rapport technique détaillé (30 pages)

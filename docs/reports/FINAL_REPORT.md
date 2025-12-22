@@ -146,7 +146,7 @@ GET /login 200 1.517 ms - 2211
 ```
 Sécurité Score:    23/100 ❌
 Vulnérabilités:    15 (6 critiques CVSS 8+)
-Brèche potentielle: 20M€ 💸
+Brèche potentielle: Critique ⚠️
 Status production: ❌ NON-PRÊT
 ```
 
@@ -154,14 +154,14 @@ Status production: ❌ NON-PRÊT
 ```
 Sécurité Score:    ~65/100 ✅
 Vulnérabilités:    ~9 (0 critiques)
-Brèche potentielle: ~2M€ 💰
+Brèche potentielle: Réduite ✅
 Status production: ⏳ PRESQUE PRÊT
 ```
 
 **ROI Financier:**
 ```
 Investissement:   75k€
-Économies:        18M€ (risque évité)
+Impact:           Risque de brèche significativement réduit
 Ratio:            267x ✨
 ```
 

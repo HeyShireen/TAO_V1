@@ -163,7 +163,7 @@ JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('he
 ## 💰 IMPACT COMMERCIAL
 
 ### Coût d'inaction (déployer sans fix)
-- **Risque:** Breach de données → RGPD 20M€ + réputation
+- **Risque:** Breach de données → RGPD amende + réputation
 - **Temps:** 6-12 mois pour recovery
 - **Clients perdus:** 80%+
 
@@ -173,7 +173,7 @@ JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('he
 - **Testing:** Pen-test + QA = ~10k€
 - **Total:** ~75k€
 
-**ROI:** Prévient 20M€ de dégâts → 267x retour
+**ROI:** Prévient potentiellement des dégâts importants
 
 ---
 

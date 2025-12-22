@@ -136,7 +136,7 @@ Attaque:         SQL Injection via /api/exports
 Impact:          Tous les projets + offres exposés
 Dégâts:          50,000+ € (revenus perdus)
 Réputation:      Critique damage
-RGPD:            20M€ d'amende possible
+RGPD:            Amende possible en cas de non-conformité
 Temps Recovery:  6-12 mois
 
 SCÉNARIO 2: Escalade de Privilèges
@@ -173,7 +173,7 @@ Coûts:
   TOTAL COÛT:                         70,000 €
 
 Bénéfices:
-  ✓ Évite breach (20M€)             = 20,000,000 €
+  ✓ Évite breach (critique)        = Protection données
   ✓ Clients restent (80% retention)  = 800,000 €
   ✓ Réputation préservée             = 500,000 €
   ✓ Compétitivité                    = 200,000 €
