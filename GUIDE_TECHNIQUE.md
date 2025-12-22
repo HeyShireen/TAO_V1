@@ -26,7 +26,7 @@ TAO V1 est un système de gestion et de comparaison d'offres permettant de :
 - **Organiser** des projets complexes en lots et rondes d'appel d'offres
 - **Comparer** les soumissions de multiples entreprises sur des critères quantitatifs et financier 
 - **Analyser** les écarts MOE (Maître d'Œuvre) vs entreprises
-- **Générer** des tableaux comparatifs et des questions RAO (Réponse Aux Offres)
+- **Générer** des tableaux comparatifs et des questions a envoyer aux entreprises 
 - **Exporter** les analyses en formats Excel et Word
 
 ### Cas d'usage typique
