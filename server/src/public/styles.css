@@ -64,7 +64,7 @@
 html,body{ margin:0; height:100% }
 body{ 
   background-color: rgba(var(--bg-rgb), 0.88);
-  background-image: url('assets/background.jpg');
+  background-image: url('/assets/background.jpg');
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
