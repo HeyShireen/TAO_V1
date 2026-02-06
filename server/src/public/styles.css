@@ -1,61 +1,73 @@
 /* Thème sombre (par défaut) - eco/industriel */
 :root, [data-theme="dark"]{
-  --bg:#0f1310; 
-  --bg-rgb:15,19,16;
-  --bg-pattern:#151b17;
-  --fg:#e8ece6; 
-  --muted:#8a968d; 
-  --card:#171e1a; 
-  --border:#26302a;
-  --accent:#c27b41; 
-  --accent-rgb:194,123,65;
-  --accent-ghost:#2b1f14; 
-  --accent-dim:#a86a37;
-  --danger:#d14b3a; 
-  --danger-rgb:209,75,58;
-  --success:#4b8b5c; 
-  --success-rgb:75,139,92;
-  --sticky:#131a16;
-  --warning:#c19a3f;
-  --blueprint:#6fa37a;
-  --blueprint-rgb:111,163,122;
-  --copper:#c27b41;
-  --input-bg:#131a16;
+  --bg:#10150f; 
+  --bg-rgb:16,21,15;
+  --bg-pattern:#161d16;
+  --fg:#e9ece4; 
+  --muted:#8e9b8f; 
+  --card:#171f18; 
+  --border:#253126;
+  --accent:#7f8f52; 
+  --accent-rgb:127,143,82;
+  --accent-ghost:#232b1d; 
+  --accent-dim:#6d7c46;
+  --danger:#c24b3a; 
+  --danger-rgb:194,75,58;
+  --success:#5a8b5f; 
+  --success-rgb:90,139,95;
+  --sticky:#121914;
+  --warning:#b9a34a;
+  --blueprint:#7aa07a;
+  --blueprint-rgb:122,160,122;
+  --copper:#a7895d;
+  --input-bg:#121914;
+  --radius-xs:4px;
+  --radius-sm:6px;
+  --radius-md:10px;
+  --radius-lg:14px;
+  --shadow-soft:0 2px 10px rgba(0,0,0,0.25);
+  --shadow-strong:0 12px 32px rgba(0,0,0,0.45);
 }
 
 /* Thème clair */
 [data-theme="light"]{
-  --bg:#f2f4ef; 
-  --bg-rgb:242,244,239;
-  --bg-pattern:#dfe5d9;
-  --fg:#1f2421; 
-  --muted:#5d6a62; 
+  --bg:#f3f5ef; 
+  --bg-rgb:243,245,239;
+  --bg-pattern:#dde4d8;
+  --fg:#1f251f; 
+  --muted:#5f6c60; 
   --card:#ffffff; 
-  --border:#c7d0c6;
-  --accent:#b06c3a; 
-  --accent-rgb:176,108,58;
-  --accent-ghost:#f5e9df; 
-  --accent-dim:#c27b41;
-  --danger:#b83b2d; 
-  --danger-rgb:184,59,45;
-  --success:#3f7a51; 
-  --success-rgb:63,122,81;
-  --sticky:#f2f4ef;
-  --warning:#9a7a2e;
-  --blueprint:#4f8a60;
-  --blueprint-rgb:79,138,96;
-  --copper:#b06c3a;
+  --border:#c6d0c4;
+  --accent:#75874c; 
+  --accent-rgb:117,135,76;
+  --accent-ghost:#e9efe2; 
+  --accent-dim:#8a9a5a;
+  --danger:#b54334; 
+  --danger-rgb:181,67,52;
+  --success:#4b7f55; 
+  --success-rgb:75,127,85;
+  --sticky:#f3f5ef;
+  --warning:#9a8640;
+  --blueprint:#5d8a66;
+  --blueprint-rgb:93,138,102;
+  --copper:#7d6a49;
   --input-bg:#ffffff;
+  --radius-xs:4px;
+  --radius-sm:6px;
+  --radius-md:10px;
+  --radius-lg:14px;
+  --shadow-soft:0 2px 10px rgba(0,0,0,0.12);
+  --shadow-strong:0 12px 28px rgba(0,0,0,0.2);
 }
 
 *{ box-sizing:border-box } 
 html,body{ margin:0; height:100% }
 body{ 
   background: 
-    radial-gradient(1200px 600px at 10% 10%, rgba(194, 123, 65, 0.10) 0%, transparent 60%),
-    radial-gradient(900px 520px at 90% 20%, rgba(111, 163, 122, 0.10) 0%, transparent 65%),
-    radial-gradient(800px 520px at 50% 90%, rgba(111, 163, 122, 0.08) 0%, transparent 70%),
-    linear-gradient(135deg, rgba(255,255,255,0.04) 0%, transparent 45%),
+    radial-gradient(1200px 600px at 12% 8%, rgba(var(--accent-rgb), 0.12) 0%, transparent 60%),
+    radial-gradient(900px 520px at 88% 18%, rgba(var(--blueprint-rgb), 0.12) 0%, transparent 65%),
+    radial-gradient(800px 520px at 50% 92%, rgba(var(--blueprint-rgb), 0.08) 0%, transparent 70%),
+    linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 45%),
     repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
     repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
     linear-gradient(180deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.94) 55%, var(--bg) 100%),
@@ -85,7 +97,7 @@ h1,h2{
   background:var(--accent); 
   color:var(--bg); 
   border:none; 
-  border-radius:2px; 
+  border-radius:var(--radius-sm); 
   padding:10px 18px; 
   cursor:pointer; 
   transition:all .2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -138,14 +150,14 @@ h1,h2{
 .btn-lg{
   padding: 16px 48px;
   font-size: 1.1em;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 
 /* Chroma CTA button */
 .btn-chroma{
   background: transparent;
   color: #fff;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   isolation: isolate;
 }
 .btn-chroma::after{
@@ -187,10 +199,10 @@ h1,h2{
 .card{ 
   background:var(--card); 
   border:1px solid var(--border); 
-  border-radius:3px; 
+  border-radius:var(--radius-sm); 
   padding:16px; 
   margin:12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-soft);
   position: relative;
 }
 .card::before {
@@ -447,7 +459,7 @@ h1,h2{
   background:var(--card); 
   border:1px solid var(--border); 
   border-left:3px solid var(--border);
-  border-radius:2px; 
+  border-radius:var(--radius-sm); 
   padding:20px; 
   cursor:pointer; 
   transition:all .3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -474,7 +486,7 @@ h1,h2{
   background:transparent;
   border:2px solid var(--accent);
   color:var(--accent); 
-  border-radius:2px; 
+  border-radius:var(--radius-xs); 
   font-weight:600; 
   font-size:16px;
   font-family: 'IBM Plex Mono', monospace;
@@ -490,7 +502,7 @@ h1,h2{
   font-size:15px; 
   margin-top:12px; 
   padding:6px; 
-  border-radius:2px; 
+  border-radius:var(--radius-xs); 
   transition:all .2s;
   font-family: 'Archivo', sans-serif;
 }
@@ -531,7 +543,7 @@ h1,h2{
 input,textarea,select{ 
   width:100%; 
   padding:10px 12px; 
-  border-radius:2px; 
+  border-radius:var(--radius-sm); 
   border:1px solid var(--border); 
   background:var(--input-bg); 
   color:var(--fg);
@@ -564,9 +576,9 @@ input:focus,textarea:focus,select:focus{
   overflow-x:auto;
   overflow-y:auto;
   border:1px solid var(--border); 
-  border-radius:2px; 
+  border-radius:var(--radius-sm); 
   background:var(--card);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-soft);
   /* Amélioration du scroll sur mobile */
   -webkit-overflow-scrolling: touch;
 }
@@ -1030,7 +1042,7 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   padding:16px; 
   background:var(--card); 
   border:2px solid var(--border); 
-  border-radius:2px; 
+  border-radius:var(--radius-sm); 
   cursor:pointer; 
   transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: 'IBM Plex Mono', monospace;
@@ -1054,7 +1066,7 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 .theme-preview{ 
   width:60px; 
   height:40px; 
-  border-radius:2px; 
+  border-radius:var(--radius-xs); 
   border:1px solid var(--border);
   position:relative;
   overflow:hidden;
@@ -1132,8 +1144,8 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   overflow: auto;
   background: var(--card);
   border: 2px solid var(--accent);
-  border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-strong);
   padding: 14px 16px;
   z-index: 1200;
   font-size: 12px;
@@ -1153,7 +1165,7 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   line-height: 1.4;
 }
 .help-item code {
@@ -1184,8 +1196,8 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   font-size: 11px;
   max-width: 240px;
   z-index: 1300;
-  border-radius: 4px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-soft);
   pointer-events: none;
   opacity: 0;
   transition: opacity .25s, transform .25s;
@@ -1277,11 +1289,11 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 .modal-content {
   background: var(--bg);
   border: 2px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 32px;
   max-width: 500px;
   width: 90%;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-strong);
 }
 
 .modal-content h3 {
