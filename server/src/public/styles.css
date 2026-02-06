@@ -1,42 +1,42 @@
-/* Thème sombre (par défaut) */
+/* Thème sombre (par défaut) - eco/industriel */
 :root, [data-theme="dark"]{
-  --bg:#0a0e14; 
-  --bg-rgb:10,14,20;
-  --bg-pattern:#0d1117;
-  --fg:#e1e4e8; 
-  --muted:#8b949e; 
-  --card:#161b22; 
-  --border:#21262d;
-  --accent:#ff8c42; 
-  --accent-ghost:#2d1810; 
-  --accent-dim:#d97636;
-  --danger:#f85149; 
-  --success:#3fb950; 
-  --sticky:#0d1117;
-  --warning:#d29922;
-  --blueprint:#1f6feb;
-  --copper:#ff8c42;
-  --input-bg:#0d1117;
+  --bg:#0f1310; 
+  --bg-rgb:15,19,16;
+  --bg-pattern:#151b17;
+  --fg:#e8ece6; 
+  --muted:#8a968d; 
+  --card:#171e1a; 
+  --border:#26302a;
+  --accent:#c27b41; 
+  --accent-ghost:#2b1f14; 
+  --accent-dim:#a86a37;
+  --danger:#d14b3a; 
+  --success:#4b8b5c; 
+  --sticky:#131a16;
+  --warning:#c19a3f;
+  --blueprint:#6fa37a;
+  --copper:#c27b41;
+  --input-bg:#131a16;
 }
 
 /* Thème clair */
 [data-theme="light"]{
-  --bg:#f6f8fa; 
-  --bg-rgb:246,248,250;
-  --bg-pattern:#e1e4e8;
-  --fg:#24292f; 
-  --muted:#57606a; 
+  --bg:#f2f4ef; 
+  --bg-rgb:242,244,239;
+  --bg-pattern:#dfe5d9;
+  --fg:#1f2421; 
+  --muted:#5d6a62; 
   --card:#ffffff; 
-  --border:#d0d7de;
-  --accent:#d97636; 
-  --accent-ghost:#fff0e6; 
-  --accent-dim:#ff8c42;
-  --danger:#cf222e; 
-  --success:#1a7f37; 
-  --sticky:#f6f8fa;
-  --warning:#9a6700;
-  --blueprint:#0969da;
-  --copper:#d97636;
+  --border:#c7d0c6;
+  --accent:#b06c3a; 
+  --accent-ghost:#f5e9df; 
+  --accent-dim:#c27b41;
+  --danger:#b83b2d; 
+  --success:#3f7a51; 
+  --sticky:#f2f4ef;
+  --warning:#9a7a2e;
+  --blueprint:#4f8a60;
+  --copper:#b06c3a;
   --input-bg:#ffffff;
 }
 
@@ -44,16 +44,15 @@
 html,body{ margin:0; height:100% }
 body{ 
   background: 
-    radial-gradient(ellipse at 10% 20%, rgba(31, 111, 235, 0.12) 0%, transparent 40%),
-    radial-gradient(ellipse at 90% 80%, rgba(255, 140, 66, 0.1) 0%, transparent 40%),
-    radial-gradient(circle at 50% 50%, rgba(255, 140, 66, 0.03) 0%, transparent 50%),
-    repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,140,66,0.02) 2px, rgba(255,140,66,0.02) 4px),
-    repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(31,111,235,0.02) 2px, rgba(31,111,235,0.02) 4px),
-    linear-gradient(180deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.95) 50%, var(--bg) 100%),
+    radial-gradient(1200px 600px at 10% 10%, rgba(194, 123, 65, 0.10) 0%, transparent 60%),
+    radial-gradient(900px 520px at 90% 20%, rgba(111, 163, 122, 0.10) 0%, transparent 65%),
+    radial-gradient(800px 520px at 50% 90%, rgba(111, 163, 122, 0.08) 0%, transparent 70%),
+    linear-gradient(135deg, rgba(255,255,255,0.04) 0%, transparent 45%),
     repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
     repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg-pattern) 1px, var(--bg-pattern) 2px),
+    linear-gradient(180deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.94) 55%, var(--bg) 100%),
     var(--bg);
-  background-size: 100% 100%, 100% 100%, 100% 100%, 80px 80px, 80px 80px, 100% 100%, 60px 60px, 60px 60px, 100% 100%;
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 70px 70px, 70px 70px, 100% 100%, 100% 100%;
   background-attachment: fixed;
   color:var(--fg); 
   font:15px/1.6 'Archivo', -apple-system, sans-serif;
