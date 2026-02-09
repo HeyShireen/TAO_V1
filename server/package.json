@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node src/server.js",
-    "db:init": "node src/tools/init-db.js"
+    "dev": "node src/app/server.js",
+    "db:init": "node src/app/tools/init-db.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

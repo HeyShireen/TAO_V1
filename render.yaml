@@ -6,7 +6,7 @@ services:
     region: frankfurt  # ou oregon, singapore selon votre localisation
     plan: free  # ou starter pour production
     buildCommand: cd server && npm install
-    startCommand: cd server && node src/server.js
+    startCommand: cd server && node src/app/server.js
     envVars:
       - key: NODE_ENV
         value: production
