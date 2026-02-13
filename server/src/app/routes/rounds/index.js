@@ -273,8 +273,8 @@ router.post('/:roundId/duplicate', async (req, res) => {
       // Copier les offres pour chaque item
       for (const item of itemsResult.rows) {
         await client.query(
-          `INSERT INTO offers (item_id, company_id, qty, unit_price, round_id)
-           SELECT item_id, company_id, qty, unit_price, $1
+          `INSERT INTO offers (item_id, company_id, qty, unit_price, round_id, comment)
+           SELECT item_id, company_id, qty, unit_price, $1, comment
            FROM offers WHERE item_id = $2 AND round_id = $3`,
           [newRoundId, item.id, roundId]
         );

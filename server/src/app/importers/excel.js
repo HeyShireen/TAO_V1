@@ -11,7 +11,7 @@ import { query } from '../db.js';
  *  - <Company Name> Montant
  * Sheet can be the first sheet or a sheet named like the lot. The importer tries to map automatically.
  */
-export async function importLotFromExcel({ lotId, buffer }) {
+export async function importLotFromExcel({ lotId, buffer, roundId }) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const ws = wb.worksheets[0];
@@ -64,7 +64,7 @@ export async function importLotFromExcel({ lotId, buffer }) {
 
   const numCol = findHeader(['num']);
   const desigCol = findHeader(['désignation','designation','libellé','libelle']);
-  const baseUnitCol = findHeader([' u','u ', 'unité','unite']); // try to avoid company U by using spaces
+  const baseUnitCol = findHeader(['unité','unite']); // strict match only on 'unité'/'unite' to avoid false positives
 
   // MOE columns
   const moeQtyCol = findHeader(['quantité moe','quantite moe','qté moe','qte moe','quantité moé','quantite moé','quantité','quantite']);
@@ -144,8 +144,8 @@ export async function importLotFromExcel({ lotId, buffer }) {
       // Some rows may be empty for a company; skip if no price/unit provided
       if (uq != null || up != null || uu != null || um != null) {
         await query(
-          'INSERT INTO offers (item_id, company_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (item_id, company_id) DO NOTHING',
-          [itemId, company.id, uu, uq, up, um]
+          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount',
+          [itemId, company.id, roundId || null, uu, uq, up, um]
         );
       }
     }

@@ -2,8 +2,15 @@ import { query } from '../db.js';
 
 const normalize = (s) => (s ?? '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
 
+/** Convertit une valeur en nombre, retourne null si vide/invalide/zéro */
+function safeNum(val) {
+  if (val == null || val === '') return null;
+  const n = Number(val);
+  return isFinite(n) ? n : null;
+}
+
 // rows: array of arrays; headers: array of strings
-export async function importLotFromClipboard({ lotId, headers, rows }) {
+export async function importLotFromClipboard({ lotId, headers, rows, roundId }) {
   if (!headers.length || !rows.length) throw new Error('Tableau vide');
 
   const normHeaders = headers.map(normalize);
@@ -14,7 +21,7 @@ export async function importLotFromClipboard({ lotId, headers, rows }) {
 
   const numIdx   = findHeader(['num']);
   const desIdx   = findHeader(['désignation','designation','libellé','libelle']);
-  const uIdx     = findHeader([' u','u ','unité','unite']);
+  const uIdx     = findHeader(['unité','unite']);
   const moeQIdx  = findHeader(['quantité moe','quantite moe','qté moe','qte moe','quantité','quantite']);
   const moePUIdx = findHeader(['pu moe','prix unitaire moe','p.u moe','p.u. moe','pu moé']);
   const moeMTIdx = findHeader(['montant moe','mt moe','montant moé']);
@@ -63,9 +70,9 @@ export async function importLotFromClipboard({ lotId, headers, rows }) {
     position += 1;
     const num = numIdx >= 0 ? row[numIdx] : null;
     const u   = uIdx   >= 0 ? row[uIdx]   : null;
-    const qty = moeQIdx >= 0 ? Number(row[moeQIdx]) : null;
-    const pu  = moePUIdx >= 0 ? Number(row[moePUIdx]) : null;
-    const mt  = moeMTIdx >= 0 && row[moeMTIdx] !== '' ? Number(row[moeMTIdx]) : (qty!=null && pu!=null ? qty*pu : null);
+    const qty = moeQIdx >= 0 ? safeNum(row[moeQIdx]) : null;
+    const pu  = moePUIdx >= 0 ? safeNum(row[moePUIdx]) : null;
+    const mt  = moeMTIdx >= 0 && row[moeMTIdx] !== '' ? safeNum(row[moeMTIdx]) : (qty!=null && pu!=null ? qty*pu : null);
 
     const itemRes = await query(
       'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
@@ -78,14 +85,14 @@ export async function importLotFromClipboard({ lotId, headers, rows }) {
 
     for (const comp of companies) {
       const ci = comp.cols;
-      const uq = ci.qty != null ? Number(row[ci.qty]) : null;
-      const up = ci.pu  != null ? Number(row[ci.pu])  : null;
+      const uq = ci.qty != null ? safeNum(row[ci.qty]) : null;
+      const up = ci.pu  != null ? safeNum(row[ci.pu])  : null;
       const uu = ci.u   != null ? row[ci.u]           : null;
-      const um = ci.mt  != null && row[ci.mt] !== '' ? Number(row[ci.mt]) : (uq!=null && up!=null ? uq*up : null);
+      const um = ci.mt  != null && row[ci.mt] !== '' ? safeNum(row[ci.mt]) : (uq!=null && up!=null ? uq*up : null);
       if (uq!=null || up!=null || uu!=null || um!=null) {
         await query(
-          'INSERT INTO offers (item_id, company_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (item_id, company_id) DO NOTHING',
-          [itemId, comp.id, uu, uq, up, um]
+          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount',
+          [itemId, comp.id, roundId || null, uu, uq, up, um]
         );
       }
     }

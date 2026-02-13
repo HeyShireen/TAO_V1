@@ -34,6 +34,9 @@ let lotOptions = [];        // [{ id, designation, unit, offers:[{company_id,qty
 let selectedRoundOptions = new Set();
 const undoStack = [];
 const redoStack = [];
+const DEFAULT_SIMULATIONS = 3;
+let roundsSimulations = [];
+let nextSimulationId = 1;
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -109,6 +112,11 @@ function amountOf(q, pu){
   const n1 = parseNum(q), n2 = parseNum(pu);
   if (!Number.isFinite(n1) || !Number.isFinite(n2)) return '';
   return formatNum(n1 * n2);
+}
+function amountCellHtml(q, pu, comment){
+  const amt = amountOf(q, pu);
+  if (!comment) return amt;
+  return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
 }
 
 /* ====== Loading Spinner ====== */
@@ -1329,6 +1337,32 @@ async function loadLotsForRound(){
   }
 }
 
+function resolveRoundsComparisonTargets(rounds, selectedRoundId) {
+  const sortedRounds = [...rounds].sort((a, b) => {
+    const aNum = Number(a.round_number);
+    const bNum = Number(b.round_number);
+    const aHasNum = Number.isFinite(aNum);
+    const bHasNum = Number.isFinite(bNum);
+    if (aHasNum && bHasNum) return aNum - bNum;
+    if (aHasNum) return -1;
+    if (bHasNum) return 1;
+    return (a.id || 0) - (b.id || 0);
+  });
+
+  const openingRound = sortedRounds.find(r => Number(r.round_number) === 0)
+    || sortedRounds.find(r => (r.name || '').toLowerCase().includes('ouverture'))
+    || sortedRounds[0]
+    || null;
+  const selectedRound = sortedRounds.find(r => r.id === selectedRoundId) || null;
+  let previousRound = null;
+  if (selectedRound) {
+    const idx = sortedRounds.findIndex(r => r.id === selectedRound.id);
+    if (idx > 0) previousRound = sortedRounds[idx - 1];
+  }
+
+  return { sortedRounds, openingRound, previousRound, selectedRound };
+}
+
 async function loadRoundsComparison(){
   if (!currentProject) return;
   
@@ -1342,29 +1376,42 @@ async function loadRoundsComparison(){
       return;
     }
     
-    // Peupler les sélecteurs de tours
-    const selectFrom = qs('#compare-round-from');
-    const selectTo = qs('#compare-round-to');
-    selectFrom.innerHTML = '<option value="">Sélectionner un tour...</option>';
-    selectTo.innerHTML = '<option value="">Sélectionner un tour...</option>';
+    // Peupler le selecteur de tour
+    const selectRound = qs('#compare-round');
+    const prevValue = selectRound?.value || '';
+    selectRound.innerHTML = '<option value="">Selectionner un tour...</option>';
     for (const round of rounds) {
-      selectFrom.innerHTML += `<option value="${round.id}">${round.name}</option>`;
-      selectTo.innerHTML += `<option value="${round.id}">${round.name}</option>`;
+      selectRound.innerHTML += `<option value="${round.id}">${round.name}</option>`;
     }
+
+    const defaultId = prevValue
+      || (currentRound?.id ? String(currentRound.id) : '')
+      || (rounds[rounds.length - 1] ? String(rounds[rounds.length - 1].id) : '');
+    if (defaultId) selectRound.value = defaultId;
 
     const companiesIndex = buildCompaniesIndex(lots, rounds);
     const optionsData = await loadRoundsOptionsData(lots, rounds);
     renderRoundsOptionsSelection(lots, rounds, companiesIndex, optionsData);
+    renderRoundsSimulation(lots, rounds, optionsData);
     
     const table = qs('#rounds-compare-table');
     const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
     const tfoot = table.querySelector('tfoot');
     
-    // Récupérer les tours sélectionnés pour l'analyse
-    const roundFromId = selectFrom.value ? parseInt(selectFrom.value) : null;
-    const roundToId = selectTo.value ? parseInt(selectTo.value) : null;
-    const showAnalysis = roundFromId && roundToId && roundFromId !== roundToId;
+    // Récupérer le tour sélectionné + cibles d'analyse auto
+    const selectedRoundId = selectRound.value ? parseInt(selectRound.value, 10) : null;
+    const { openingRound, previousRound } = resolveRoundsComparisonTargets(rounds, selectedRoundId);
+    const roundOpeningId = openingRound?.id || null;
+    const roundPreviousId = previousRound?.id || null;
+    const showOpeningAnalysis = selectedRoundId && roundOpeningId && roundOpeningId !== selectedRoundId;
+    const showPreviousAnalysis = selectedRoundId && roundPreviousId && roundPreviousId !== selectedRoundId && roundPreviousId !== roundOpeningId;
+    const compareView = qs('#rounds-compare-view');
+    if (compareView) {
+      compareView.dataset.compareSelected = selectedRoundId ? String(selectedRoundId) : '';
+      compareView.dataset.compareOpening = roundOpeningId ? String(roundOpeningId) : '';
+      compareView.dataset.comparePrevious = roundPreviousId ? String(roundPreviousId) : '';
+    }
     
     // Construire les en-têtes fusionnés au format du récap (Lot/MOE + groupes par tour)
     thead.innerHTML = '';
@@ -1405,14 +1452,29 @@ async function loadRoundsComparison(){
       }
     }
 
-    // Groupe Analyse
-    if (showAnalysis) {
+    // Groupes Analyse
+    if (showOpeningAnalysis) {
       const grpAna = document.createElement('th');
       grpAna.colSpan = 3;
       grpAna.className = 'amount';
       grpAna.style.cssText = 'background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)';
-      grpAna.innerHTML = `${icon('search')}Analyse`;
+      grpAna.innerHTML = `${icon('search')}Analyse vs ouverture`;
       headerRow1.appendChild(grpAna);
+
+      const thDelta = document.createElement('th'); thDelta.className = 'amount'; thDelta.textContent = 'Δ Montant';
+      const thDeltaPct = document.createElement('th'); thDeltaPct.className = 'amount'; thDeltaPct.textContent = 'Δ %';
+      const thTrend = document.createElement('th'); thTrend.className = 'amount'; thTrend.textContent = 'Tendance';
+      headerRow2.appendChild(thDelta);
+      headerRow2.appendChild(thDeltaPct);
+      headerRow2.appendChild(thTrend);
+    }
+    if (showPreviousAnalysis) {
+      const grpAnaPrev = document.createElement('th');
+      grpAnaPrev.colSpan = 3;
+      grpAnaPrev.className = 'amount';
+      grpAnaPrev.style.cssText = 'background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)';
+      grpAnaPrev.innerHTML = `${icon('search')}Analyse vs tour precedent`;
+      headerRow1.appendChild(grpAnaPrev);
 
       const thDelta = document.createElement('th'); thDelta.className = 'amount'; thDelta.textContent = 'Δ Montant';
       const thDeltaPct = document.createElement('th'); thDeltaPct.className = 'amount'; thDeltaPct.textContent = 'Δ %';
@@ -1494,18 +1556,31 @@ async function loadRoundsComparison(){
         totalsByRound[round.id] += bestPrice || 0;
       }
 
-      // Analyse (totaux par lot)
-      if (showAnalysis) {
-        const fromTotal = bestPriceByLotRound.get(`${lotId}:${roundFromId}`) || 0;
-        const toTotal = bestPriceByLotRound.get(`${lotId}:${roundToId}`) || 0;
+      const appendAnalysisCells = (row, fromTotal, toTotal, withBorder) => {
         const delta = toTotal - fromTotal;
         const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
-        const tdDelta = document.createElement('td'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
+        const tdDelta = document.createElement('td');
+        tdDelta.className = 'amount';
+        tdDelta.style.cssText = `background:rgba(255,140,66,0.05);${withBorder ? 'border-left:2px solid var(--accent);' : ''}font-weight:600`;
+        tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)');
+        tdDelta.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
         const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
         const tdTrend = document.createElement('td'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
-        lotRow.appendChild(tdDelta);
-        lotRow.appendChild(tdPct);
-        lotRow.appendChild(tdTrend);
+        row.appendChild(tdDelta);
+        row.appendChild(tdPct);
+        row.appendChild(tdTrend);
+      };
+
+      // Analyse (totaux par lot)
+      if (showOpeningAnalysis) {
+        const fromTotal = bestPriceByLotRound.get(`${lotId}:${roundOpeningId}`) || 0;
+        const toTotal = bestPriceByLotRound.get(`${lotId}:${selectedRoundId}`) || 0;
+        appendAnalysisCells(lotRow, fromTotal, toTotal, true);
+      }
+      if (showPreviousAnalysis) {
+        const fromTotal = bestPriceByLotRound.get(`${lotId}:${roundPreviousId}`) || 0;
+        const toTotal = bestPriceByLotRound.get(`${lotId}:${selectedRoundId}`) || 0;
+        appendAnalysisCells(lotRow, fromTotal, toTotal, true);
       }
 
       tbody.appendChild(lotRow);
@@ -1564,24 +1639,27 @@ async function loadRoundsComparison(){
         }
 
         // Analyse par entreprise
-        if (showAnalysis) {
-          const fromCompanies = lot.companies_by_round?.[roundFromId] || [];
-          const toCompanies = lot.companies_by_round?.[roundToId] || [];
+        if (showOpeningAnalysis) {
+          const fromCompanies = lot.companies_by_round?.[roundOpeningId] || [];
+          const toCompanies = lot.companies_by_round?.[selectedRoundId] || [];
           const fromBase = (fromCompanies.find(c => c.company_id === companyId)?.total) || 0;
           const toBase = (toCompanies.find(c => c.company_id === companyId)?.total) || 0;
-          const fromOptions = getSelectedOptionTotals(optionsData, lotId, roundFromId)[companyId] || 0;
-          const toOptions = getSelectedOptionTotals(optionsData, lotId, roundToId)[companyId] || 0;
+          const fromOptions = getSelectedOptionTotals(optionsData, lotId, roundOpeningId)[companyId] || 0;
+          const toOptions = getSelectedOptionTotals(optionsData, lotId, selectedRoundId)[companyId] || 0;
           const fromTotal = fromBase + fromOptions;
           const toTotal = toBase + toOptions;
-          const delta = toTotal - fromTotal;
-          const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
-
-          const tdDelta = document.createElement('td'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.textContent = (delta > 0 ? '+' : '') + fmtEuro(delta);
-          const tdPct = document.createElement('td'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.textContent = (deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
-          const tdTrend = document.createElement('td'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
-          row.appendChild(tdDelta);
-          row.appendChild(tdPct);
-          row.appendChild(tdTrend);
+          appendAnalysisCells(row, fromTotal, toTotal, true);
+        }
+        if (showPreviousAnalysis) {
+          const fromCompanies = lot.companies_by_round?.[roundPreviousId] || [];
+          const toCompanies = lot.companies_by_round?.[selectedRoundId] || [];
+          const fromBase = (fromCompanies.find(c => c.company_id === companyId)?.total) || 0;
+          const toBase = (toCompanies.find(c => c.company_id === companyId)?.total) || 0;
+          const fromOptions = getSelectedOptionTotals(optionsData, lotId, roundPreviousId)[companyId] || 0;
+          const toOptions = getSelectedOptionTotals(optionsData, lotId, selectedRoundId)[companyId] || 0;
+          const fromTotal = fromBase + fromOptions;
+          const toTotal = toBase + toOptions;
+          appendAnalysisCells(row, fromTotal, toTotal, true);
         }
 
         tbody.appendChild(row);
@@ -1624,9 +1702,21 @@ async function loadRoundsComparison(){
     }
 
     // Totaux d'analyse
-    if (showAnalysis) {
-      const fromTotal = totalsByRound[roundFromId] || 0;
-      const toTotal = totalsByRound[roundToId] || 0;
+    if (showOpeningAnalysis) {
+      const fromTotal = totalsByRound[roundOpeningId] || 0;
+      const toTotal = totalsByRound[selectedRoundId] || 0;
+      const delta = toTotal - fromTotal;
+      const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
+      const tdDelta = document.createElement('th'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.innerHTML = `<strong>${(delta > 0 ? '+' : '') + fmtEuro(delta)}</strong>`;
+      const tdPct = document.createElement('th'); tdPct.className = 'amount'; tdPct.style.cssText = 'background:rgba(255,140,66,0.05);font-weight:600'; tdPct.style.color = deltaPct < 0 ? 'var(--success)' : (deltaPct > 0 ? 'var(--danger)' : 'var(--fg)'); tdPct.innerHTML = `<strong>${(deltaPct > 0 ? '+' : '') + deltaPct.toFixed(1)}%</strong>`;
+      const tdTrend = document.createElement('th'); tdTrend.className = 'amount'; tdTrend.style.cssText = 'background:rgba(255,140,66,0.05);font-size:20px'; tdTrend.textContent = delta < 0 ? '↓' : (delta > 0 ? '↑' : '↔'); tdTrend.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--muted)');
+      totalRow.appendChild(tdDelta);
+      totalRow.appendChild(tdPct);
+      totalRow.appendChild(tdTrend);
+    }
+    if (showPreviousAnalysis) {
+      const fromTotal = totalsByRound[roundPreviousId] || 0;
+      const toTotal = totalsByRound[selectedRoundId] || 0;
       const delta = toTotal - fromTotal;
       const deltaPct = fromTotal > 0 ? (delta / fromTotal) * 100 : 0;
       const tdDelta = document.createElement('th'); tdDelta.className = 'amount'; tdDelta.style.cssText = 'background:rgba(255,140,66,0.05);border-left:2px solid var(--accent);font-weight:600'; tdDelta.style.color = delta < 0 ? 'var(--success)' : (delta > 0 ? 'var(--danger)' : 'var(--fg)'); tdDelta.innerHTML = `<strong>${(delta > 0 ? '+' : '') + fmtEuro(delta)}</strong>`;
@@ -1643,6 +1733,222 @@ async function loadRoundsComparison(){
     console.error('Erreur chargement comparaison tours:', err);
     showNotify({ title:'Erreur', message:'Chargement comparaison: ' + err.message, type:'error' });
   }
+}
+
+function renderRoundsSimulation(lots, rounds, optionsData) {
+  const table = qs('#rounds-simulation-table');
+  if (!table) return;
+
+  const compareSelected = qs('#compare-round')?.value;
+  const roundId = compareSelected ? parseInt(compareSelected, 10) : null;
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  const tfoot = table.querySelector('tfoot');
+
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+  tfoot.innerHTML = '';
+
+  if (!roundId) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--muted)">Selectionnez un tour pour la simulation</td></tr>';
+    return;
+  }
+
+  const entrepriseMode = isEntreprise();
+  const companiesMap = new Map();
+  for (const lot of lots) {
+    const companies = lot.companies_by_round?.[roundId] || [];
+    for (const c of companies) {
+      const companyId = Number(c.company_id);
+      if (Number.isFinite(companyId)) {
+        companiesMap.set(companyId, c.company_name);
+      }
+    }
+  }
+
+  const companies = Array.from(companiesMap.entries())
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+  if (companies.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--muted)">Aucune entreprise pour ce tour</td></tr>';
+    return;
+  }
+
+  ensureRoundSimulations(companies);
+
+  const headerRow1 = document.createElement('tr');
+  const headerRow2 = document.createElement('tr');
+  const thLot = document.createElement('th'); thLot.className = 'sticky-col'; thLot.rowSpan = 2; thLot.textContent = 'Lot';
+  headerRow1.appendChild(thLot);
+  if (!entrepriseMode) {
+    const thMoe = document.createElement('th'); thMoe.className = 'amount'; thMoe.rowSpan = 2; thMoe.textContent = 'MOE (€)';
+    headerRow1.appendChild(thMoe);
+  }
+
+  for (const sim of roundsSimulations) {
+    const thSim = document.createElement('th');
+    thSim.colSpan = 2;
+    thSim.className = 'amount';
+    thSim.textContent = sim.name;
+    headerRow1.appendChild(thSim);
+
+    const thAmount = document.createElement('th'); thAmount.className = 'amount'; thAmount.textContent = 'Montant (€)';
+    const thCompany = document.createElement('th'); thCompany.textContent = 'Entreprise';
+    headerRow2.appendChild(thAmount);
+    headerRow2.appendChild(thCompany);
+  }
+
+  thead.appendChild(headerRow1);
+  thead.appendChild(headerRow2);
+
+  const totalBySim = new Map();
+  const missingMoeBySim = new Map();
+  roundsSimulations.forEach(sim => { totalBySim.set(sim.id, 0); missingMoeBySim.set(sim.id, false); });
+
+  const rerender = () => renderRoundsSimulation(lots, rounds, optionsData);
+
+  for (const lot of lots) {
+    const lotId = lot.lot_id ?? lot.id;
+    const lotLabel = lot.lot_code
+      ? `${lot.lot_code} ${lot.lot_name}`
+      : lot.lot_name;
+    const lotRow = document.createElement('tr');
+    const tdLot = document.createElement('td'); tdLot.className = 'sticky-col'; tdLot.textContent = lotLabel;
+    lotRow.appendChild(tdLot);
+
+    const hasMoe = Number.isFinite(lot.moe_total);
+    const moeTotal = hasMoe ? Number(lot.moe_total) : 0;
+    if (!entrepriseMode) {
+      const tdMoe = document.createElement('td'); tdMoe.className = 'amount'; tdMoe.textContent = hasMoe ? fmtEuro(moeTotal) : '—';
+      if (!hasMoe) {
+        tdMoe.style.color = 'var(--danger)';
+        tdMoe.style.fontWeight = '600';
+      }
+      lotRow.appendChild(tdMoe);
+    }
+
+    const companiesForLot = lot.companies_by_round?.[roundId] || [];
+    const optionTotalsByCompany = getSelectedOptionTotals(optionsData, lotId, roundId);
+    const totalsByCompany = new Map();
+    for (const c of companiesForLot) {
+      const companyId = Number(c.company_id);
+      if (!Number.isFinite(companyId)) continue;
+      totalsByCompany.set(companyId, (c.total || 0) + (optionTotalsByCompany[companyId] || 0));
+    }
+
+    for (const sim of roundsSimulations) {
+      const hasExplicit = sim.selections.has(lotId);
+      const selectedValue = hasExplicit ? sim.selections.get(lotId) : sim.defaultCompanyId;
+      const selectedCompanyId = selectedValue === 0 ? null : (selectedValue ?? null);
+      const selectedCompany = companies.find(c => c.id === selectedCompanyId);
+      const hasOffer = selectedCompanyId ? totalsByCompany.has(selectedCompanyId) : false;
+      let amount = null;
+      let missingMoe = false;
+
+      if (hasOffer) {
+        amount = totalsByCompany.get(selectedCompanyId);
+      } else if (hasMoe) {
+        amount = moeTotal;
+      } else {
+        amount = null;
+        missingMoe = true;
+      }
+
+      const tdAmount = document.createElement('td');
+      tdAmount.className = 'amount';
+      tdAmount.textContent = amount !== null ? fmtEuro(amount) : '—';
+      if (missingMoe) {
+        tdAmount.style.color = 'var(--danger)';
+        tdAmount.style.fontWeight = '600';
+        missingMoeBySim.set(sim.id, true);
+      }
+      lotRow.appendChild(tdAmount);
+
+      const tdCompany = document.createElement('td');
+      const select = document.createElement('select');
+      select.style.width = '100%';
+      const optNone = document.createElement('option');
+      optNone.value = '';
+      optNone.textContent = 'MOE';
+      select.appendChild(optNone);
+      for (const c of companies) {
+        const opt = document.createElement('option');
+        opt.value = String(c.id);
+        opt.textContent = c.name;
+        select.appendChild(opt);
+      }
+      select.value = selectedCompanyId ? String(selectedCompanyId) : '';
+      select.addEventListener('change', () => {
+        const val = select.value ? parseInt(select.value, 10) : null;
+        if (val) sim.selections.set(lotId, val);
+        else sim.selections.set(lotId, 0);
+        rerender();
+      });
+      tdCompany.appendChild(select);
+      lotRow.appendChild(tdCompany);
+
+      if (amount !== null) {
+        totalBySim.set(sim.id, (totalBySim.get(sim.id) || 0) + amount);
+      } else {
+        missingMoeBySim.set(sim.id, true);
+      }
+    }
+
+    tbody.appendChild(lotRow);
+  }
+
+  const totalRow = document.createElement('tr');
+  totalRow.className = 'total-row lot-header-row';
+  const tdTotalLabel = document.createElement('th'); tdTotalLabel.textContent = 'TOTAL';
+  totalRow.appendChild(tdTotalLabel);
+  if (!entrepriseMode) {
+    const tdTotalMoe = document.createElement('th'); tdTotalMoe.textContent = '';
+    totalRow.appendChild(tdTotalMoe);
+  }
+
+  for (const sim of roundsSimulations) {
+    const tdTotalAmount = document.createElement('th');
+    tdTotalAmount.className = 'amount';
+    tdTotalAmount.innerHTML = `<strong>${fmtEuro(totalBySim.get(sim.id) || 0)}</strong>`;
+    if (missingMoeBySim.get(sim.id)) {
+      tdTotalAmount.style.color = 'var(--danger)';
+    }
+    const tdTotalCompany = document.createElement('th');
+    tdTotalCompany.textContent = '';
+    totalRow.appendChild(tdTotalAmount);
+    totalRow.appendChild(tdTotalCompany);
+  }
+
+  tfoot.appendChild(totalRow);
+}
+
+function ensureRoundSimulations(companies) {
+  if (!roundsSimulations.length) {
+    for (let i = 0; i < DEFAULT_SIMULATIONS; i++) {
+      roundsSimulations.push({
+        id: nextSimulationId++,
+        name: `Simulation ${nextSimulationId - 1}`,
+        selections: new Map(),
+        defaultCompanyId: null
+      });
+    }
+  }
+
+  roundsSimulations.forEach((sim, idx) => {
+    if (!sim.defaultCompanyId || !companies.find(c => c.id === sim.defaultCompanyId)) {
+      sim.defaultCompanyId = companies[idx]?.id || companies[0]?.id || null;
+    }
+  });
+}
+
+function addSimulation() {
+  roundsSimulations.push({
+    id: nextSimulationId++,
+    name: `Simulation ${nextSimulationId - 1}`,
+    selections: new Map(),
+    defaultCompanyId: null
+  });
 }
 
 function buildCompaniesIndex(lots, rounds) {
@@ -2873,7 +3179,15 @@ async function refreshCompare(){
   const totalsByCompany = {};
   data.companies.forEach(c => totalsByCompany[c.id] = 0);
   
-  for (const r of data.rows){
+  // Construire un index de couleurs par company_id
+  const companyColors = {};
+  data.companies.forEach(c => { companyColors[c.id] = c.color || null; });
+
+  // Séparer les items normaux (DPGF) des items ajoutés par les entreprises
+  const dpgfRows = data.rows.filter(r => !r.source_company_id);
+  const addedRows = data.rows.filter(r => r.source_company_id);
+  
+  for (const r of dpgfRows){
     let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td>`;
     
     // Colonnes MOE (seulement si pas entreprise)
@@ -2903,10 +3217,9 @@ async function refreshCompare(){
     tr += '</tr>'; body.insertAdjacentHTML('beforeend', tr);
   }
   
-  // Les options sont maintenant rendues dans un tableau séparé sous le total.
-  
-  // Ajouter la ligne de totaux
-  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL</strong></td><td class="sticky-col2"></td><td></td>`;
+  // Ajouter la ligne de totaux DPGF
+  const totalColCount = 3 + (!entrepriseMode ? 3 : 0) + data.companies.length * (entrepriseMode ? 4 : 6);
+  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL DPGF</strong></td><td class="sticky-col2"></td><td></td>`;
   if (!entrepriseMode) {
     totalRow += `<td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
   }
@@ -2920,6 +3233,80 @@ async function refreshCompare(){
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
+
+  // --- Postes ajoutés par les entreprises ---
+  if (addedRows.length > 0) {
+    // Ligne séparateur
+    body.insertAdjacentHTML('beforeend',
+      `<tr class="added-posts-separator"><td colspan="${totalColCount}" style="padding:10px 16px;background:var(--warning, #f59e0b);color:#fff;font-weight:700;font-size:0.9em;text-align:center">
+        📋 Postes ajoutés par les entreprises (${addedRows.length})
+      </td></tr>`
+    );
+
+    // Totaux postes ajoutés par entreprise
+    const addedTotals = {};
+    data.companies.forEach(c => addedTotals[c.id] = 0);
+
+    for (const r of addedRows) {
+      // Trouver la couleur de l'entreprise qui a ajouté ce poste
+      const sourceColor = companyColors[r.source_company_id] || null;
+      const sourceName = data.companies.find(c => c.id === r.source_company_id)?.name || '';
+      const bgStyle = sourceColor ? `background-color: ${sourceColor}20;` : ''; // 20 = opacity ~12%
+      const borderStyle = sourceColor ? `border-left: 4px solid ${sourceColor};` : '';
+
+      let tr = `<tr style="${bgStyle}${borderStyle}" title="Poste ajouté par ${sourceName}">`;
+      tr += `<td class="sticky-col">${r.num||''}</td>`;
+      tr += `<td class="sticky-col2"><span style="font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceColor ? 'background:'+sourceColor+';color:#fff;' : 'background:var(--warning);color:#fff;'}margin-right:6px">${sourceName}</span>${r.designation||''}</td>`;
+      tr += `<td>${r.unit||''}</td>`;
+
+      if (!entrepriseMode) {
+        tr += `<td class="moe-border"></td><td></td><td></td>`; // Pas de MOE pour les postes ajoutés
+      }
+
+      for (const c of r.companies) {
+        if (entrepriseMode) {
+          tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td>`;
+        } else {
+          tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td></td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td></td>`;
+        }
+        if (c.mt != null) addedTotals[c.company_id] = (addedTotals[c.company_id] || 0) + parseNum(c.mt);
+      }
+      tr += '</tr>';
+      body.insertAdjacentHTML('beforeend', tr);
+    }
+
+    // Total des postes ajoutés
+    let addedTotalRow = `<tr class="total-row" style="background:var(--warning-bg, #fef3c7)"><td class="sticky-col"><strong>TOTAL Ajoutés</strong></td><td class="sticky-col2"></td><td></td>`;
+    if (!entrepriseMode) {
+      addedTotalRow += `<td class="moe-border"></td><td></td><td></td>`;
+    }
+    for (const c of data.companies) {
+      const at = addedTotals[c.id] || 0;
+      if (entrepriseMode) {
+        addedTotalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${at ? fmtEuro(at) : ''}</strong></td>`;
+      } else {
+        addedTotalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${at ? fmtEuro(at) : ''}</strong></td><td></td>`;
+      }
+    }
+    addedTotalRow += '</tr>';
+    body.insertAdjacentHTML('beforeend', addedTotalRow);
+
+    // Grand total (DPGF + postes ajoutés)
+    let grandTotalRow = `<tr class="total-row" style="border-top:3px double var(--border)"><td class="sticky-col"><strong>GRAND TOTAL</strong></td><td class="sticky-col2"></td><td></td>`;
+    if (!entrepriseMode) {
+      grandTotalRow += `<td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
+    }
+    for (const c of data.companies) {
+      const grand = (totalsByCompany[c.id] || 0) + (addedTotals[c.id] || 0);
+      if (entrepriseMode) {
+        grandTotalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(grand)}</strong></td>`;
+      } else {
+        grandTotalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(grand)}</strong></td><td></td>`;
+      }
+    }
+    grandTotalRow += '</tr>';
+    body.insertAdjacentHTML('beforeend', grandTotalRow);
+  }
 
   // Rendre le tableau des options séparé (sous le total)
   renderOptionsCompareTable(data.companies, entrepriseMode);
@@ -3171,6 +3558,7 @@ function buildSheetModel(raw){
       num: it.num || '',
       designation: it.designation || '',
       unit: it.unit || '',
+      source_company_id: it.source_company_id || null,
       moe: { 
         qty: moe.qty != null ? String(moe.qty) : '', 
         pu: moe.unit_price != null ? String(moe.unit_price) : '' 
@@ -3183,7 +3571,8 @@ function buildSheetModel(raw){
       row.offers[companyId] = { 
         u: o.unit ?? '', 
         qty: o.qty != null ? String(o.qty) : '', 
-        pu: o.unit_price != null ? String(o.unit_price) : '' 
+        pu: o.unit_price != null ? String(o.unit_price) : '',
+        comment: o.comment ?? ''
       };
     }
     return row;
@@ -3314,7 +3703,13 @@ function appendRowDOM(rIndex, data){
     td.dataset.c = String(c);
     if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
     if (col.wide) td.style.minWidth = '320px';
-    td.textContent = valueForCell(data, col.key);
+    if (col.key.startsWith('c.') && col.key.endsWith('.mt')) {
+      const [, cid] = col.key.split('.');
+      const o = data.offers?.[cid] || {};
+      td.innerHTML = amountCellHtml(o.qty, o.pu, o.comment);
+    } else {
+      td.textContent = valueForCell(data, col.key);
+    }
     tr.appendChild(td);
   }
   qs('#sheet-body').appendChild(tr);
@@ -3399,7 +3794,10 @@ function recalcRowAmountsRow(r){
       const qty = getCell(r,ciQty)?.textContent.trim();
       const pu  = getCell(r,ciPu )?.textContent.trim();
       const mt  = getCell(r,ciMt );
-      if (mt) mt.textContent = amountOf(qty, pu);
+      if (mt) {
+        const comment = sheetRows[r]?.offers?.[c.id]?.comment || '';
+        mt.innerHTML = amountCellHtml(qty, pu, comment);
+      }
     }
   }
 }
@@ -3594,16 +3992,34 @@ function renderLotCompanies(){
   for (const c of lotCompanies) {
     const chip = document.createElement('span');
     chip.className = 'chip';
+    // Appliquer la couleur de l'entreprise en bordure
+    if (c.color) {
+      chip.style.borderLeft = `4px solid ${c.color}`;
+      chip.style.background = `${c.color}15`;
+    }
     if (!isEntreprise()) {
-      chip.innerHTML = `${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+      chip.innerHTML = `<input type="color" value="${c.color || '#6b7280'}" title="Couleur" style="width:18px;height:18px;border:none;cursor:pointer;padding:0;background:none;vertical-align:middle;margin-right:4px">${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+      // Color picker
+      chip.querySelector('input[type="color"]').addEventListener('change', async (e) => {
+        const newColor = e.target.value;
+        try {
+          await api(`/lots/companies/${c.id}/color`, { method:'PATCH', body:{ color: newColor } });
+          c.color = newColor;
+          renderLotCompanies();
+          refreshCompare();
+        } catch (err) {
+          showNotify({ title:'Erreur', message:'Couleur: ' + err.message, type:'error' });
+        }
+      });
       chip.querySelector('button').addEventListener('click', async () => {
-        if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres de cette entreprise seront également supprimées.`)) {
+        if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres et postes ajoutés par cette entreprise seront également supprimés.`)) {
           return;
         }
         try {
           await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
           lotCompanies = lotCompanies.filter(x => x.id !== c.id);
           for (const r of sheetRows) delete r.offers[c.id];
+          renderLotCompanies();
           buildColModel();
           renderSheetInitial();
           refreshCompare();
@@ -3612,7 +4028,7 @@ function renderLotCompanies(){
         }
       });
     } else {
-      chip.textContent = c.name; // Pas de bouton suppression pour entreprise
+      chip.textContent = c.name;
     }
     wrap.appendChild(chip);
   }
@@ -3805,6 +4221,587 @@ function renderSheetBindings(){
         redo();
       }
       return;
+    }
+  });
+
+  // ======== Smart Import (DPGF / Offre) ========
+  bindSmartImport();
+}
+
+/* ================== SMART IMPORT (DPGF / Offre) ================== */
+let importState = {
+  mode: 'dpgf',   // 'dpgf' | 'offer'
+  file: null,
+  preview: null,
+  mapping: {},
+  fileId: null,
+};
+
+function bindSmartImport() {
+  const modal       = qs('#import-modal');
+  const closeBtn    = qs('#import-modal-close');
+  const openBtn     = qs('#open-import-modal');
+  const modeDpgf    = qs('#import-mode-dpgf');
+  const modeOffer   = qs('#import-mode-offer');
+  const fileInput   = qs('#import-file-input');
+  const step1       = qs('#import-step-1');
+  const step2       = qs('#import-step-2');
+  const step3       = qs('#import-step-3');
+  const backBtn     = qs('#import-back-step1');
+  const confirmBtn  = qs('#import-confirm');
+  const cancelBtn   = qs('#import-cancel');
+  const doneBtn     = qs('#import-done');
+  const sheetSelect = qs('#import-sheet-select');
+  const headerRowInput = qs('#import-header-row');
+
+  if (!modal || !openBtn) return;
+
+  function openModal() {
+    importState = { mode: 'dpgf', file: null, preview: null, mapping: {}, excludedRows: new Set(), fileId: null };
+    setImportMode('dpgf');
+    step1.classList.remove('hidden');
+    step2.classList.add('hidden');
+    step3.classList.add('hidden');
+    fileInput.value = '';
+    qs('#import-file-label').textContent = 'Cliquez pour sélectionner un fichier Excel (.xlsx, .xls)';
+    qs('#import-file-info')?.classList.add('hidden');
+    qs('#import-company-new').value = '';
+    qs('#import-company-select').value = '';
+    // Remplir le select companies
+    populateImportCompanies();
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+  }
+
+  function closeModal() {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+    importState = { mode: 'dpgf', file: null, preview: null, mapping: {}, excludedRows: new Set(), fileId: null };
+  }
+
+  openBtn.addEventListener('click', openModal);
+  closeBtn?.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  // Mode toggle
+  modeDpgf?.addEventListener('click', () => setImportMode('dpgf'));
+  modeOffer?.addEventListener('click', () => setImportMode('offer'));
+
+  function setImportMode(mode) {
+    importState.mode = mode;
+    if (mode === 'dpgf') {
+      modeDpgf.classList.add('active'); modeDpgf.classList.remove('ghost');
+      modeOffer.classList.remove('active'); modeOffer.classList.add('ghost');
+      qs('#import-offer-fields')?.classList.add('hidden');
+      qs('#import-mode-description').innerHTML = '<strong>DPGF (MOE) :</strong> Importe la structure du lot (articles, quantités, prix unitaires MOE). Crée ou met à jour les lignes du tableur.';
+    } else {
+      modeOffer.classList.add('active'); modeOffer.classList.remove('ghost');
+      modeDpgf.classList.remove('active'); modeDpgf.classList.add('ghost');
+      qs('#import-offer-fields')?.classList.remove('hidden');
+      qs('#import-mode-description').innerHTML = '<strong>Offre Entreprise :</strong> Importe les données d\'une offre (quantités, prix unitaires) et les associe à une entreprise. Les articles sont matchés par numéro avec la DPGF existante.';
+    }
+  }
+
+  function populateImportCompanies() {
+    const sel = qs('#import-company-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Sélectionner une entreprise existante --</option>';
+    for (const c of (lotCompanies || [])) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    }
+  }
+
+  // Mutual exclusivity: typing a new name clears the select, and vice versa
+  const companyNewInput = qs('#import-company-new');
+  const companySelect = qs('#import-company-select');
+  companyNewInput?.addEventListener('input', () => {
+    if (companyNewInput.value.trim()) companySelect.value = '';
+  });
+  companySelect?.addEventListener('change', () => {
+    if (companySelect.value) companyNewInput.value = '';
+  });
+
+  // File selection
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    importState.file = file;
+    qs('#import-file-label').textContent = file.name;
+    qs('#import-file-info').textContent = `Taille : ${(file.size / 1024).toFixed(1)} Ko`;
+    qs('#import-file-info')?.classList.remove('hidden');
+
+    // Lancer le preview automatiquement
+    await doPreview();
+  });
+
+  async function doPreview(sheetName) {
+    if (!importState.file || !currentLot) return;
+    const formData = new FormData();
+    formData.append('file', importState.file);
+    if (sheetName) formData.append('sheetName', sheetName);
+    // Envoyer la ligne d'en-tête si l'utilisateur l'a modifiée
+    const hrVal = headerRowInput ? Number(headerRowInput.value) : 0;
+    if (hrVal >= 1) formData.append('headerRow', String(hrVal));
+
+    try {
+      showLoader();
+      const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Erreur preview');
+
+      importState.preview = data;
+      importState.fileId = data.fileId || null;
+      importState.mapping = { ...(data.suggestedMapping || {}) };
+      // S'assurer que designation est toujours un tableau
+      if (importState.mapping.designation != null && !Array.isArray(importState.mapping.designation)) {
+        importState.mapping.designation = [importState.mapping.designation];
+      }
+      // Reset des lignes exclues à chaque nouveau preview
+      importState.excludedRows = new Set();
+      // Mettre à jour l’input ligne d’en-tête
+      if (headerRowInput) headerRowInput.value = data.headerRow || 1;
+      renderStep2();
+      step1.classList.add('hidden');
+      step2.classList.remove('hidden');
+      step3.classList.add('hidden');
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    } finally {
+      hideLoader();
+    }
+  }
+
+  // Sheet selector change
+  sheetSelect?.addEventListener('change', () => {
+    doPreview(sheetSelect.value);
+  });
+
+  // Header row manual override
+  let headerRowDebounce = null;
+  headerRowInput?.addEventListener('change', () => {
+    clearTimeout(headerRowDebounce);
+    headerRowDebounce = setTimeout(() => {
+      const val = Number(headerRowInput.value);
+      if (val >= 1 && val <= 100 && importState.preview) {
+        importState.preview.headerRow = val;
+        doPreview(sheetSelect.value);
+      }
+    }, 400);
+  });
+
+  function renderStep2() {
+    const data = importState.preview;
+    if (!data) return;
+
+    // Remplir le sélecteur d'onglets
+    sheetSelect.innerHTML = '';
+    for (const s of data.sheets) {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      if (s === data.selectedSheet) opt.selected = true;
+      sheetSelect.appendChild(opt);
+    }
+
+    // Total rows
+    qs('#import-total-rows').textContent = data.totalRows;
+
+    // Preview table (contient aussi les sélecteurs de mapping)
+    renderPreviewTable();
+  }
+
+  function renderPreviewTable() {
+    const data = importState.preview;
+    if (!data) return;
+    const mapping = importState.mapping;
+    const excluded = importState.excludedRows;
+
+    const head = qs('#import-preview-head');
+    const body = qs('#import-preview-body');
+    head.innerHTML = '';
+    body.innerHTML = '';
+
+    const fieldOptions = importState.mode === 'dpgf'
+      ? [
+          { key: '', label: '—' },
+          { key: 'num', label: 'N° Article' },
+          { key: 'designation', label: 'Désignation' },
+          { key: 'unit', label: 'Unité' },
+          { key: 'qty', label: 'Quantité MOE' },
+          { key: 'unit_price', label: 'Prix Unit. MOE' },
+          { key: 'amount', label: 'Montant MOE' },
+        ]
+      : [
+          { key: '', label: '—' },
+          { key: 'num', label: 'N° Article' },
+          { key: 'designation', label: 'Désignation' },
+          { key: 'unit', label: 'Unité' },
+          { key: 'qty', label: 'Quantité' },
+          { key: 'unit_price', label: 'Prix Unitaire' },
+          { key: 'amount', label: 'Montant' },
+        ];
+
+    const colors = { num: '#6b8afd', designation: '#c4b5fd', unit: '#86efac', qty: '#fbbf24', unit_price: '#f87171', amount: '#38bdf8' };
+
+    // Construire un index inversé colIndex → field
+    const colFieldMap = {};
+    for (const [field, val] of Object.entries(mapping)) {
+      if (val == null) continue;
+      if (field === 'designation') {
+        const arr = Array.isArray(val) ? val : [val];
+        arr.forEach(ci => { colFieldMap[ci] = field; });
+      } else {
+        colFieldMap[val] = field;
+      }
+    }
+
+    // Mettre à jour le compteur (total - exclus)
+    const activeCount = data.totalRows - excluded.size;
+    qs('#import-total-rows').textContent = activeCount + ' / ' + data.totalRows;
+
+    // Helper : bouton supprimer
+    function makeDeleteBtn(rowNum) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.textContent = '×'; btn.title = 'Supprimer cette ligne';
+      btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
+      btn.addEventListener('click', () => { excluded.add(rowNum); renderPreviewTable(); });
+      return btn;
+    }
+    function makeRestoreBtn(rowNum) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.textContent = '↩'; btn.title = 'Restaurer cette ligne';
+      btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
+      btn.addEventListener('click', () => { excluded.delete(rowNum); renderPreviewTable(); });
+      return btn;
+    }
+
+    // === Ligne 1 des en-têtes : sélecteurs de mapping ===
+    const trSel = document.createElement('tr');
+    const thActSel = document.createElement('th');
+    thActSel.style.cssText = 'width:32px;position:sticky;left:0;z-index:3;background:var(--card);vertical-align:middle';
+    trSel.appendChild(thActSel);
+
+    for (const h of data.headers) {
+      const th = document.createElement('th');
+      th.style.cssText = 'padding:4px;vertical-align:top;position:sticky;top:0;z-index:2;background:var(--card)';
+      const currentField = colFieldMap[h.index] || '';
+      const color = currentField ? (colors[currentField] || 'transparent') : 'transparent';
+
+      const sel = document.createElement('select');
+      sel.dataset.colIdx = h.index;
+      sel.style.cssText = `width:100%;padding:4px 2px;border-radius:4px;border:2px solid ${color};background:${color}18;color:var(--fg);font-size:0.72em;font-weight:600;cursor:pointer`;
+
+      for (const fo of fieldOptions) {
+        const opt = document.createElement('option');
+        opt.value = fo.key;
+        opt.textContent = fo.label;
+        // Un champ non-designation déjà assigné à une autre colonne → on le désactive
+        if (fo.key && fo.key !== 'designation' && mapping[fo.key] != null && mapping[fo.key] !== h.index) {
+          opt.disabled = true;
+          opt.textContent += ' ✓';
+        }
+        if (fo.key === currentField) opt.selected = true;
+        sel.appendChild(opt);
+      }
+
+      sel.addEventListener('change', () => {
+        const colIdx = Number(sel.dataset.colIdx);
+        const newField = sel.value;
+        const oldField = colFieldMap[colIdx] || '';
+
+        // Retirer l'ancien mapping de cette colonne
+        if (oldField) {
+          if (oldField === 'designation') {
+            const arr = Array.isArray(mapping.designation) ? mapping.designation : [];
+            mapping.designation = arr.filter(c => c !== colIdx);
+            if (mapping.designation.length === 0) delete mapping.designation;
+          } else {
+            delete mapping[oldField];
+          }
+        }
+
+        // Ajouter le nouveau mapping
+        if (newField) {
+          if (newField === 'designation') {
+            const arr = Array.isArray(mapping.designation) ? mapping.designation : [];
+            if (!arr.includes(colIdx)) arr.push(colIdx);
+            arr.sort((a, b) => a - b);
+            mapping.designation = arr;
+          } else {
+            // Retirer toute ancienne colonne assignée à ce champ
+            for (const [ci, fld] of Object.entries(colFieldMap)) {
+              if (fld === newField && Number(ci) !== colIdx) {
+                delete mapping[newField];
+              }
+            }
+            mapping[newField] = colIdx;
+          }
+        }
+
+        renderPreviewTable();
+      });
+
+      if (color !== 'transparent') {
+        th.style.borderBottom = `3px solid ${color}`;
+      }
+      th.appendChild(sel);
+      trSel.appendChild(th);
+    }
+    head.appendChild(trSel);
+
+    // === Lignes de données ===
+    for (const row of data.previewRows) {
+      const rn = row._rowNum != null ? row._rowNum : ('idx_' + data.previewRows.indexOf(row));
+      const isExcl = excluded.has(rn);
+      const tr = document.createElement('tr');
+      if (isExcl) tr.style.cssText = 'opacity:0.3;text-decoration:line-through';
+      const tdA = document.createElement('td');
+      tdA.style.cssText = 'text-align:center;padding:2px;position:sticky;left:0;background:var(--card);z-index:1';
+      tdA.appendChild(isExcl ? makeRestoreBtn(rn) : makeDeleteBtn(rn));
+      tr.appendChild(tdA);
+      for (const h of data.headers) {
+        const td = document.createElement('td');
+        td.textContent = row[h.index] ?? '';
+        const field = colFieldMap[h.index];
+        if (field) {
+          const c = colors[field];
+          td.style.cssText = `background:${c}08;border-left:2px solid ${c}44`;
+        }
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+  }
+
+  // Back to step 1
+  backBtn?.addEventListener('click', () => {
+    step1.classList.remove('hidden');
+    step2.classList.add('hidden');
+    step3.classList.add('hidden');
+  });
+
+  cancelBtn?.addEventListener('click', closeModal);
+
+  // Lancer l'import
+  confirmBtn?.addEventListener('click', async () => {
+    if (!importState.file || !currentLot || !importState.preview) return;
+    if (confirmBtn.disabled) return;
+
+    // Validation
+    if (importState.mode === 'dpgf') {
+      const desigArr = importState.mapping.designation;
+      if (!desigArr || (Array.isArray(desigArr) && desigArr.length === 0)) {
+        showNotify({ title: 'Mapping incomplet', message: 'Cochez au moins une colonne "Désignation" pour l\'import DPGF.', type: 'error' });
+        return;
+      }
+    }
+    if (importState.mode === 'offer') {
+      const compId = qs('#import-company-select')?.value;
+      const compName = qs('#import-company-new')?.value?.trim();
+      if (!compId && !compName) {
+        showNotify({ title: 'Entreprise requise', message: 'Sélectionnez une entreprise existante ou saisissez un nouveau nom.', type: 'error' });
+        return;
+      }
+      if (!currentRound?.id) {
+        showNotify({ title: 'Tour requis', message: 'Aucun tour sélectionné. Retournez à la liste des tours et sélectionnez un tour avant d\'importer une offre.', type: 'error' });
+        return;
+      }
+      if (!importState.mapping.qty && !importState.mapping.unit_price && !importState.mapping.amount) {
+        showNotify({ title: 'Mapping incomplet', message: 'Mappez au moins une colonne de données (Quantité, PU ou Montant).', type: 'error' });
+        return;
+      }
+    }
+
+    // Disable button & show loading state
+    confirmBtn.disabled = true;
+    const originalHTML = confirmBtn.innerHTML;
+    confirmBtn.innerHTML = `<span class="spinner-small"></span> Import en cours…`;
+
+    const params = {
+      mode: importState.mode,
+      sheetName: importState.preview.selectedSheet,
+      headerRow: importState.preview.headerRow,
+      mapping: importState.mapping,
+      excludedRows: [...importState.excludedRows].filter(v => typeof v === 'number'),
+      roundId: currentRound?.id || null,
+      companyId: importState.mode === 'offer' ? (qs('#import-company-select')?.value || null) : null,
+      companyName: importState.mode === 'offer' ? (qs('#import-company-new')?.value?.trim() || null) : null,
+      fileId: importState.fileId || null,
+    };
+
+    const formData = new FormData();
+    // Envoyer le fichier uniquement si pas de fileId (fallback)
+    if (!importState.fileId) formData.append('file', importState.file);
+    formData.append('params', JSON.stringify(params));
+
+    try {
+      showLoader();
+      const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        credentials: 'include',
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Erreur import');
+
+      // Afficher résultat
+      renderStep3(result);
+      step1.classList.add('hidden');
+      step2.classList.add('hidden');
+      step3.classList.remove('hidden');
+    } catch (err) {
+      showNotify({ title: 'Erreur d\'import', message: err.message, type: 'error' });
+    } finally {
+      hideLoader();
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = originalHTML;
+    }
+  });
+
+  function renderStep3(result) {
+    const div = qs('#import-result');
+    if (!div) return;
+
+    if (result.mode === 'dpgf') {
+      div.innerHTML = `
+        <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
+        <h3 style="color:var(--success, #10b981);margin:0 0 12px 0">Import DPGF réussi</h3>
+        <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap">
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.itemsImported || 0}</div>
+            <div class="muted" style="font-size:0.85em">articles créés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.itemsUpdated || 0}</div>
+            <div class="muted" style="font-size:0.85em">articles mis à jour</div>
+          </div>
+        </div>
+      `;
+    } else {
+      div.innerHTML = `
+        <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
+        <h3 style="color:var(--success, #10b981);margin:0 0 12px 0">Import Offre réussi</h3>
+        <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap">
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.matched || 0}</div>
+            <div class="muted" style="font-size:0.85em">lignes importées</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.addedPostsCount || 0}</div>
+            <div class="muted" style="font-size:0.85em">postes ajoutés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.skipped || 0}</div>
+            <div class="muted" style="font-size:0.85em">lignes vides ignorées</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.totalItems || 0}</div>
+            <div class="muted" style="font-size:0.85em">articles DPGF</div>
+          </div>
+        </div>
+        ${(result.warnings || []).length ? `
+          <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em">
+            <strong style="color:var(--warning, #f59e0b)">⚠ Attention :</strong>
+            <ul style="margin:4px 0 0 16px;padding:0">${(result.warnings || []).map(w => `<li>${w}</li>`).join('')}</ul>
+          </div>
+        ` : ''}
+        ${result.addedPostsCount > 0 ? `
+          <div style="margin-top:16px;text-align:left;border:2px solid var(--warning, #f59e0b);border-radius:8px;overflow:hidden">
+            <div style="background:var(--warning, #f59e0b);color:#fff;padding:10px 16px;font-weight:700;font-size:0.9em;display:flex;align-items:center;gap:8px">
+              <span style="font-size:1.2em">📋</span> Postes ajoutés par l'entreprise (${result.addedPostsCount})
+            </div>
+            <div style="padding:12px;font-size:0.8em;color:var(--muted);background:var(--warning-bg, #fef3c7)">
+              Ces lignes de l'offre entreprise ne correspondent à aucun article de la DPGF MOE. L'entreprise a ajouté ces postes supplémentaires dans son offre.
+            </div>
+            <div style="max-height:350px;overflow-y:auto">
+              <table style="font-size:0.8em;width:100%;border-collapse:collapse">
+                <thead style="position:sticky;top:0;background:var(--card-bg)">
+                  <tr>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap">Ligne Excel</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:left">N°</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:left">Désignation entreprise</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:right">Qté</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:right">PU</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:right">Montant</th>
+                    <th style="padding:6px 8px;border-bottom:2px solid var(--border);text-align:left">Contexte DPGF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(result.addedPosts || []).map(p => {
+                    const ctx = p.context || {};
+                    let ctxHtml = '';
+                    if (ctx.afterDpgfDesignation) {
+                      ctxHtml += `<div style="font-size:0.85em;color:var(--muted)">Après : <em>${ctx.afterDpgfNum ? ctx.afterDpgfNum + ' – ' : ''}${ctx.afterDpgfDesignation}</em></div>`;
+                    }
+                    if (ctx.expectedDpgfDesignation) {
+                      ctxHtml += `<div style="font-size:0.85em;color:var(--muted)">Attendu : <em>${ctx.expectedDpgfNum ? ctx.expectedDpgfNum + ' – ' : ''}${ctx.expectedDpgfDesignation}</em></div>`;
+                    }
+                    const fmtNum = (v) => v != null ? Number(v).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) : '-';
+                    return `<tr style="border-bottom:1px solid var(--border)">
+                      <td style="padding:6px 8px;white-space:nowrap">${p.row}</td>
+                      <td style="padding:6px 8px">${p.num || '-'}</td>
+                      <td style="padding:6px 8px;max-width:250px">${p.designation}</td>
+                      <td style="padding:6px 8px;text-align:right">${fmtNum(p.qty)}</td>
+                      <td style="padding:6px 8px;text-align:right">${fmtNum(p.unit_price)}</td>
+                      <td style="padding:6px 8px;text-align:right">${fmtNum(p.amount)}</td>
+                      <td style="padding:6px 8px">${ctxHtml || '<span class="muted">-</span>'}</td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : ''}
+        ${result.unmatchedDpgfCount > 0 ? `
+          <details style="margin-top:12px;text-align:left">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.85em;color:var(--danger, #ef4444)">
+              Articles DPGF non couverts par l'offre (${result.unmatchedDpgfCount})
+            </summary>
+            <table style="font-size:0.8em;margin-top:8px;width:100%">
+              <thead><tr><th>Pos.</th><th>N°</th><th>Désignation</th></tr></thead>
+              <tbody>
+                ${(result.unmatchedDpgf || []).map(d => `<tr><td>${d.position ?? '-'}</td><td>${d.num || '-'}</td><td>${d.designation || '-'}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          </details>
+        ` : ''}
+        ${result.matchDetails?.length ? `
+          <details style="margin-top:12px;text-align:left">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.85em">Détails du matching (${result.matchDetails.length} premières lignes)</summary>
+            <table style="font-size:0.8em;margin-top:8px;width:100%">
+              <thead><tr><th>Ligne</th><th>N° import</th><th>Désignation import</th><th>N° DPGF</th><th>Désignation DPGF</th><th>Match</th></tr></thead>
+              <tbody>
+                ${result.matchDetails.map(d => `<tr>
+                  <td>${d.row}</td>
+                  <td>${d.num || '-'}</td>
+                  <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${d.importDesignation || '-'}</td>
+                  <td>${d.dpgfNum || '-'}</td>
+                  <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${d.dpgfDesignation || '-'}</td>
+                  <td><span class="chip" style="font-size:0.75em">${d.matchMethod} (${d.matchScore}%)</span></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </details>
+        ` : ''}
+      `;
+    }
+  }
+
+  // Fermer et recharger
+  doneBtn?.addEventListener('click', async () => {
+    closeModal();
+    if (currentLot) {
+      // Recharger le lot complet
+      await openLot(currentLot.id, { name: currentLot.name, code: currentLot.code });
     }
   });
 }
@@ -4028,22 +5025,42 @@ function bindUI(){
   // Sous-onglets dans l'inventaire des tours (liste/comparaison)
   qsa('#tab-rounds .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateRoundsTab(b.dataset.roundsTab)));
 
-  // Bouton de mise à jour de la comparaison des tours
+  // Bouton de mise a jour de la comparaison des tours
   qs('#update-comparison')?.addEventListener('click', () => loadRoundsComparison());
+  qs('#compare-round')?.addEventListener('change', () => loadRoundsComparison());
 
   qs('#rounds-compare-tab-compare')?.addEventListener('click', () => {
     show('#rounds-compare-table-wrapper');
     hide('#rounds-options-view');
+    hide('#rounds-simulation-view');
     qs('#rounds-compare-tab-compare')?.classList.add('active');
     qs('#rounds-compare-tab-options')?.classList.remove('active');
+    qs('#rounds-compare-tab-simulation')?.classList.remove('active');
   });
 
   qs('#rounds-compare-tab-options')?.addEventListener('click', async () => {
     hide('#rounds-compare-table-wrapper');
     show('#rounds-options-view');
+    hide('#rounds-simulation-view');
     qs('#rounds-compare-tab-options')?.classList.add('active');
     qs('#rounds-compare-tab-compare')?.classList.remove('active');
+    qs('#rounds-compare-tab-simulation')?.classList.remove('active');
     await loadRoundsComparison();
+  });
+
+  qs('#rounds-compare-tab-simulation')?.addEventListener('click', async () => {
+    hide('#rounds-compare-table-wrapper');
+    hide('#rounds-options-view');
+    show('#rounds-simulation-view');
+    qs('#rounds-compare-tab-simulation')?.classList.add('active');
+    qs('#rounds-compare-tab-compare')?.classList.remove('active');
+    qs('#rounds-compare-tab-options')?.classList.remove('active');
+    await loadRoundsComparison();
+  });
+
+  qs('#add-simulation')?.addEventListener('click', () => {
+    addSimulation();
+    loadRoundsComparison();
   });
 
   // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
@@ -4364,19 +5381,29 @@ if (typeof window !== 'undefined') {
   qs('#export-rounds-compare-excel')?.addEventListener('click', async () => {
     if (!currentProject) { showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' }); return; }
     try {
-      const res = await fetch(`${API_BASE}/exports/rounds-comparison/${currentProject.id}`, {
+      const compareView = qs('#rounds-compare-view');
+      const roundSelected = compareView?.dataset.compareSelected || '';
+      const roundPrevious = compareView?.dataset.comparePrevious || '';
+      const roundOpening = compareView?.dataset.compareOpening || '';
+      const roundFrom = roundPrevious || roundOpening;
+      const roundTo = roundSelected;
+      const params = new URLSearchParams();
+      if (roundFrom) params.set('round_from', roundFrom);
+      if (roundTo) params.set('round_to', roundTo);
+      const requestUrl = `${API_BASE}/exports/rounds-comparison/${currentProject.id}${params.toString() ? `?${params.toString()}` : ''}`;
+      const res = await fetch(requestUrl, {
         credentials: 'include'
       });
       if (!res.ok) throw new Error('Erreur export');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = downloadUrl;
       a.download = `ComparaisonTours_${currentProject?.name}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(downloadUrl);
     } catch (err) {
       showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
     }
@@ -4837,4 +5864,4 @@ document.addEventListener('DOMContentLoaded', () => {
       exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
     });
   }
-});
+})

@@ -1,14 +1,33 @@
 import express from 'express';
 import multer from 'multer';
+import crypto from 'crypto';
 import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { requireRole } from '../../middleware/roles.js';
+import { previewExcel, applyImport } from '../../importers/smart-import.js';
 
-// (si tu gardes l’import Excel, sinon tu peux enlever multer et la route)
-import { importLotFromExcel } from '../../importers/excel.js';
-
-const upload = multer();
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10 Mo max
 const router = express.Router();
 router.use(requireAuth);
+
+// Cache temporaire des fichiers import (preview → apply sans re-upload)
+const tempFileCache = new Map();
+const TEMP_FILE_TTL = 10 * 60 * 1000; // 10 minutes
+function cacheTempFile(buffer) {
+  const id = crypto.randomUUID();
+  tempFileCache.set(id, { buffer, ts: Date.now() });
+  // Nettoyage des vieux fichiers
+  for (const [k, v] of tempFileCache) {
+    if (Date.now() - v.ts > TEMP_FILE_TTL) tempFileCache.delete(k);
+  }
+  return id;
+}
+function getTempFile(id) {
+  const entry = tempFileCache.get(id);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > TEMP_FILE_TTL) { tempFileCache.delete(id); return null; }
+  return entry.buffer;
+}
 
 /* ---------- RAW LOT (pour construire le tableur) ---------- */
 router.get('/:id', async (req, res) => {
@@ -26,9 +45,9 @@ router.get('/:id', async (req, res) => {
     const result = await query(`
       SELECT 
         l.id as lot_id, l.code, l.name as lot_name, l.project_id,
-        i.id as item_id, i.num, i.designation, i.unit, i.position,
+        i.id as item_id, i.num, i.designation, i.unit, i.position, i.source_company_id,
         ${isEntreprise ? 'NULL AS moe_qty, NULL AS moe_unit_price, NULL AS moe_amount,' : 'm.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,'}
-        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name) ORDER BY lc2.created_at, c2.id)
+        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name, 'color', c2.color) ORDER BY lc2.created_at, c2.id)
          FROM lot_companies lc2
          JOIN companies c2 ON c2.id = lc2.company_id
          WHERE lc2.lot_id = l.id
@@ -39,7 +58,8 @@ router.get('/:id', async (req, res) => {
           'unit', o.unit,
           'qty', o.qty,
           'unit_price', o.unit_price,
-          'amount', o.amount
+          'amount', o.amount,
+          'comment', o.comment
         )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
       FROM lots l
       LEFT JOIN items i ON i.lot_id = l.id
@@ -79,7 +99,8 @@ router.get('/:id', async (req, res) => {
           num: row.num,
           designation: row.designation,
           unit: row.unit,
-          position: row.position
+          position: row.position,
+          source_company_id: row.source_company_id || null
         });
 
         if (!isEntreprise && (row.moe_qty !== null || row.moe_unit_price !== null)) {
@@ -137,7 +158,7 @@ router.get('/:id/table', async (req, res) => {
   const moeByItem = new Map(moeRes.rows.map(r => [r.item_id, r]));
 
   const compsRes = await query(
-    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
+    'SELECT c.id, c.name, c.color FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
     [id]
   );
   let companies = compsRes.rows;
@@ -166,6 +187,7 @@ router.get('/:id/table', async (req, res) => {
       num: item.num,
       designation: item.designation,
       unit: item.unit,
+      source_company_id: item.source_company_id || null,
       moe: { qty: m.qty, pu: m.unit_price, mt: m.amount },
       companies: []
     };
@@ -269,8 +291,24 @@ router.post('/:id/companies', async (req, res) => {
 router.delete('/:id/companies/:companyId', async (req, res) => {
   const id = Number(req.params.id);
   const companyId = Number(req.params.companyId);
+  // Supprimer les offres de cette entreprise sur les items de ce lot
+  await query(
+    'DELETE FROM offers WHERE company_id=$1 AND item_id IN (SELECT id FROM items WHERE lot_id=$2)',
+    [companyId, id]
+  );
+  // Supprimer les items ajoutés par cette entreprise
+  await query('DELETE FROM items WHERE lot_id=$1 AND source_company_id=$2', [id, companyId]);
   await query('DELETE FROM lot_companies WHERE lot_id=$1 AND company_id=$2', [id, companyId]);
   res.json({ ok: true });
+});
+
+/* ---------- COULEUR ENTREPRISE ---------- */
+router.patch('/companies/:companyId/color', async (req, res) => {
+  const companyId = Number(req.params.companyId);
+  const { color } = req.body || {};
+  if (!color) return res.status(400).json({ error: 'Couleur requise' });
+  await query('UPDATE companies SET color = $1 WHERE id = $2', [color, companyId]);
+  res.json({ ok: true, color });
 });
 
 /* ---------- SAUVEGARDE DU TABLEUR (édition) ---------- */
@@ -402,7 +440,8 @@ router.post('/:id/save-grid', async (req, res) => {
           INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
           VALUES ($1,$2,$3,$4,$5,$6,$7)
           ON CONFLICT (item_id, company_id, round_id) DO UPDATE
-          SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
+          SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount,
+              comment=COALESCE(offers.comment, EXCLUDED.comment)
         `, [offer.itemId, offer.companyId, roundId, offer.u, offer.oq, offer.op, offer.om]);
       }
     }
@@ -433,15 +472,57 @@ router.post('/:id/save-grid', async (req, res) => {
   }
 });
 
-/* ---------- (optionnel) Import Excel ---------- */
-router.post('/:id/import-excel', upload.single('file'), async (req, res) => {
-  const id = Number(req.params.id);
+/* ---------- Smart Import : Preview ---------- */
+router.post('/:id/import-preview', requireRole(['admin', 'responsable']), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
   try {
-    const r = await importLotFromExcel({ lotId: id, buffer: req.file.buffer });
-    res.json({ ok: true, ...r });
+    const sheetName = req.body?.sheetName || null;
+    const headerRow = req.body?.headerRow ? Number(req.body.headerRow) : null;
+    const result = await previewExcel({ buffer: req.file.buffer, sheetName, headerRow });
+    // Cacher le fichier pour éviter un re-upload à l'étape apply
+    const fileId = cacheTempFile(req.file.buffer);
+    res.json({ ...result, fileId });
   } catch (e) {
-    console.error(e);
+    console.error('Preview error:', e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/* ---------- Smart Import : Apply ---------- */
+router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.single('file'), async (req, res) => {
+  const lotId = Number(req.params.id);
+
+  try {
+    const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId } = JSON.parse(req.body.params || '{}');
+    if (!mode) return res.status(400).json({ error: 'Mode requis (dpgf ou offer)' });
+    if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
+
+    // Utiliser le fichier caché si disponible, sinon le fichier uploadé
+    let buffer = req.file?.buffer;
+    if (!buffer && fileId) {
+      buffer = getTempFile(fileId);
+    }
+    if (!buffer) return res.status(400).json({ error: 'Fichier manquant. Veuillez relancer l\'import.' });
+
+    const result = await applyImport({
+      buffer,
+      mode,
+      lotId,
+      roundId: roundId ? Number(roundId) : null,
+      companyId: companyId ? Number(companyId) : null,
+      companyName: companyName || null,
+      sheetName: sheetName || null,
+      headerRow: Number(headerRow) || 1,
+      mapping,
+      excludedRows: excludedRows || [],
+    });
+
+    // Nettoyer le fichier caché après usage
+    if (fileId) tempFileCache.delete(fileId);
+
+    res.json(result);
+  } catch (e) {
+    console.error('Import apply error:', e);
     res.status(400).json({ error: e.message });
   }
 });

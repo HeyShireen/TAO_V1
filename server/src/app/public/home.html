@@ -307,10 +307,38 @@
       .home-header { padding: 0 24px; }
     }
     @media (max-width: 640px) {
-      .hero { padding: 28px; }
+      .hero { padding: 20px; }
+      .hero-title { font-size: clamp(1.8rem, 5vw, 2.6rem); }
+      .hero-subtitle { font-size: 0.95rem; }
       .hero-ctas { flex-direction: column; align-items: stretch; }
-      .home-nav { gap: 8px; }
+      .hero-ctas .btn { text-align: center; justify-content: center; }
+      .home-nav { gap: 6px; }
+      .home-nav .btn { padding: 10px 14px; font-size: 12px; }
       .home-title { display: none; }
+      .home-header { height: 56px; padding: 0 12px; }
+      .home-content { margin-top: 56px; padding: 32px 12px 60px; }
+      .section-title { font-size: 1.6rem; }
+      .feature-card { padding: 16px; }
+      .feature-icon { width: 36px; height: 36px; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .kpi { padding: 10px; }
+      .kpi-value { font-size: 1.1rem; }
+      .kpi-label { font-size: 0.7rem; }
+      .cta-banner { padding: 24px; flex-direction: column; text-align: center; }
+      .cta-banner .hero-ctas { width: 100%; }
+      .roles-grid { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr; }
+      .stack-card { padding: 16px; }
+      .hero-panel { padding: 16px; }
+      .hero-proof { flex-wrap: wrap; gap: 6px; }
+      .hero-proof span { font-size: 0.65rem; padding: 4px 8px; }
+    }
+    @media (max-width: 400px) {
+      .hero { padding: 14px; }
+      .hero-title { font-size: 1.5rem; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      .section-title { font-size: 1.3rem; }
+      .home-content { padding: 24px 8px 40px; }
     }
   </style>
 </head>

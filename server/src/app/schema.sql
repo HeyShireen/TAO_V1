@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS public.offers (
   qty NUMERIC,
   unit_price NUMERIC,
   amount NUMERIC,
+  comment TEXT,
   UNIQUE (item_id, company_id)
 );
 

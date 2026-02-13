@@ -34,12 +34,12 @@
           </a>
           <h1>TAO</h1>
           <nav class="main-nav">
-            <button data-tab="tab-projects" class="nav-btn active"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>Projets</button>
-            <button data-tab="tab-rounds" class="nav-btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Tours</button>
-            <button data-tab="tab-settings" class="nav-btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Paramètres</button>
+            <button data-tab="tab-projects" class="nav-btn active"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg><span class="nav-label">Projets</span></button>
+            <button data-tab="tab-rounds" class="nav-btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg><span class="nav-label">Tours</span></button>
+            <button data-tab="tab-settings" class="nav-btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg><span class="nav-label">Paramètres</span></button>
           </nav>
-          <button id="toggle-help" class="btn ghost" title="Aide contextuelle"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-help"></use></svg>Aide</button>
-          <button id="logout" class="btn ghost">Déconnexion</button>
+          <button id="toggle-help" class="btn ghost" title="Aide contextuelle"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-help"></use></svg><span class="btn-label">Aide</span></button>
+          <button id="logout" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg><span class="btn-label">Déconnexion</span></button>
         </div>
         
       </header>
@@ -186,33 +186,30 @@
         <!-- Vue: Comparaison Tours -->
         <div id="rounds-compare-view" class="tour-tabpanel hidden">
           <div class="card">
-            <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Comparaison des Tours</h4>
-            <p class="muted">Évolution des montants entre les différents tours</p>
-            
-            <!-- Sélecteurs de tours pour l'analyse -->
-            <div class="row gap" style="margin-top:16px;margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
-              <span style="font-weight:600"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-search"></use></svg>Analyser l'évolution entre :</span>
-              <div class="field" style="margin:0">
-                <label for="compare-round-from" style="font-size:12px;color:var(--muted)">Tour de référence</label>
-                <select id="compare-round-from" name="compare-round-from" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-                  <option value="">Sélectionner un tour...</option>
-                </select>
-              </div>
-              <div class="field" style="margin:0">
-                <label for="compare-round-to" style="font-size:12px;color:var(--muted)">Tour à comparer</label>
-                <select id="compare-round-to" name="compare-round-to" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-                  <option value="">Sélectionner un tour...</option>
-                </select>
-              </div>
-              <button id="update-comparison" class="btn" style="align-self:flex-end"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Mettre à jour</button>
-              <button id="export-rounds-compare-pdf" class="btn ghost" style="align-self:flex-end"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-printer"></use></svg>Export PDF</button>
-              <button id="export-rounds-compare-excel" class="btn ghost" style="align-self:flex-end"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Export Excel</button>
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+              <h4 style="margin:0"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Comparaison des Tours</h4>
+              <p class="muted" style="margin:0">Évolution des montants entre les différents tours</p>
             </div>
             
+            <!-- Sélecteurs de tours pour l'analyse -->
+            <div class="row gap" style="margin-top:12px;margin-bottom:12px;align-items:flex-end;flex-wrap:wrap;gap:8px">
+              <span style="font-weight:600"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-search"></use></svg>Analyser l'évolution du tour :</span>
+              <div class="field" style="margin:0">
+                <select id="compare-round" name="compare-round" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);min-width:140px;max-width:100%;flex:1 1 180px">
+                  <option value="">Selectionner un tour...</option>
+                </select>
+              </div>
+              <div class="row gap" style="margin-left:auto;align-items:flex-end;flex-wrap:wrap">
+                <button id="update-comparison" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Mettre a jour</button>
+                <button id="export-rounds-compare-pdf" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-printer"></use></svg>Export PDF</button>
+                <button id="export-rounds-compare-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Export Excel</button>
+              </div>
+            </div>
             <div style="margin-top:20px">
               <div class="row gap" style="margin-bottom:12px">
                 <button id="rounds-compare-tab-compare" class="btn ghost active"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Comparatif</button>
                 <button id="rounds-compare-tab-options" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-layers"></use></svg>Selection options</button>
+                <button id="rounds-compare-tab-simulation" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-flask"></use></svg>Simulation</button>
               </div>
 
               <div id="rounds-compare-table-wrapper" class="table-wrapper tall">
@@ -233,6 +230,18 @@
                 <table id="rounds-options-table" class="summary-table">
                   <thead id="rounds-options-head"></thead>
                   <tbody id="rounds-options-body"></tbody>
+                </table>
+              </div>
+
+              <div id="rounds-simulation-view" class="table-wrapper tall hidden">
+                <div class="row gap" style="margin-bottom:12px;align-items:flex-end">
+                  <div class="muted" style="font-size:12px">Tour de simulation: meme selection que la comparaison.</div>
+                  <button id="add-simulation" class="btn ghost" style="align-self:flex-end"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-plus"></use></svg>Ajouter simulation</button>
+                </div>
+                <table id="rounds-simulation-table" class="summary-table">
+                  <thead></thead>
+                  <tbody></tbody>
+                  <tfoot></tfoot>
                 </table>
               </div>
             </div>
@@ -305,12 +314,13 @@
             </div>
 
             <!-- Actions tableur -->
-            <div id="sheet-actions" class="row gap hidden">
+            <div id="sheet-actions" class="row gap hidden" style="flex-wrap:wrap">
             <button id="add-row" class="btn">+ Ligne</button>
-            <input id="company-input" name="company-input" placeholder="Nom d'une entreprise"/>
+            <input id="company-input" name="company-input" placeholder="Entreprise" style="width:130px;min-width:0;flex:1 1 100px"/>
             <button id="add-company" class="btn ghost">+ Entreprise</button>
             <div id="lot-companies" class="chips"></div>
             <div class="spacer"></div>
+            <button id="open-import-modal" class="btn ghost" title="Importer un fichier Excel"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer</button>
             <button id="undo" class="btn ghost">↶</button>
             <button id="redo" class="btn ghost">↷</button>
             <button id="save-grid" class="btn">Sauvegarder</button>
@@ -461,7 +471,7 @@
           </details>
           
           <!-- Filtre par entreprise -->
-          <div class="row gap" style="margin-bottom:16px">
+          <div class="row gap" style="margin-bottom:16px;flex-wrap:wrap">
             <label for="filter-company">Filtrer par entreprise :</label>
             <select id="filter-company" name="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
               <option value="">Toutes les entreprises</option>
@@ -483,11 +493,11 @@
                 <option value="price_high">Prix Haut</option>
               </select>
               <label for="filter-deviation">Écart &gt;=</label>
-              <input id="filter-deviation" name="filter-deviation" type="number" step="0.1" style="width:80px" placeholder="%" />
+              <input id="filter-deviation" name="filter-deviation" type="number" step="0.1" style="width:80px;min-width:60px;flex:0 1 80px" placeholder="%" />
               <label for="filter-price">Prix &lt;=</label>
-              <input id="filter-price" name="filter-price" type="number" step="0.01" style="width:80px" placeholder="€" />
+              <input id="filter-price" name="filter-price" type="number" step="0.01" style="width:80px;min-width:60px;flex:0 1 80px" placeholder="€" />
               <label for="filter-question">Question :</label>
-              <input id="filter-question" name="filter-question" type="text" style="width:120px" placeholder="Texte..." />
+              <input id="filter-question" name="filter-question" type="text" style="width:120px;min-width:80px;flex:1 1 100px" placeholder="Texte..." />
               <button id="refresh-questions" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser</button>
               <button id="export-questions-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Exporter Excel</button>
           </div>
@@ -509,8 +519,8 @@
           </div>
           <div class="modal-body">
             <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
-              <label class="field" style="min-width:220px"><span>Code</span><input id="lot-code" type="text" placeholder="Ex: LOT 1" maxlength="50"/></label>
-              <label class="field" style="min-width:320px"><span>Nom</span><input id="lot-name" type="text" placeholder="Ex: Gros Oeuvre" maxlength="200" required/></label>
+              <label class="field" style="min-width:0;flex:1 1 180px"><span>Code</span><input id="lot-code" type="text" placeholder="Ex: LOT 1" maxlength="50"/></label>
+              <label class="field" style="min-width:0;flex:2 1 240px"><span>Nom</span><input id="lot-name" type="text" placeholder="Ex: Gros Oeuvre" maxlength="200" required/></label>
             </div>
             <p id="lot-modal-msg" class="muted" style="margin-top:8px"></p>
           </div>
@@ -529,8 +539,8 @@
           </div>
           <div class="modal-body">
             <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
-              <label class="field" style="min-width:320px"><span>Nom *</span><input id="round-name" type="text" placeholder="Ex: 1er tour" maxlength="200" required/></label>
-              <label class="field" style="min-width:480px"><span>Description</span><input id="round-description" type="text" placeholder="Notes du tour" maxlength="400"/></label>
+              <label class="field" style="min-width:0;flex:1 1 200px"><span>Nom *</span><input id="round-name" type="text" placeholder="Ex: 1er tour" maxlength="200" required/></label>
+              <label class="field" style="min-width:0;flex:2 1 240px"><span>Description</span><input id="round-description" type="text" placeholder="Notes du tour" maxlength="400"/></label>
             </div>
             <p id="round-modal-msg" class="muted" style="margin-top:8px"></p>
           </div>
@@ -819,7 +829,96 @@
     </div>
   </div>
 
-  <script src="./app.js"></script>
+  <!-- Modal Import DPGF / Offre -->
+  <div id="import-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:95vw;width:1400px;max-height:92vh;overflow:auto">
+      <div class="modal-header">
+        <h3 id="import-modal-title"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer un fichier Excel</h3>
+        <button id="import-modal-close" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+      </div>
+      <div class="modal-body">
+        <!-- Étape 1 : Choix du mode et upload -->
+        <div id="import-step-1">
+          <div class="row gap" style="margin-bottom:16px">
+            <button id="import-mode-dpgf" class="btn active" style="flex:1"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-box"></use></svg>Importer DPGF (MOE)</button>
+            <button id="import-mode-offer" class="btn ghost" style="flex:1"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Importer Offre Entreprise</button>
+          </div>
+          <div id="import-mode-description" class="muted" style="margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border);font-size:0.9em">
+            <strong>DPGF (MOE) :</strong> Importe la structure du lot (articles, quantités, prix unitaires MOE). Crée ou met à jour les lignes du tableur.
+          </div>
+
+          <div class="field">
+            <label for="import-file-input" style="display:flex;align-items:center;gap:8px;padding:24px;border:2px dashed var(--border);border-radius:10px;cursor:pointer;text-align:center;justify-content:center;transition:border-color 0.2s">
+              <svg class="icon" aria-hidden="true" style="width:24px;height:24px"><use href="./assets/icons.svg#icon-file"></use></svg>
+              <span id="import-file-label">Cliquez pour sélectionner un fichier Excel (.xlsx, .xls)</span>
+            </label>
+            <input id="import-file-input" type="file" accept=".xlsx,.xls" style="display:none" />
+          </div>
+          <div id="import-file-info" class="muted hidden" style="margin-top:8px;font-size:0.85em"></div>
+        </div>
+
+        <!-- Étape 2 : Aperçu + Mapping directement en en-tête -->
+        <div id="import-step-2" class="hidden">
+          <!-- Section entreprise (visible uniquement en mode offre) -->
+          <div id="import-offer-fields" class="hidden" style="margin-bottom:16px">
+            <div class="row gap" style="align-items:flex-end">
+              <div class="field" style="flex:1">
+                <label for="import-company-select">Entreprise *</label>
+                <select id="import-company-select" name="import-company-select">
+                  <option value="">-- Sélectionner une entreprise existante --</option>
+                </select>
+              </div>
+              <span class="muted" style="padding-bottom:8px">ou</span>
+              <div class="field" style="flex:1">
+                <label for="import-company-new">Nouvelle entreprise</label>
+                <input id="import-company-new" type="text" placeholder="Nom de la nouvelle entreprise" />
+              </div>
+            </div>
+          </div>
+          <div class="row gap" style="margin-bottom:8px;align-items:center">
+            <button id="import-back-step1" class="btn ghost">← Retour</button>
+            <h4 style="margin:0">Aperçu & correspondance des colonnes</h4>
+            <span class="muted" style="font-size:0.82em">(<span id="import-total-rows">0</span> lignes)</span>
+            <div class="spacer"></div>
+            <div class="field" style="margin:0">
+              <label for="import-header-row" style="font-size:0.85em">Ligne en-tête :</label>
+              <input id="import-header-row" type="number" min="1" max="50" value="1" style="width:56px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em;text-align:center" />
+            </div>
+            <div class="field" style="margin:0">
+              <label for="import-sheet-select" style="font-size:0.85em">Onglet :</label>
+              <select id="import-sheet-select" name="import-sheet-select" style="padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em"></select>
+            </div>
+          </div>
+          <p class="muted" style="font-size:0.82em;margin-bottom:8px">Utilisez les sélecteurs en haut de chaque colonne pour indiquer à quoi elle correspond. Plusieurs colonnes peuvent être assignées à « Désignation » (indentation automatique).</p>
+
+          <!-- Aperçu avec mapping intégré dans les en-têtes -->
+          <div class="table-wrapper" style="max-height:65vh;overflow:auto">
+            <table id="import-preview-table" style="font-size:0.78em;white-space:nowrap">
+              <thead id="import-preview-head"></thead>
+              <tbody id="import-preview-body"></tbody>
+            </table>
+          </div>
+
+          <div class="row gap" style="margin-top:12px;justify-content:flex-end">
+            <button id="import-cancel" class="btn ghost">Annuler</button>
+            <button id="import-confirm" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Lancer l'import</button>
+          </div>
+        </div>
+
+        <!-- Étape 3 : Résultat -->
+        <div id="import-step-3" class="hidden">
+          <div id="import-result" style="text-align:center;padding:24px">
+            <!-- Rempli dynamiquement -->
+          </div>
+          <div class="row gap" style="justify-content:center;margin-top:16px">
+            <button id="import-done" class="btn">Fermer et actualiser</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js" defer></script>
   <!-- Overlay Aide Contextuelle -->
   <div id="help-overlay" class="hidden"></div>
 </body>

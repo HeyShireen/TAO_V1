@@ -286,6 +286,11 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
     const userId = req.user.id;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const companyId = req.user?.company_id;
+    const roundFromId = Number(req.query.round_from || req.query.roundFromId || req.query.from);
+    const roundToId = Number(req.query.round_to || req.query.roundToId || req.query.to);
+    const showAnalysis = Number.isFinite(roundFromId) && Number.isFinite(roundToId) && roundFromId !== roundToId;
 
     // Vérifier l'accès au projet
     const projectRes = await query(
@@ -320,12 +325,81 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
     );
     const lots = lotsRes.rows;
 
+    // Totaux MOE par lot (non entreprise seulement)
+    const moeTotals = new Map();
+    if (!isEntreprise) {
+      const moeRes = await query(
+        `SELECT i.lot_id, COALESCE(SUM(m.qty * m.unit_price), 0) as total
+         FROM items i
+         LEFT JOIN moe_items m ON m.item_id = i.id
+         JOIN lots l ON l.id = i.lot_id
+         WHERE l.project_id = $1
+         GROUP BY i.lot_id`,
+        [projectId]
+      );
+      for (const row of moeRes.rows) {
+        moeTotals.set(row.lot_id, parseFloat(row.total) || 0);
+      }
+    }
+
+    // Offres par lot / tour / entreprise
+    const offersParams = [projectId];
+    let offersWhere = '';
+    if (isEntreprise && companyId) {
+      offersParams.push(companyId);
+      offersWhere = 'AND o.company_id = $2';
+    }
+    const offersRes = await query(
+      `SELECT i.lot_id, o.round_id, o.company_id, c.name as company_name,
+              COALESCE(SUM(o.qty * o.unit_price), 0) as total
+       FROM offers o
+       JOIN items i ON i.id = o.item_id
+       JOIN rounds r ON r.id = o.round_id
+       JOIN companies c ON c.id = o.company_id
+       WHERE r.project_id = $1
+       ${offersWhere}
+       GROUP BY i.lot_id, o.round_id, o.company_id, c.name`,
+      offersParams
+    );
+
+    const offersByLotRoundCompany = new Map();
+    const companiesByLot = new Map();
+    const bestPriceByLotRound = new Map();
+
+    for (const row of offersRes.rows) {
+      const lotId = row.lot_id;
+      const roundId = row.round_id;
+      const compId = row.company_id;
+      const total = parseFloat(row.total) || 0;
+      const key = `${lotId}:${roundId}:${compId}`;
+      const roundKey = `${lotId}:${roundId}`;
+
+      offersByLotRoundCompany.set(key, total);
+
+      if (!companiesByLot.has(lotId)) {
+        companiesByLot.set(lotId, new Map());
+      }
+      companiesByLot.get(lotId).set(compId, row.company_name);
+
+      const best = bestPriceByLotRound.get(roundKey);
+      if (best === undefined || total < best) {
+        bestPriceByLotRound.set(roundKey, total);
+      }
+    }
+
     // Créer le workbook
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Comparaison Tours');
 
+    const perRoundCols = isEntreprise ? 1 : 3;
+    const analysisCols = showAnalysis ? 3 : 0;
+    const totalCols = 1 + (isEntreprise ? 0 : 1) + (rounds.length * perRoundCols) + analysisCols;
+    const currencyFmt = '#,##0.00 €';
+    const deltaCurrencyFmt = '+#,##0.00 €;-#,##0.00 €;0.00 €';
+    const deltaPercentFmt = '+0.0%;-0.0%;0.0%';
+
     // Titre
-    worksheet.mergeCells('A1:E1');
+    worksheet.mergeCells(1, 1, 1, totalCols);
     const titleCell = worksheet.getCell('A1');
     titleCell.value = `Comparaison des Tours - ${project.name}`;
     titleCell.font = { size: 16, bold: true };
@@ -334,67 +408,174 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
 
     worksheet.addRow([]);
 
-    // En-têtes
-    const headerRow = worksheet.addRow([
-      'Lot',
-      'MOE (€)',
-      ...rounds.map(r => `Tour ${r.round_number}${r.name ? ` - ${r.name}` : ''} (€)`)
-    ]);
+    // En-têtes (2 lignes, comme l'interface)
+    const headerRow1 = worksheet.addRow([]);
+    const headerRow2 = worksheet.addRow([]);
+    headerRow1.height = 30;
+    headerRow2.height = 30;
 
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4472C4' }
-    };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    headerRow.height = 35;
+    let col = 1;
+    worksheet.mergeCells(headerRow1.number, col, headerRow2.number, col);
+    headerRow1.getCell(col).value = 'Lot';
+    col += 1;
 
-    // Récupérer les données pour chaque lot et tour
+    if (!isEntreprise) {
+      worksheet.mergeCells(headerRow1.number, col, headerRow2.number, col);
+      headerRow1.getCell(col).value = 'MOE (€)';
+      col += 1;
+    }
+
+    for (const round of rounds) {
+      const startCol = col;
+      const endCol = col + perRoundCols - 1;
+      worksheet.mergeCells(headerRow1.number, startCol, headerRow1.number, endCol);
+      headerRow1.getCell(startCol).value = `Tour ${round.round_number}${round.name ? ` - ${round.name}` : ''}`;
+
+      headerRow2.getCell(col).value = 'Montant (€)';
+      if (!isEntreprise) {
+        headerRow2.getCell(col + 1).value = 'Ecart (€)';
+        headerRow2.getCell(col + 2).value = 'Ecart (%)';
+      }
+      col += perRoundCols;
+    }
+
+    if (showAnalysis) {
+      const startCol = col;
+      const endCol = col + 2;
+      worksheet.mergeCells(headerRow1.number, startCol, headerRow1.number, endCol);
+      headerRow1.getCell(startCol).value = 'Analyse';
+      headerRow2.getCell(col).value = 'Delta Montant';
+      headerRow2.getCell(col + 1).value = 'Delta %';
+      headerRow2.getCell(col + 2).value = 'Tendance';
+    }
+
+    for (let c = 1; c <= totalCols; c++) {
+      const cell1 = headerRow1.getCell(c);
+      const cell2 = headerRow2.getCell(c);
+      [cell1, cell2].forEach(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4472C4' }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      });
+    }
+
+    let totalMoe = 0;
+    const totalsByRound = {};
+    rounds.forEach(r => { totalsByRound[r.id] = 0; });
+
     for (const lot of lots) {
-      const rowData = [
-        `${lot.code || ''} ${lot.name}`.trim()
-      ];
+      const lotLabel = `${lot.code || ''} ${lot.name}`.trim();
+      const moeTotal = moeTotals.get(lot.id) || 0;
 
-      // MOE total
-      const moeRes = await query(
-        `SELECT SUM(m.qty * m.unit_price) as total
-         FROM items i
-         JOIN moe_items m ON m.item_id = i.id
-         WHERE i.lot_id = $1`,
-        [lot.id]
-      );
-      const moeTotal = parseFloat(moeRes.rows[0]?.total) || 0;
-      rowData.push(moeTotal);
+      const lotRow = worksheet.addRow([]);
+      lotRow.getCell(1).value = lotLabel;
+      lotRow.font = { bold: true };
+      lotRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F3F3' } };
 
-      // Total par tour (moins-disant)
-      for (const round of rounds) {
-        const roundRes = await query(
-          `SELECT c.id, c.name, SUM(o.qty * o.unit_price) as total
-           FROM companies c
-           JOIN offers o ON o.company_id = c.id
-           JOIN items i ON i.id = o.item_id
-           WHERE i.lot_id = $1 AND o.round_id = $2
-           GROUP BY c.id, c.name
-           ORDER BY total`,
-          [lot.id, round.id]
-        );
-
-        const minTotal = roundRes.rowCount > 0 ? parseFloat(roundRes.rows[0].total) || null : null;
-        rowData.push(minTotal);
+      let currentCol = 2;
+      if (!isEntreprise) {
+        lotRow.getCell(currentCol).value = moeTotal;
+        lotRow.getCell(currentCol).numFmt = currencyFmt;
+        totalMoe += moeTotal;
+        currentCol += 1;
       }
 
-      const row = worksheet.addRow(rowData);
-      
-      // Format monétaire
-      for (let col = 2; col <= 2 + rounds.length; col++) {
-        row.getCell(col).numFmt = '#,##0.00 €';
+      for (const round of rounds) {
+        const roundKey = `${lot.id}:${round.id}`;
+        const bestPrice = bestPriceByLotRound.get(roundKey);
+        if (bestPrice !== undefined) {
+          lotRow.getCell(currentCol).value = bestPrice;
+          lotRow.getCell(currentCol).numFmt = currencyFmt;
+          totalsByRound[round.id] += bestPrice;
+        }
+        currentCol += 1;
+
+        if (!isEntreprise) {
+          if (bestPrice !== undefined) {
+            const ecart = bestPrice - moeTotal;
+            lotRow.getCell(currentCol).value = ecart;
+            lotRow.getCell(currentCol).numFmt = deltaCurrencyFmt;
+            currentCol += 1;
+
+            const pct = moeTotal > 0 ? ecart / moeTotal : 0;
+            lotRow.getCell(currentCol).value = pct;
+            lotRow.getCell(currentCol).numFmt = deltaPercentFmt;
+            currentCol += 1;
+          } else {
+            currentCol += 2;
+          }
+        }
+      }
+
+      if (showAnalysis) {
+        const fromTotal = bestPriceByLotRound.get(`${lot.id}:${roundFromId}`) || 0;
+        const toTotal = bestPriceByLotRound.get(`${lot.id}:${roundToId}`) || 0;
+        const delta = toTotal - fromTotal;
+        const deltaPct = fromTotal > 0 ? delta / fromTotal : 0;
+        lotRow.getCell(currentCol).value = delta;
+        lotRow.getCell(currentCol).numFmt = deltaCurrencyFmt;
+        lotRow.getCell(currentCol + 1).value = deltaPct;
+        lotRow.getCell(currentCol + 1).numFmt = deltaPercentFmt;
+        lotRow.getCell(currentCol + 2).value = delta < 0 ? 'DOWN' : (delta > 0 ? 'UP' : 'SAME');
+      }
+
+      const companiesMap = companiesByLot.get(lot.id) || new Map();
+      const companies = Array.from(companiesMap.entries())
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+      for (const company of companies) {
+        const companyRow = worksheet.addRow([]);
+        companyRow.getCell(1).value = company.name;
+        companyRow.getCell(1).alignment = { indent: 1 };
+
+        let cCol = 2;
+        if (!isEntreprise) {
+          companyRow.getCell(cCol).value = '-';
+          cCol += 1;
+        }
+
+        for (const round of rounds) {
+          const amount = offersByLotRoundCompany.get(`${lot.id}:${round.id}:${company.id}`) || 0;
+          companyRow.getCell(cCol).value = amount;
+          companyRow.getCell(cCol).numFmt = currencyFmt;
+          cCol += 1;
+
+          if (!isEntreprise) {
+            const ecart = amount - moeTotal;
+            companyRow.getCell(cCol).value = ecart;
+            companyRow.getCell(cCol).numFmt = deltaCurrencyFmt;
+            cCol += 1;
+
+            const pct = moeTotal > 0 ? ecart / moeTotal : 0;
+            companyRow.getCell(cCol).value = pct;
+            companyRow.getCell(cCol).numFmt = deltaPercentFmt;
+            cCol += 1;
+          }
+        }
+
+        if (showAnalysis) {
+          const fromAmount = offersByLotRoundCompany.get(`${lot.id}:${roundFromId}:${company.id}`) || 0;
+          const toAmount = offersByLotRoundCompany.get(`${lot.id}:${roundToId}:${company.id}`) || 0;
+          const delta = toAmount - fromAmount;
+          const deltaPct = fromAmount > 0 ? delta / fromAmount : 0;
+          companyRow.getCell(cCol).value = delta;
+          companyRow.getCell(cCol).numFmt = deltaCurrencyFmt;
+          companyRow.getCell(cCol + 1).value = deltaPct;
+          companyRow.getCell(cCol + 1).numFmt = deltaPercentFmt;
+          companyRow.getCell(cCol + 2).value = delta < 0 ? 'DOWN' : (delta > 0 ? 'UP' : 'SAME');
+        }
       }
     }
 
     // Totaux
     worksheet.addRow([]);
-    const totalRow = worksheet.addRow(['TOTAL GÉNÉRAL']);
+    const totalRow = worksheet.addRow([]);
+    totalRow.getCell(1).value = 'TOTAL GENERAL';
     totalRow.font = { bold: true, size: 12 };
     totalRow.fill = {
       type: 'pattern',
@@ -402,43 +583,54 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
       fgColor: { argb: 'FFF3F3F3' }
     };
 
-    // MOE grand total
-    const moeGrandRes = await query(
-      `SELECT SUM(m.qty * m.unit_price) as total
-       FROM items i
-       JOIN moe_items m ON m.item_id = i.id
-       JOIN lots l ON l.id = i.lot_id
-       WHERE l.project_id = $1`,
-      [projectId]
-    );
-    totalRow.getCell(2).value = parseFloat(moeGrandRes.rows[0]?.total) || 0;
-    totalRow.getCell(2).numFmt = '#,##0.00 €';
+    let tCol = 2;
+    if (!isEntreprise) {
+      totalRow.getCell(tCol).value = totalMoe;
+      totalRow.getCell(tCol).numFmt = currencyFmt;
+      tCol += 1;
+    }
 
-    // Totaux par tour
-    for (let idx = 0; idx < rounds.length; idx++) {
-      const roundGrandRes = await query(
-        `SELECT SUM(o.qty * o.unit_price) as total
-         FROM offers o
-         JOIN items i ON i.id = o.item_id
-         JOIN lots l ON l.id = i.lot_id
-         WHERE l.project_id = $1 AND o.round_id = $2`,
-        [projectId, rounds[idx].id]
-      );
-      totalRow.getCell(3 + idx).value = parseFloat(roundGrandRes.rows[0]?.total) || 0;
-      totalRow.getCell(3 + idx).numFmt = '#,##0.00 €';
+    for (const round of rounds) {
+      const total = totalsByRound[round.id] || 0;
+      totalRow.getCell(tCol).value = total;
+      totalRow.getCell(tCol).numFmt = currencyFmt;
+      tCol += 1;
+
+      if (!isEntreprise) {
+        const ecart = total - totalMoe;
+        totalRow.getCell(tCol).value = ecart;
+        totalRow.getCell(tCol).numFmt = deltaCurrencyFmt;
+        tCol += 1;
+
+        const pct = totalMoe > 0 ? ecart / totalMoe : 0;
+        totalRow.getCell(tCol).value = pct;
+        totalRow.getCell(tCol).numFmt = deltaPercentFmt;
+        tCol += 1;
+      }
+    }
+
+    if (showAnalysis) {
+      const fromTotal = totalsByRound[roundFromId] || 0;
+      const toTotal = totalsByRound[roundToId] || 0;
+      const delta = toTotal - fromTotal;
+      const deltaPct = fromTotal > 0 ? delta / fromTotal : 0;
+      totalRow.getCell(tCol).value = delta;
+      totalRow.getCell(tCol).numFmt = deltaCurrencyFmt;
+      totalRow.getCell(tCol + 1).value = deltaPct;
+      totalRow.getCell(tCol + 1).numFmt = deltaPercentFmt;
+      totalRow.getCell(tCol + 2).value = delta < 0 ? 'DOWN' : (delta > 0 ? 'UP' : 'SAME');
     }
 
     // Ajuster largeurs
     worksheet.getColumn(1).width = 30;
-    for (let i = 2; i <= 2 + rounds.length; i++) {
-      worksheet.getColumn(i).width = 18;
+    for (let i = 2; i <= totalCols; i++) {
+      worksheet.getColumn(i).width = 16;
     }
 
     // Bordures: appliquer sur toutes les cellules, y compris vides
-    const headerCols2 = headerRow.cellCount;
     const lastRow2 = worksheet.lastRow.number;
-    for (let r = 3; r <= lastRow2; r++) {
-      for (let c = 1; c <= headerCols2; c++) {
+    for (let r = headerRow1.number; r <= lastRow2; r++) {
+      for (let c = 1; c <= totalCols; c++) {
         const cell = worksheet.getCell(r, c);
         cell.border = {
           top: { style: 'thin' },

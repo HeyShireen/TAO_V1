@@ -247,6 +247,5 @@ function defaultSchemaSQL() {
   CREATE INDEX IF NOT EXISTS idx_moe_items_item   ON public.moe_items(item_id);
   CREATE INDEX IF NOT EXISTS idx_lot_companies_lot ON public.lot_companies(lot_id);
   CREATE INDEX IF NOT EXISTS idx_lot_companies_company ON public.lot_companies(company_id);
-  ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_date DATE;
   `
 }
