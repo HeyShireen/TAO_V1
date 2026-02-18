@@ -293,13 +293,9 @@ function activateSubtab(id){
   qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
   qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
   
-  // Charger les questions automatiquement quand on ouvre l'onglet
-  if (id === 'subtab-questions' && currentLot) {
-    refreshQuestions();
-  }
-  
-  // Charger l'éditeur de questions
+  // Charger la liste et l'éditeur de questions
   if (id === 'subtab-questions-editor' && currentLot) {
+    refreshQuestions();
     loadQuestionsEditor();
   }
 }
@@ -2189,7 +2185,6 @@ async function openLot(id, lotMeta){
   
   activateSubtab('subtab-data'); // Activer le sous-onglet "Données" par défaut
   setText('#lot-title', `Lot #${id} — ${lotMeta.name}`);
-  setText('#lot-questions-title', `Fiches Questions - ${lotMeta.name}`);
 
   // Données combinées (inclut déjà les entreprises) via l'endpoint existant
   const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
@@ -2228,7 +2223,7 @@ async function openLot(id, lotMeta){
   // Chips entreprises
   renderLotCompanies();
   
-  // Activer l'onglet Fiches Questions
+  // Activer l'onglet lot
   enableTab('tab-lot-questions', true);
   
   // Masquer les onglets de tour (config/questions) quand un lot est selectionne
@@ -2422,6 +2417,7 @@ async function deleteAllQuestions(){
 
 function populateCompanyFilter(){
   const select = qs('#filter-company');
+  if (!select) return;
   select.innerHTML = '<option value="">Toutes les entreprises</option>';
   for (const c of lotCompanies) {
     const opt = document.createElement('option');
@@ -2434,8 +2430,8 @@ function populateCompanyFilter(){
 async function exportQuestionsExcel(){
   if (!currentLot || !currentRound) return;
   try {
-    const companyId = qs('#filter-company').value;
-    const status = qs('#filter-status').value;
+    const companyId = qs('#filter-company')?.value || '';
+    const status = qs('#filter-status')?.value || '';
     
     let url = `/question-config/lot/${currentLot.id}/export-excel?round_id=${currentRound.id}`;
     if (companyId) url += `&company_id=${companyId}`;
@@ -2496,8 +2492,8 @@ async function exportRAO(){
 async function refreshQuestions(){
   if (!currentLot || !currentRound) return;
   try {
-    const companyId = qs('#filter-company').value;
-    const status = qs('#filter-status').value;
+    const companyId = qs('#filter-company')?.value || '';
+    const status = qs('#filter-status')?.value || '';
     
     let url = `/question-config/lot/${currentLot.id}?round_id=${currentRound.id}`;
     if (companyId) url += `&company_id=${companyId}`;
@@ -5681,7 +5677,7 @@ const HELP_CONTEXTS = {
   'round-content': {
     title: 'Tour Sélectionné',
     items: [
-      'Accédez aux lots, récapitulatif, configuration et fiches questions.',
+      'Accédez aux lots, récapitulatif, configuration et questions.',
       'Le récapitulatif calcule les totaux (MOE masqué pour rôle entreprise).',
       'Les lots permettent la saisie / comparaison des offres.'
     ]

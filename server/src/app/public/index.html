@@ -195,7 +195,7 @@
             <div class="row gap" style="margin-top:12px;margin-bottom:12px;align-items:flex-end;flex-wrap:wrap;gap:8px">
               <span style="font-weight:600"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-search"></use></svg>Analyser l'évolution du tour :</span>
               <div class="field" style="margin:0">
-                <select id="compare-round" name="compare-round" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);min-width:140px;max-width:100%;flex:1 1 180px">
+                <select id="compare-round" name="compare-round" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);min-width:140px;max-width:100%;flex:1 1 20px">
                   <option value="">Selectionner un tour...</option>
                 </select>
               </div>
@@ -298,7 +298,6 @@
             <button data-subtab="subtab-data" class="subnav-tab active"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Données</button>
             <button data-subtab="subtab-questions-editor" class="subnav-tab"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-help"></use></svg>Questions</button>
             <button data-subtab="subtab-config" class="subnav-tab"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Config Questions</button>
-            <button data-subtab="subtab-questions" class="subnav-tab"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>Fiches Questions</button>
           </div>
         </div>
 
@@ -375,9 +374,9 @@
             <p class="muted">Modifier, ajouter et supprimer les questions par ligne</p>
             
             <!-- Filtres et actions -->
-            <div class="row gap" style="margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
+            <div class="row gap questions-toolbar" style="margin-bottom:16px;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border)">
               <label for="questions-view-filter" style="font-weight:600">Afficher:</label>
-              <select id="questions-view-filter" name="questions-view-filter" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+              <select id="questions-view-filter" name="questions-view-filter" class="compact-select" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
                 <option value="all">Toutes les colonnes</option>
                 <option value="quantities">Quantités uniquement</option>
                 <option value="unit_prices">Prix unitaires uniquement</option>
@@ -385,12 +384,16 @@
               </select>
               
               <label for="questions-target-company" style="font-weight:600;margin-left:16px;color:var(--copper)">Entreprise ciblée:</label>
-              <select id="questions-target-company" name="questions-target-company" style="padding:8px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
+              <select id="questions-target-company" name="questions-target-company" class="compact-select" style="padding:8px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
                 <option value="">➜ Sélectionner une entreprise...</option>
               </select>
               
-              <div class="spacer"></div>
-              <button id="refresh-questions-editor" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser</button>
+              <div class="questions-actions">
+                <button id="generate-questions" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Générer les fiches questions</button>
+                <button id="export-questions-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Exporter Excel</button>
+                <button id="delete-all-questions" class="btn ghost" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-trash"></use></svg>Supprimer toutes les fiches</button>
+                <button id="refresh-questions-editor" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser</button>
+              </div>
             </div>
             
             <!-- Tableau des questions éditables -->
@@ -404,6 +407,10 @@
                 </tbody>
               </table>
             </div>
+
+            <div id="questions-list" class="table-wrapper">
+              <p class="muted" style="padding:20px;text-align:center">Aucune fiche question générée</p>
+            </div>
           </div>
         </div>
 
@@ -413,101 +420,64 @@
             <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Configuration des Questions</h3>
             <p class="muted">Questions automatiques selon les écarts détectés</p>
           
-          <div class="field">
-            <label for="q-qty-low"><strong>Question si quantité FAIBLE (inférieure à MOE)</strong></label>
-            <textarea id="q-qty-low" name="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+          <div class="table-wrapper" style="margin-bottom:16px">
+            <table class="summary-table" style="min-width:720px">
+              <thead>
+                <tr>
+                  <th style="width:220px">Type</th>
+                  <th style="width:140px">Seuil (%)</th>
+                  <th>Question</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Quantite basse</strong> (inferieure a MOE)</td>
+                  <td>
+                    <input id="threshold-qty-low" name="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
+                  </td>
+                  <td>
+                    <textarea id="q-qty-low" name="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Quantite haute</strong> (superieure a MOE)</td>
+                  <td>
+                    <input id="threshold-qty-high" name="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
+                  </td>
+                  <td>
+                    <textarea id="q-qty-high" name="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Prix unitaire bas</strong> (inferieur a MOE)</td>
+                  <td>
+                    <input id="threshold-price-low" name="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
+                  </td>
+                  <td>
+                    <textarea id="q-price-low" name="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Prix unitaire haut</strong> (superieur a MOE)</td>
+                  <td>
+                    <input id="threshold-price-high" name="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
+                  </td>
+                  <td>
+                    <textarea id="q-price-high" name="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          
-          <div class="field">
-            <label for="q-qty-high"><strong>Question si quantité HAUTE (supérieure à MOE)</strong></label>
-            <textarea id="q-qty-high" name="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-          </div>
-          
-          <div class="field">
-            <label for="q-price-low"><strong>Question si prix unitaire FAIBLE (inférieur à MOE)</strong></label>
-            <textarea id="q-price-low" name="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-          </div>
-          
-          <div class="field">
-            <label for="q-price-high"><strong>Question si prix unitaire HAUT (supérieur à MOE)</strong></label>
-            <textarea id="q-price-high" name="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
+          <div class="row gap" style="margin-bottom:16px">
+            <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder les seuils</button>
           </div>
           
           <button id="save-project-questions" class="btn" style="margin-top:16px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder</button>
           </div>
         </div>
 
-        <!-- Sous-onglet Fiches Questions -->
-        <div id="subtab-questions" class="subtabpanel hidden">
-          <div class="card">
-            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>Fiches Questions</h3>
-          
-          <!-- Configuration des seuils -->
-          <details class="config-details" style="margin-bottom:20px;padding:12px;background:var(--input-bg);border:1px solid var(--border);border-radius:10px">
-            <summary style="cursor:pointer;font-weight:600;padding:8px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Paramètres des seuils</summary>
-            <div class="grid grid-4 gap" style="margin-top:16px">
-              <div class="field">
-                <label for="threshold-qty-low">Seuil Qté Basse (%)</label>
-                <input id="threshold-qty-low" name="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
-              </div>
-              <div class="field">
-                <label for="threshold-qty-high">Seuil Qté Haute (%)</label>
-                <input id="threshold-qty-high" name="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
-              </div>
-              <div class="field">
-                <label for="threshold-price-low">Seuil Prix Bas (%)</label>
-                <input id="threshold-price-low" name="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
-              </div>
-              <div class="field">
-                <label for="threshold-price-high">Seuil Prix Haut (%)</label>
-                <input id="threshold-price-high" name="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
-              </div>
-            </div>
-            <div class="row gap" style="margin-top:12px">
-              <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder les seuils</button>
-              <button id="generate-questions" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Générer les fiches questions</button>
-              <button id="delete-all-questions" class="btn ghost" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-trash"></use></svg>Supprimer toutes les fiches</button>
-            </div>
-          </details>
-          
-          <!-- Filtre par entreprise -->
-          <div class="row gap" style="margin-bottom:16px;flex-wrap:wrap">
-            <label for="filter-company">Filtrer par entreprise :</label>
-            <select id="filter-company" name="filter-company" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-              <option value="">Toutes les entreprises</option>
-            </select>
-              <label for="filter-status">Statut :</label>
-              <select id="filter-status" name="filter-status" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-                <option value="">Tous</option>
-                <option value="pending">En attente</option>
-                <option value="answered">Répondues</option>
-                <option value="dismissed">Ignorées</option>
-              </select>
-              <label for="filter-type">Type :</label>
-              <select id="filter-type" name="filter-type" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
-                <option value="">Tous</option>
-                <option value="manual">Manuelle</option>
-                <option value="qty_low">Qté Basse</option>
-                <option value="qty_high">Qté Haute</option>
-                <option value="price_low">Prix Bas</option>
-                <option value="price_high">Prix Haut</option>
-              </select>
-              <label for="filter-deviation">Écart &gt;=</label>
-              <input id="filter-deviation" name="filter-deviation" type="number" step="0.1" style="width:80px;min-width:60px;flex:0 1 80px" placeholder="%" />
-              <label for="filter-price">Prix &lt;=</label>
-              <input id="filter-price" name="filter-price" type="number" step="0.01" style="width:80px;min-width:60px;flex:0 1 80px" placeholder="€" />
-              <label for="filter-question">Question :</label>
-              <input id="filter-question" name="filter-question" type="text" style="width:120px;min-width:80px;flex:1 1 100px" placeholder="Texte..." />
-              <button id="refresh-questions" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser</button>
-              <button id="export-questions-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Exporter Excel</button>
-          </div>
-          
-          <!-- Liste des fiches -->
-          <div id="questions-list" class="table-wrapper">
-            <p class="muted" style="padding:20px;text-align:center">Aucune fiche question générée</p>
-          </div>
-          </div>
-        </div>
+        
       </section>
 
       <!-- Modal création/édition Lot -->

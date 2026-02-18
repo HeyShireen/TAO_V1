@@ -317,8 +317,8 @@ h1,h2{
   top:0;
   align-self:flex-start;
   height:100vh;
-  width:68px;
-  min-width:68px;
+  width:56px;
+  min-width:56px;
   flex-shrink:0;
   padding:16px;
   border-right:2px solid var(--border);
@@ -329,7 +329,7 @@ h1,h2{
   z-index:500;
 }
 #dashboard .header:hover{
-  width:240px;
+  width:180px;
   overflow:visible;
   box-shadow: 4px 0 24px rgba(0,0,0,0.35);
 }
@@ -493,6 +493,32 @@ h1,h2{
   border-radius:6px; padding:5px 12px; cursor:pointer; transition:all .2s; font-size:12px; white-space:nowrap }
 .subnav-tabs button:hover{ background:var(--accent-ghost); border-color:var(--accent); color:var(--fg) }
 .subnav-tabs button.active{ background:var(--accent-ghost); border-color:var(--accent); color:var(--accent) }
+
+/* Questions editor toolbar */
+.questions-toolbar{ align-items:flex-end }
+.questions-toolbar .compact-select{
+  min-width:160px;
+  max-width:220px;
+  padding:6px 8px !important;
+  font-size:12px;
+  height:34px;
+}
+.questions-actions{
+  margin-left:auto;
+  display:grid;
+  grid-template-columns:repeat(2, minmax(180px, 1fr));
+  gap:8px;
+}
+
+/* En-tete de lot: titre a gauche, actions a droite */
+.lot-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.lot-header .row{ margin-left:auto }
 
 /* Sous-onglets pour un tour spécifique */
 .tour-subnav{ 
@@ -1805,6 +1831,9 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
     width:100% !important;
     max-width:100% !important;
     min-width:0 !important;
+    padding:6px 10px !important;
+    height:34px;
+    font-size:13px;
   }
 
   /* ---- Import preview ---- */

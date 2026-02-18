@@ -1,4 +1,13 @@
 import ExcelJS from 'exceljs';
+import pdfParse from 'pdf-parse';
+import { execFile } from 'child_process';
+import crypto from 'crypto';
+import fsSync from 'fs';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import { Readable } from 'stream';
+import { promisify } from 'util';
 import { query, pool } from '../db.js';
 
 /**
@@ -146,6 +155,57 @@ export async function previewExcel({ buffer, sheetName, headerRow: headerRowOver
 }
 
 /**
+ * Lit un fichier PDF et retourne un aperçu des données + suggestions de mapping.
+ * Le PDF doit contenir un tableau avec colonnes séparées par des espaces.
+ * @param {Buffer} buffer - Le buffer du fichier PDF
+ * @param {number} [headerRow] - Numéro de ligne d'en-tête (optionnel)
+ */
+export async function previewPdf({ buffer, headerRow }) {
+  const { headers, rows, headerRow: resolvedHeaderRow } = await parsePdfTable({ buffer, headerRow });
+  const suggestedMapping = autoDetectMapping(headers);
+
+  const previewRows = rows.map((r) => {
+    const obj = { _rowNum: r.rowNum };
+    for (const h of headers) {
+      obj[h.index] = r.cols[h.index - 1] ?? '';
+    }
+    return obj;
+  });
+
+  return {
+    sheets: ['PDF'],
+    selectedSheet: 'PDF',
+    headerRow: resolvedHeaderRow,
+    headers,
+    suggestedMapping,
+    previewRows,
+    totalRows: rows.length,
+  };
+}
+
+/**
+ * Convertit un PDF en fichier Excel (en memoire) pour reutiliser le flow d'import existant.
+ * @param {Buffer} buffer - Le buffer du fichier PDF
+ * @param {number} [headerRow] - Ligne d'en-tete (optionnel)
+ */
+export async function convertPdfToExcelBuffer({ buffer, headerRow }) {
+  const tabulaBuffer = await tryConvertPdfWithTabula(buffer);
+  if (tabulaBuffer) return tabulaBuffer;
+
+  const { headers, rows } = await parsePdfTable({ buffer, headerRow });
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('PDF');
+
+  ws.addRow(headers.map(h => h.name));
+  for (const row of rows) {
+    const values = headers.map((h, idx) => row.cols[idx] ?? '');
+    ws.addRow(values);
+  }
+
+  return wb.xlsx.writeBuffer();
+}
+
+/**
  * Applique l'import avec le mapping validé par l'utilisateur.
  * 
  * @param {Object} params
@@ -209,18 +269,56 @@ export async function applyImport({ buffer, mode, lotId, roundId, companyId, com
     if (hasAny) dataRows.push(obj);
   }
 
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping });
+}
+
+/**
+ * Applique l'import depuis un fichier PDF.
+ */
+export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows }) {
+  const { headers, rows } = await parsePdfTable({ buffer, headerRow });
+
+  const excluded = new Set((excludedRows || []).map(Number));
+  const usedCols = new Set();
+  for (const [field, val] of Object.entries(mapping || {})) {
+    if (val == null) continue;
+    if (field === 'designation') {
+      const arr = Array.isArray(val) ? val : [val];
+      arr.forEach(ci => usedCols.add(Number(ci)));
+    } else {
+      usedCols.add(Number(val));
+    }
+  }
+
+  const dataRows = [];
+  for (const r of rows) {
+    if (excluded.has(r.rowNum)) continue;
+    const obj = {};
+    let hasAny = false;
+    for (const h of headers) {
+      if (usedCols.size && !usedCols.has(h.index)) continue;
+      const val = r.cols[h.index - 1] ?? '';
+      obj[h.index] = val;
+      if (val !== null && val !== '') hasAny = true;
+    }
+    if (hasAny) dataRows.push(obj);
+  }
+
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping });
+}
+
+function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping }) {
   if (dataRows.length === 0) throw new Error('Aucune donnée à importer');
 
-  // Exécuter l'import selon le mode
   if (mode === 'dpgf') {
     return importDPGF({ lotId, dataRows, mapping });
-  } else if (mode === 'offer') {
+  }
+  if (mode === 'offer') {
     if (!companyId && !companyName) throw new Error('Entreprise requise');
     if (!roundId) throw new Error('Round ID requis');
     return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping });
-  } else {
-    throw new Error(`Mode inconnu: ${mode}`);
   }
+  throw new Error(`Mode inconnu: ${mode}`);
 }
 
 /* =============== Import DPGF (crée items + MOE) =============== */
@@ -761,4 +859,219 @@ function autoDetectMapping(headers) {
   }
 
   return mapping;
+}
+
+/* =============== PDF parsing =============== */
+async function parsePdfTable({ buffer, headerRow }) {
+  const { text } = await pdfParse(buffer);
+  const lines = (text || '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/\u00A0/g, ' ').trimEnd())
+    .filter(line => line.trim() !== '');
+
+  if (lines.length === 0) throw new Error('PDF vide ou illisible');
+
+  const headerRowIdx = Number(headerRow) || 0;
+  const useHeuristic = shouldUsePdfHeuristic(lines);
+
+  if (useHeuristic) {
+    const rows = [];
+    const startIndex = headerRowIdx > 0 ? headerRowIdx : 0;
+    for (let i = startIndex; i < lines.length; i++) {
+      const cols = parsePdfLineHeuristic(lines[i]);
+      if (cols.length === 0) continue;
+      rows.push({ rowNum: i + 1, cols });
+    }
+
+    const headers = PDF_FALLBACK_HEADERS.map((name, idx) => ({ index: idx + 1, name }));
+    return { headers, rows, headerRow: headerRowIdx || 1 };
+  }
+
+  let detectedHeaderRowIdx = headerRowIdx;
+  let headerCols = null;
+
+  if (detectedHeaderRowIdx > 0) {
+    if (detectedHeaderRowIdx > lines.length) throw new Error('Ligne d\'en-tete invalide');
+    headerCols = splitPdfColumns(lines[detectedHeaderRowIdx - 1]);
+  } else {
+    const detected = detectPdfHeader(lines);
+    detectedHeaderRowIdx = detected.headerRowIdx;
+    headerCols = detected.headerCols;
+  }
+
+  if (!headerCols || headerCols.length === 0) throw new Error('Aucun en-tete detecte');
+
+  let maxCol = headerCols.length;
+  const rows = [];
+  for (let i = detectedHeaderRowIdx; i < lines.length; i++) {
+    const cols = splitPdfColumns(lines[i]);
+    if (cols.length === 0) continue;
+    maxCol = Math.max(maxCol, cols.length);
+    rows.push({ rowNum: i + 1, cols });
+  }
+
+  const headers = [];
+  for (let c = 1; c <= maxCol; c++) {
+    const name = headerCols[c - 1] ?? `Col ${c} (vide)`;
+    headers.push({ index: c, name });
+  }
+
+  return { headers, rows, headerRow: detectedHeaderRowIdx };
+}
+
+function splitPdfColumns(line) {
+  const trimmed = (line || '').trim();
+  if (!trimmed) return [];
+  let parts = trimmed.split(/\s{2,}|\t+/).map(p => p.trim()).filter(Boolean);
+  if (parts.length <= 1 && trimmed.includes('|')) {
+    parts = trimmed.split('|').map(p => p.trim()).filter(Boolean);
+  }
+  return parts;
+}
+
+function detectPdfHeader(lines) {
+  const maxScan = Math.min(40, lines.length);
+  let best = { headerRowIdx: 1, headerCols: splitPdfColumns(lines[0] || ''), score: 0 };
+
+  for (let i = 0; i < maxScan; i++) {
+    const cols = splitPdfColumns(lines[i]);
+    if (cols.length < 2) continue;
+    const headers = cols.map((name, idx) => ({ index: idx + 1, name }));
+    const mapping = autoDetectMapping(headers);
+    const score = Object.keys(mapping).length;
+    if (score > best.score) {
+      best = { headerRowIdx: i + 1, headerCols: cols, score };
+    }
+  }
+
+  if (best.score >= 2) return best;
+
+  for (let i = 0; i < maxScan; i++) {
+    const cols = splitPdfColumns(lines[i]);
+    if (cols.length >= 3) {
+      return { headerRowIdx: i + 1, headerCols: cols, score: 1 };
+    }
+  }
+
+  return best;
+}
+
+const execFileAsync = promisify(execFile);
+
+async function tryConvertPdfWithTabula(buffer) {
+  const jarPath = resolveTabulaJarPath();
+  if (!jarPath) {
+    throw new Error('Tabula introuvable. Placez tabula.jar dans server/tools/tabula/ ou definissez TABULA_JAR_PATH.');
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tao-tabula-'));
+  const pdfPath = path.join(tempDir, `${crypto.randomUUID()}.pdf`);
+  const csvPath = path.join(tempDir, `${crypto.randomUUID()}.csv`);
+
+  try {
+    await fs.writeFile(pdfPath, buffer);
+    await execFileAsync('java', [
+      '-jar',
+      jarPath,
+      '--pages', 'all',
+      '--format', 'CSV',
+      '--outfile', csvPath,
+      '--guess',
+      pdfPath,
+    ], { windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
+
+    const csvContent = await fs.readFile(csvPath, 'utf8');
+    const wb = new ExcelJS.Workbook();
+    await wb.csv.read(Readable.from([csvContent]), { worksheetName: 'PDF' });
+    return wb.xlsx.writeBuffer();
+  } finally {
+    await safeUnlink(pdfPath);
+    await safeUnlink(csvPath);
+    await safeRmdir(tempDir);
+  }
+}
+
+function resolveTabulaJarPath() {
+  const envPath = process.env.TABULA_JAR_PATH;
+  if (envPath && fsSync.existsSync(envPath)) return envPath;
+  const defaultPath = path.resolve(process.cwd(), 'tools', 'tabula', 'tabula.jar');
+  if (fsSync.existsSync(defaultPath)) return defaultPath;
+  return null;
+}
+
+async function safeUnlink(filePath) {
+  if (!filePath) return;
+  try { await fs.unlink(filePath); } catch (e) { /* ignore */ }
+}
+
+async function safeRmdir(dirPath) {
+  if (!dirPath) return;
+  try { await fs.rmdir(dirPath); } catch (e) { /* ignore */ }
+}
+
+const PDF_FALLBACK_HEADERS = [
+  'Designation',
+  'Unite',
+  'Quantite',
+  'Prix unitaire',
+  'Montant',
+];
+
+const PDF_UNITS = new Set([
+  'u', 'un', 'unite', 'unites', 'm', 'm2', 'm3', 'ml', 'kg', 't', 'h', 'j', 'pc', 'ens', 'lot', 'forfait',
+]);
+
+function shouldUsePdfHeuristic(lines) {
+  const maxScan = Math.min(30, lines.length);
+  if (maxScan === 0) return true;
+  let withColumns = 0;
+  for (let i = 0; i < maxScan; i++) {
+    const cols = splitPdfColumns(lines[i]);
+    if (cols.length >= 3) withColumns++;
+  }
+  return withColumns / maxScan < 0.3;
+}
+
+function parsePdfLineHeuristic(line) {
+  const trimmed = (line || '').replace(/\u00A0/g, ' ').trim();
+  if (!trimmed) return [];
+
+  const tokens = trimmed.split(/\s+/);
+  let unitIdx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i].toLowerCase();
+    if (PDF_UNITS.has(t)) unitIdx = i;
+  }
+
+  if (unitIdx === -1) {
+    return [trimmed, '', '', '', ''];
+  }
+
+  const designation = tokens.slice(0, unitIdx).join(' ').trim();
+  const unit = tokens[unitIdx];
+  const tail = tokens.slice(unitIdx + 1).join(' ');
+  const numbers = extractPdfNumbers(tail);
+
+  let qty = '';
+  let unitPrice = '';
+  let amount = '';
+
+  if (numbers.length >= 3) {
+    const last = numbers.slice(-3);
+    qty = last[0];
+    unitPrice = last[1];
+    amount = last[2];
+  } else if (numbers.length === 2) {
+    qty = numbers[0];
+    unitPrice = numbers[1];
+  } else if (numbers.length === 1) {
+    qty = numbers[0];
+  }
+
+  return [designation, unit, qty, unitPrice, amount];
+}
+
+function extractPdfNumbers(text) {
+  const matches = String(text || '').match(/-?\d{1,3}(?:[ \u00A0\u202F]\d{3})*(?:[\.,]\d+)?|-?\d+(?:[\.,]\d+)?/g);
+  return matches || [];
 }

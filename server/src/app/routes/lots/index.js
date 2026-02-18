@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/roles.js';
-import { previewExcel, applyImport } from '../../importers/smart-import.js';
+import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10 Mo max
 const router = express.Router();
@@ -13,9 +13,9 @@ router.use(requireAuth);
 // Cache temporaire des fichiers import (preview → apply sans re-upload)
 const tempFileCache = new Map();
 const TEMP_FILE_TTL = 10 * 60 * 1000; // 10 minutes
-function cacheTempFile(buffer) {
+function cacheTempFile(buffer, meta) {
   const id = crypto.randomUUID();
-  tempFileCache.set(id, { buffer, ts: Date.now() });
+  tempFileCache.set(id, { buffer, ts: Date.now(), ...meta });
   // Nettoyage des vieux fichiers
   for (const [k, v] of tempFileCache) {
     if (Date.now() - v.ts > TEMP_FILE_TTL) tempFileCache.delete(k);
@@ -26,7 +26,13 @@ function getTempFile(id) {
   const entry = tempFileCache.get(id);
   if (!entry) return null;
   if (Date.now() - entry.ts > TEMP_FILE_TTL) { tempFileCache.delete(id); return null; }
-  return entry.buffer;
+  return entry;
+}
+
+function isPdfFile({ mime, name }) {
+  if (mime && mime.toLowerCase() === 'application/pdf') return true;
+  if (name && name.toLowerCase().endsWith('.pdf')) return true;
+  return false;
 }
 
 /* ---------- RAW LOT (pour construire le tableur) ---------- */
@@ -478,9 +484,13 @@ router.post('/:id/import-preview', requireRole(['admin', 'responsable']), upload
   try {
     const sheetName = req.body?.sheetName || null;
     const headerRow = req.body?.headerRow ? Number(req.body.headerRow) : null;
-    const result = await previewExcel({ buffer: req.file.buffer, sheetName, headerRow });
+    const isPdf = isPdfFile({ mime: req.file.mimetype, name: req.file.originalname });
+    const buffer = isPdf
+      ? await convertPdfToExcelBuffer({ buffer: req.file.buffer, headerRow })
+      : req.file.buffer;
+    const result = await previewExcel({ buffer, sheetName: isPdf ? 'PDF' : sheetName, headerRow: isPdf ? 1 : headerRow });
     // Cacher le fichier pour éviter un re-upload à l'étape apply
-    const fileId = cacheTempFile(req.file.buffer);
+    const fileId = cacheTempFile(req.file.buffer, { mime: req.file.mimetype, name: req.file.originalname });
     res.json({ ...result, fileId });
   } catch (e) {
     console.error('Preview error:', e);
@@ -499,11 +509,20 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
 
     // Utiliser le fichier caché si disponible, sinon le fichier uploadé
     let buffer = req.file?.buffer;
+    let mime = req.file?.mimetype;
+    let name = req.file?.originalname;
     if (!buffer && fileId) {
-      buffer = getTempFile(fileId);
+      const entry = getTempFile(fileId);
+      buffer = entry?.buffer;
+      mime = entry?.mime;
+      name = entry?.name;
     }
     if (!buffer) return res.status(400).json({ error: 'Fichier manquant. Veuillez relancer l\'import.' });
 
+    const isPdf = isPdfFile({ mime, name });
+    if (isPdf) {
+      buffer = await convertPdfToExcelBuffer({ buffer, headerRow: Number(headerRow) || null });
+    }
     const result = await applyImport({
       buffer,
       mode,
@@ -511,8 +530,8 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
       roundId: roundId ? Number(roundId) : null,
       companyId: companyId ? Number(companyId) : null,
       companyName: companyName || null,
-      sheetName: sheetName || null,
-      headerRow: Number(headerRow) || 1,
+      sheetName: isPdf ? 'PDF' : (sheetName || null),
+      headerRow: isPdf ? 1 : (Number(headerRow) || 1),
       mapping,
       excludedRows: excludedRows || [],
     });
