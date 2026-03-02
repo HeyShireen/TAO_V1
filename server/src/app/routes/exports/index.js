@@ -35,7 +35,7 @@ router.get('/summary/:roundId', async (req, res) => {
     const accessCheck = await query(
       `SELECT 1 FROM projects p
        LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
-       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 = 'admin')`,
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
       [round.project_id, userId, req.user.role]
     );
 
@@ -295,7 +295,7 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
     // Vérifier l'accès au projet
     const projectRes = await query(
       `SELECT p.*, 
-         (p.owner_id = $2 OR EXISTS(SELECT 1 FROM project_shares WHERE project_id = p.id AND shared_with_user_id = $2) OR $3 = 'admin') as has_access
+         (p.owner_id = $2 OR EXISTS(SELECT 1 FROM project_shares WHERE project_id = p.id AND shared_with_user_id = $2) OR $3 IN ('admin', 'responsable')) as has_access
        FROM projects p
        WHERE p.id = $1`,
       [projectId, userId, req.user.role]
@@ -670,7 +670,7 @@ router.get('/rao/:projectId', async (req, res) => {
 
     // Vérifier l'accès
     const accessCheck = await query(
-      `SELECT 1 FROM projects WHERE id = $1 AND (owner_id = $2 OR $3 = 'admin')`,
+      `SELECT 1 FROM projects WHERE id = $1 AND (owner_id = $2 OR $3 IN ('admin', 'responsable'))`,
       [projectId, userId, req.user.role]
     );
     if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès refusé' });

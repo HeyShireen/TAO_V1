@@ -4,13 +4,15 @@
 const ROLES = {
   ADMIN: 'admin',
   RESPONSABLE: 'responsable',
+  ENTREPRISE: 'entreprise',
   VISIONNEUR: 'visionneur'
 };
 
-// Hiérarchie des rôles (admin > responsable > visionneur)
+// Hiérarchie des rôles (admin > responsable > entreprise > visionneur)
 const ROLE_HIERARCHY = {
-  admin: 3,
-  responsable: 2,
+  admin: 4,
+  responsable: 3,
+  entreprise: 2,
   visionneur: 1
 };
 

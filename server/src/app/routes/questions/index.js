@@ -2,6 +2,7 @@
 import express from 'express';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { validateRequired, ValidationError } from '../../utils/validation.js';
 
 const router = express.Router();
@@ -88,11 +89,9 @@ router.get('/lot/:lotId', async (req, res) => {
 });
 
 // Créer une fiche question manuelle
-router.post('/', async (req, res) => {
+// Créer une fiche question manuelle (admin/responsable uniquement)
+router.post('/', isResponsableOrAdmin, async (req, res) => {
   try {
-    if (req.user?.role === 'entreprise') {
-      return res.status(403).json({ error: 'Rôle entreprise: création manuelle interdite' });
-    }
     const { round_id, item_id, company_id, question } = req.body;
     
     validateRequired(round_id, 'L\'ID du tour');
@@ -174,17 +173,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Supprimer une fiche question
-router.delete('/:id', async (req, res) => {
+// Supprimer une fiche question (admin/responsable uniquement)
+router.delete('/:id', isResponsableOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const isEntreprise = req.user?.role === 'entreprise';
-    const companyId = req.user?.company_id || null;
     
-    // Entreprise ne peut pas supprimer (traçabilité) sauf éventuellement ses propres si politique change
-    if (isEntreprise) {
-      return res.status(403).json({ error: 'Rôle entreprise: suppression interdite' });
-    }
     const result = await query(
       'DELETE FROM question_sheets WHERE id = $1 RETURNING id',
       [id]

@@ -3,6 +3,7 @@
 
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
+import { redisSet, redisGet, redisDel, redisExists } from '../utils/redis.js';
 
 // ============================================================================
 // 1. CORS SÉCURISÉ
@@ -47,41 +48,26 @@ export function getCorsConfig() {
 }
 
 // ============================================================================
-// 2. TOKEN JWT BLACKLIST (Revocation)
+// 2. TOKEN JWT BLACKLIST (Revocation) — via Redis
 // ============================================================================
 
-class TokenBlacklist {
-  constructor() {
-    this.tokens = new Map(); // token -> expiresAt
-  }
+const BLACKLIST_FIX_PREFIX = 'blacklist_fix:';
 
-  revoke(token, expiresAt) {
-    const ttl = expiresAt - Date.now();
+export const tokenBlacklist = {
+  async revoke(token, expiresAt) {
+    const ttl = Math.ceil((expiresAt - Date.now()) / 1000);
     if (ttl > 0) {
-      this.tokens.set(token, expiresAt);
-      // Auto-cleanup
-      setTimeout(() => this.tokens.delete(token), ttl + 1000);
+      await redisSet(`${BLACKLIST_FIX_PREFIX}${token}`, '1', ttl);
     }
-  }
+  },
 
-  isRevoked(token) {
-    return this.tokens.has(token);
-  }
+  async isRevoked(token) {
+    return await redisExists(`${BLACKLIST_FIX_PREFIX}${token}`);
+  },
 
-  cleanup() {
-    const now = Date.now();
-    for (const [token, expiresAt] of this.tokens.entries()) {
-      if (expiresAt < now) {
-        this.tokens.delete(token);
-      }
-    }
-  }
-}
-
-export const tokenBlacklist = new TokenBlacklist();
-
-// Nettoyage automatique toutes les heures
-setInterval(() => tokenBlacklist.cleanup(), 60 * 60 * 1000);
+  // Nettoyage automatique via TTL Redis — plus besoin de cleanup manuel
+  cleanup() { /* No-op: Redis TTL gère l'expiration automatiquement */ }
+};
 
 // ============================================================================
 // 3. VALIDATION STRICTE DES PARAMÈTRES NUMÉRIQUES
@@ -127,14 +113,15 @@ export function validateNumericQuery(paramNames = []) {
 }
 
 // ============================================================================
-// 4. CSRF PROTECTION
+// 4. CSRF PROTECTION — via Redis
 // ============================================================================
 
-const csrfTokens = new Map(); // sessionId -> token
+const CSRF_PREFIX = 'csrf:';
 
-export function generateCsrfToken(sessionId) {
+export async function generateCsrfToken(sessionId) {
   const token = crypto.randomBytes(32).toString('hex');
-  csrfTokens.set(sessionId, token);
+  // CSRF token valide 2h
+  await redisSet(`${CSRF_PREFIX}${sessionId}`, token, 2 * 60 * 60);
   return token;
 }
 
@@ -146,13 +133,19 @@ export function validateCsrfToken(req, res, next) {
     return res.status(403).json({ error: 'CSRF token missing' });
   }
 
-  const storedToken = csrfTokens.get(sessionId);
-  if (!storedToken || storedToken !== token) {
-    console.warn(`🚨 CSRF ATTACK ATTEMPT: Invalid token for user ${sessionId}`);
-    return res.status(403).json({ error: 'CSRF validation failed' });
-  }
-
-  next();
+  redisGet(`${CSRF_PREFIX}${sessionId}`).then(storedToken => {
+    if (!storedToken || storedToken !== token) {
+      console.warn(`🚨 CSRF ATTACK ATTEMPT: Invalid token for user ${sessionId}`);
+      return res.status(403).json({ error: 'CSRF validation failed' });
+    }
+    next();
+  }).catch(() => {
+    // Si Redis échoue, laisser passer en dev, bloquer en prod
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'CSRF validation unavailable' });
+    }
+    next();
+  });
 }
 
 // ============================================================================
@@ -289,28 +282,30 @@ export function sanitizeInput(req, res, next) {
 }
 
 // ============================================================================
-// 9. PROTECTION CONTRE LES ATTAQUES PAR REPLAY
+// 9. PROTECTION CONTRE LES ATTAQUES PAR REPLAY — via Redis
 // ============================================================================
 
-const nonces = new Map(); // nonce -> timestamp
+const NONCE_PREFIX = 'nonce:';
 
-export function generateNonce() {
+export async function generateNonce() {
   const nonce = crypto.randomBytes(16).toString('hex');
-  nonces.set(nonce, Date.now());
+  // Nonce valide 10 min, auto-expiré par Redis TTL
+  await redisSet(`${NONCE_PREFIX}${nonce}`, String(Date.now()), 10 * 60);
   return nonce;
 }
 
-export function validateNonce(nonce, maxAge = 5 * 60 * 1000) {
-  if (!nonces.has(nonce)) {
+export async function validateNonce(nonce, maxAge = 5 * 60 * 1000) {
+  const key = `${NONCE_PREFIX}${nonce}`;
+  const timestamp = await redisGet(key);
+  
+  if (!timestamp) {
     return false;
   }
 
-  const timestamp = nonces.get(nonce);
-  const age = Date.now() - timestamp;
-
   // Supprimer le nonce (single-use)
-  nonces.delete(nonce);
+  await redisDel(key);
 
+  const age = Date.now() - parseInt(timestamp, 10);
   if (age > maxAge) {
     return false; // Expiré
   }
@@ -318,16 +313,7 @@ export function validateNonce(nonce, maxAge = 5 * 60 * 1000) {
   return true;
 }
 
-// Nettoyage automatique des vieux nonces
-setInterval(() => {
-  const maxAge = 10 * 60 * 1000;
-  const now = Date.now();
-  for (const [nonce, timestamp] of nonces.entries()) {
-    if (now - timestamp > maxAge) {
-      nonces.delete(nonce);
-    }
-  }
-}, 60 * 1000);
+// Plus besoin de setInterval pour le nettoyage : Redis TTL gère l'expiration automatiquement
 
 // ============================================================================
 // 10. LOGGING DE SÉCURITÉ

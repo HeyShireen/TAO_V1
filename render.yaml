@@ -24,6 +24,11 @@ services:
         sync: false  # App password Gmail
       - key: ALLOWED_ORIGINS
         sync: false  # À configurer manuellement si besoin
+      - key: REDIS_URL
+        fromService:
+          name: tao-redis
+          type: redis
+          property: connectionString
 
 databases:
   # Base de données PostgreSQL
@@ -32,3 +37,10 @@ databases:
     plan: free  # ou starter pour production
     region: frankfurt  # Même région que le service web
     ipAllowList: []  # Vide = accessible depuis votre service web uniquement
+
+  # Redis (cache, sessions, rate-limiting)
+  - type: redis
+    name: tao-redis
+    plan: free  # ou starter pour production
+    region: frankfurt
+    ipAllowList: []

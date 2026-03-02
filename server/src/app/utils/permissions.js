@@ -7,12 +7,25 @@ import { query } from '../db.js';
  * Vérifier si un utilisateur peut voir un projet
  * - Admin: tous les projets
  * - Responsable: tous les projets
+ * - Entreprise: projets où leur company est liée à un lot du projet
  * - Visionneur: seulement les projets partagés avec lui
  */
-async function canViewProject(userId, projectId, userRole) {
+async function canViewProject(userId, projectId, userRole, userCompanyId = null) {
   // Admin et responsable peuvent tout voir
   if (userRole === 'admin' || userRole === 'responsable') {
     return true;
+  }
+
+  // Entreprise: vérifier si leur company est liée à un lot du projet
+  if (userRole === 'entreprise' && userCompanyId) {
+    const companyLink = await query(
+      `SELECT lc.lot_id FROM lot_companies lc
+       JOIN lots l ON l.id = lc.lot_id
+       WHERE l.project_id = $1 AND lc.company_id = $2
+       LIMIT 1`,
+      [projectId, userCompanyId]
+    );
+    return companyLink.rows.length > 0;
   }
 
   // Visionneur: vérifier si le projet est partagé avec lui
@@ -29,12 +42,18 @@ async function canViewProject(userId, projectId, userRole) {
  * Vérifier si un utilisateur peut éditer un projet
  * - Admin: tous les projets
  * - Responsable: tous les projets
+ * - Entreprise: jamais (ne peut qu'éditer ses propres offres via save-grid)
  * - Visionneur: jamais (ou uniquement si partagé avec can_edit=true)
  */
 async function canEditProject(userId, projectId, userRole) {
   // Admin et responsable peuvent tout éditer
   if (userRole === 'admin' || userRole === 'responsable') {
     return true;
+  }
+
+  // Entreprise ne peut jamais éditer un projet directement
+  if (userRole === 'entreprise') {
+    return false;
   }
 
   // Visionneur: vérifier si le projet est partagé avec can_edit
@@ -85,11 +104,24 @@ function canShareProject(userRole) {
 /**
  * Obtenir la liste des projets visibles pour un utilisateur
  */
-async function getVisibleProjects(userId, userRole) {
+async function getVisibleProjects(userId, userRole, userCompanyId = null) {
   // Admin et responsable voient tout
   if (userRole === 'admin' || userRole === 'responsable') {
     const result = await query(
       'SELECT * FROM projects ORDER BY created_at DESC'
+    );
+    return result.rows;
+  }
+
+  // Entreprise: projets où leur company est liée à un lot
+  if (userRole === 'entreprise' && userCompanyId) {
+    const result = await query(
+      `SELECT DISTINCT p.* FROM projects p
+       JOIN lots l ON l.project_id = p.id
+       JOIN lot_companies lc ON lc.lot_id = l.id
+       WHERE lc.company_id = $1
+       ORDER BY p.created_at DESC`,
+      [userCompanyId]
     );
     return result.rows;
   }

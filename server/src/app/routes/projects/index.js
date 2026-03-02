@@ -45,7 +45,7 @@ router.post('/', isResponsableOrAdmin, async (req, res) => {
 // List projects (filtré selon le rôle)
 router.get('/', async (req, res) => {
   try {
-    const projects = await getVisibleProjects(req.user.id, req.user.role);
+    const projects = await getVisibleProjects(req.user.id, req.user.role, req.user.company_id || null);
     res.json(projects);
   } catch (err) {
     console.error('Erreur liste projets:', err);
@@ -59,7 +59,7 @@ router.get('/:id', async (req, res) => {
     const id = req.params.id;
     
     // Vérifier que l'utilisateur peut voir ce projet
-    const canView = await canViewProject(req.user.id, id, req.user.role);
+    const canView = await canViewProject(req.user.id, id, req.user.role, req.user.company_id || null);
     if (!canView) {
       return res.status(403).json({ error: 'Accès refusé à ce projet' });
     }
@@ -240,7 +240,7 @@ router.get('/:id/companies', async (req, res) => {
     const projectId = req.params.id;
     
     // Vérifier que l'utilisateur peut voir ce projet
-    const canView = await canViewProject(req.user.id, projectId, req.user.role);
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
     if (!canView) {
       return res.status(403).json({ error: 'Accès refusé à ce projet' });
     }
@@ -260,6 +260,43 @@ router.get('/:id/companies', async (req, res) => {
   } catch (err) {
     console.error('Erreur récupération entreprises projet:', err);
     res.status(500).json({ error: 'Impossible de récupérer les entreprises' });
+  }
+});
+
+// Delete a project (responsable/admin seulement, avec vérification ownership)
+router.delete('/:id', isResponsableOrAdmin, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    
+    // Vérifier que l'utilisateur a le droit de supprimer ce projet
+    const canDelete = await canDeleteProject(req.user.id, projectId, req.user.role);
+    if (!canDelete) {
+      return res.status(403).json({ 
+        error: 'Accès refusé - Seuls les admins ou le responsable propriétaire peuvent supprimer ce projet' 
+      });
+    }
+    
+    // Vérifier que le projet existe
+    const projectCheck = await query('SELECT id, name FROM projects WHERE id = $1', [projectId]);
+    if (projectCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Projet introuvable' });
+    }
+    
+    const projectName = projectCheck.rows[0].name;
+    
+    // Supprimer le projet (CASCADE supprimera automatiquement lots, items, offres, etc.)
+    await query('DELETE FROM projects WHERE id = $1', [projectId]);
+    
+    console.log(`✅ Projet supprimé: "${projectName}" (ID: ${projectId}) par utilisateur ${req.user.id}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Projet supprimé avec succès',
+      projectId: parseInt(projectId, 10)
+    });
+  } catch (err) {
+    console.error('Erreur suppression projet:', err);
+    res.status(500).json({ error: 'Impossible de supprimer le projet' });
   }
 });
 

@@ -99,7 +99,7 @@ router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
       });
     }
     
-    resetEmailAttempts(email);
+    await resetEmailAttempts(email);
     
     // Générer JWT court terme (15 min) + refresh token long terme (30 j)
     const token = sign(user);
@@ -142,7 +142,7 @@ router.post('/logout', requireAuth, async (req, res) => {
     
     // SÉCURITÉ: Révoquer le token (empêcher sa réutilisation)
     if (req.token) {
-      revokeToken(req.token);
+      await revokeToken(req.token);
     }
     
     // Révoquer le refresh token si présent
@@ -502,7 +502,7 @@ router.post('/reset-password/:token', async (req, res) => {
     await query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [reset.id]);
     
     // Réinitialiser les tentatives de login
-    resetEmailAttempts(reset.email);
+    await resetEmailAttempts(reset.email);
     
     return res.json({ 
       message: 'Mot de passe réinitialisé avec succès ! Vous pouvez maintenant vous connecter.',
@@ -571,7 +571,7 @@ router.post('/reset-cooldowns', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Accès refusé - Admin uniquement' });
     }
     
-    const result = resetAllCooldowns();
+    const result = await resetAllCooldowns();
     res.json(result);
   } catch (err) {
     console.error('Erreur reset cooldowns:', err);
@@ -679,7 +679,7 @@ router.post('/logout-everywhere', requireAuth, async (req, res) => {
     
     // Révoquer le JWT actuel
     if (req.token) {
-      revokeToken(req.token);
+      await revokeToken(req.token);
     }
     
     const opts = { 

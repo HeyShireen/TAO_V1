@@ -76,7 +76,8 @@ const CRITICAL_VARS = [
 const OPTIONAL_VARS = [
   'EMAIL_USER',
   'EMAIL_PASS',
-  'ALLOWED_ORIGINS'
+  'ALLOWED_ORIGINS',
+  'REDIS_URL'
 ];
 
 console.log('\n📋 Variables d\'environnement:');

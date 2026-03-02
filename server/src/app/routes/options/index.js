@@ -2,15 +2,44 @@
 import express from 'express';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
+import { canViewProject, canEditProject } from '../../utils/permissions.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Helper: Résoudre le project_id d'un lot
+async function getProjectIdForLot(lotId) {
+  const result = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+  return result.rows[0]?.project_id || null;
+}
+
+// Helper: Résoudre le lot_id d'une option
+async function getLotIdForOption(optionId) {
+  const result = await query('SELECT lot_id FROM options WHERE id = $1', [optionId]);
+  return result.rows[0]?.lot_id || null;
+}
+
+// Helper: Résoudre le lot_id d'un option_item
+async function getLotIdForOptionItem(itemId) {
+  const result = await query(
+    'SELECT o.lot_id FROM option_items oi JOIN options o ON o.id = oi.option_id WHERE oi.id = $1',
+    [itemId]
+  );
+  return result.rows[0]?.lot_id || null;
+}
 
 // Récupérer les options d'un lot avec leurs items et offres
 router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
     const roundId = req.query.round_id;
+
+    // SÉCURITÉ: Vérifier accès au projet
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
     // Récupérer les options
     let optionsRes;
@@ -75,10 +104,16 @@ router.get('/lot/:lotId', async (req, res) => {
 });
 
 // Créer une option
-router.post('/lot/:lotId', async (req, res) => {
+router.post('/lot/:lotId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { lotId } = req.params;
     const { round_id, designation } = req.body;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     const cleanDesignation = designation ? String(designation).trim() : '';
 
@@ -115,10 +150,18 @@ router.post('/lot/:lotId', async (req, res) => {
 });
 
 // Mettre à jour une option
-router.put('/:optionId', async (req, res) => {
+router.put('/:optionId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { optionId } = req.params;
     const { designation } = req.body;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOption(optionId);
+    if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     const result = await query(
       `UPDATE options
@@ -140,9 +183,18 @@ router.put('/:optionId', async (req, res) => {
 });
 
 // Supprimer une option
-router.delete('/:optionId', async (req, res) => {
+router.delete('/:optionId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { optionId } = req.params;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOption(optionId);
+    if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
     await query('DELETE FROM options WHERE id = $1', [optionId]);
     res.json({ ok: true });
   } catch (err) {
@@ -154,10 +206,18 @@ router.delete('/:optionId', async (req, res) => {
 // ===== Items dans une option =====
 
 // Créer un item dans une option
-router.post('/:optionId/items', async (req, res) => {
+router.post('/:optionId/items', isResponsableOrAdmin, async (req, res) => {
   try {
     const { optionId } = req.params;
     const { num, designation, unit, moe_qty, moe_unit_price } = req.body;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOption(optionId);
+    if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     const itemRes = await query(
       `INSERT INTO option_items (option_id, num, designation, unit)
@@ -185,10 +245,18 @@ router.post('/:optionId/items', async (req, res) => {
 });
 
 // Mettre à jour un item d'option
-router.put('/items/:itemId', async (req, res) => {
+router.put('/items/:itemId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { itemId } = req.params;
     const { num, designation, unit, moe_qty, moe_unit_price } = req.body;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOptionItem(itemId);
+    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     const itemRes = await query(
       `UPDATE option_items
@@ -229,9 +297,18 @@ router.put('/items/:itemId', async (req, res) => {
 });
 
 // Supprimer un item d'option
-router.delete('/items/:itemId', async (req, res) => {
+router.delete('/items/:itemId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { itemId } = req.params;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOptionItem(itemId);
+    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
     await query('DELETE FROM option_items WHERE id = $1', [itemId]);
     res.json({ ok: true });
   } catch (err) {
@@ -243,7 +320,7 @@ router.delete('/items/:itemId', async (req, res) => {
 // ===== Offres pour items d'option =====
 
 // Créer/mettre à jour une offre pour un item d'option
-router.post('/items/:itemId/offers', async (req, res) => {
+router.post('/items/:itemId/offers', isResponsableOrAdmin, async (req, res) => {
   try {
     const { itemId } = req.params;
     const { company_id, qty, unit_price, round_id } = req.body;
@@ -251,6 +328,14 @@ router.post('/items/:itemId/offers', async (req, res) => {
     if (!company_id || !round_id) {
       return res.status(400).json({ error: 'company_id et round_id requis' });
     }
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOptionItem(itemId);
+    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     // Vérifier si l'offre existe
     const existingRes = await query(
@@ -284,9 +369,18 @@ router.post('/items/:itemId/offers', async (req, res) => {
 });
 
 // Supprimer une offre d'item option
-router.delete('/items/:itemId/offers/:company_id', async (req, res) => {
+router.delete('/items/:itemId/offers/:company_id', isResponsableOrAdmin, async (req, res) => {
   try {
     const { itemId, company_id } = req.params;
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const lotId = await getLotIdForOptionItem(itemId);
+    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
     await query(
       'DELETE FROM option_item_offers WHERE option_item_id = $1 AND company_id = $2',
       [itemId, company_id]

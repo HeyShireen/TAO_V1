@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
 
 import { query, ensureSchema } from './db.js'
+import { initRedis } from './utils/redis.js'
 import { sanitizeInput } from './middleware/security.js'
 import authRoutes from './routes/auth/index.js'
 import projectRoutes from './routes/projects/index.js'
@@ -138,7 +139,8 @@ app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server'
 app.get('/api/healthz', async (_req, res) => {
   try {
     const r = await query('SELECT 1')
-    res.json({ ok: true, db: r.rowCount === 1 })
+    const { isRedisConnected } = await import('./utils/redis.js')
+    res.json({ ok: true, db: r.rowCount === 1, redis: isRedisConnected() })
   } catch (e) {
     console.error('healthz', e)
     res.status(500).json({ ok: false })
@@ -229,7 +231,8 @@ app.get('*', (req, res) => {
 import { errorHandler } from './middleware/errors.js'
 app.use(errorHandler)
 
-// Init BDD puis lancement
+// Init BDD + Redis puis lancement
+await initRedis()
 await ensureSchema()
 const port = process.env.PORT || 4000
 app.listen(port, '0.0.0.0', () => {

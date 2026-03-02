@@ -2,6 +2,8 @@
 import express from 'express';
 import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { isResponsableOrAdmin } from '../../middleware/roles.js';
+import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { validateRequired, validateNumber, ValidationError } from '../../utils/validation.js';
 
 const router = express.Router();
@@ -12,6 +14,10 @@ router.use(requireAuth);
 router.get('/project/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
+    // SÉCURITÉ: Vérifier accès au projet
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+    
     const result = await query(
       'SELECT * FROM rounds WHERE project_id = $1 ORDER BY round_number ASC',
       [projectId]
@@ -24,10 +30,14 @@ router.get('/project/:projectId', async (req, res) => {
 });
 
 // Réordonner les tours d'un projet (maj des round_number)
-router.post('/project/:projectId/order', async (req, res) => {
+router.post('/project/:projectId/order', isResponsableOrAdmin, async (req, res) => {
   try {
     const { projectId } = req.params;
     const { order } = req.body || {};
+
+    // SÉCURITÉ: Vérifier accès en écriture
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     if (!Array.isArray(order)) {
       return res.status(400).json({ error: 'Payload invalid: order[] requis' });
@@ -63,6 +73,10 @@ router.post('/project/:projectId/order', async (req, res) => {
 router.get('/project/:projectId/with-stats', async (req, res) => {
   try {
     const { projectId } = req.params;
+
+    // SÉCURITÉ: Vérifier accès au projet
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
     // Récupérer tous les tours du projet
     const roundsResult = await query(
@@ -153,10 +167,14 @@ router.get('/project/:projectId/with-stats', async (req, res) => {
 });
 
 // Créer un nouveau tour pour un projet
-router.post('/project/:projectId', async (req, res) => {
+router.post('/project/:projectId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { projectId } = req.params;
     const { name, description } = req.body;
+    
+    // SÉCURITÉ: Vérifier accès en écriture
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
     
     validateRequired(name, 'Le nom du tour');
     
@@ -183,10 +201,16 @@ router.post('/project/:projectId', async (req, res) => {
 });
 
 // Mettre à jour un tour
-router.put('/:roundId', async (req, res) => {
+router.put('/:roundId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { roundId } = req.params;
     const { name, description, status } = req.body;
+    
+    // SÉCURITÉ: Vérifier accès en écriture
+    const roundRes = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
+    if (roundRes.rowCount === 0) return res.status(404).json({ error: 'Tour introuvable' });
+    const canEdit = await canEditProject(req.user.id, roundRes.rows[0].project_id, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
     
     const result = await query(
       `UPDATE rounds 
@@ -208,9 +232,16 @@ router.put('/:roundId', async (req, res) => {
 });
 
 // Supprimer un tour
-router.delete('/:roundId', async (req, res) => {
+router.delete('/:roundId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { roundId } = req.params;
+    
+    // SÉCURITÉ: Vérifier accès en écriture
+    const roundRes = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
+    if (roundRes.rowCount === 0) return res.status(404).json({ error: 'Tour introuvable' });
+    const canEdit = await canEditProject(req.user.id, roundRes.rows[0].project_id, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    
     await query('DELETE FROM rounds WHERE id = $1', [roundId]);
     res.json({ ok: true });
   } catch (err) {
@@ -220,7 +251,7 @@ router.delete('/:roundId', async (req, res) => {
 });
 
 // Dupliquer un tour (copier toutes les données vers un nouveau tour)
-router.post('/:roundId/duplicate', async (req, res) => {
+router.post('/:roundId/duplicate', isResponsableOrAdmin, async (req, res) => {
   try {
     const { roundId } = req.params;
     const { newName } = req.body;
@@ -481,6 +512,10 @@ router.get('/project/:projectId/compare', async (req, res) => {
   try {
     const { projectId } = req.params;
     const isEntreprise = req.user?.role === 'entreprise';
+    
+    // SÉCURITÉ: Vérifier accès au projet
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
     
     // Récupérer tous les tours du projet
     const roundsResult = await query(

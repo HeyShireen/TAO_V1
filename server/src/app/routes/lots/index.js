@@ -3,7 +3,8 @@ import multer from 'multer';
 import crypto from 'crypto';
 import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { requireRole } from '../../middleware/roles.js';
+import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
+import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10 Mo max
@@ -29,6 +30,12 @@ function getTempFile(id) {
   return entry;
 }
 
+// Helper: Résoudre le project_id d'un lot
+async function getProjectIdForLot(lotId) {
+  const result = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+  return result.rows[0]?.project_id || null;
+}
+
 function isPdfFile({ mime, name }) {
   if (mime && mime.toLowerCase() === 'application/pdf') return true;
   if (name && name.toLowerCase().endsWith('.pdf')) return true;
@@ -43,6 +50,12 @@ router.get('/:id', async (req, res) => {
   const userCompanyId = req.user?.company_id || null;
 
   try {
+    // SÉCURITÉ: Vérifier que l'utilisateur peut voir le projet de ce lot
+    const projectId = await getProjectIdForLot(id);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, userCompanyId);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé à ce lot' });
+
     // Construire la condition pour filtrer les offres par round_id
     const offerCondition = roundId ? 'AND o.round_id = $2' : '';
     const queryParams = roundId ? [id, roundId] : [id];
@@ -154,6 +167,13 @@ router.get('/:id/table', async (req, res) => {
   const isEntreprise = req.user?.role === 'entreprise';
   const userCompanyId = req.user?.company_id || null;
 
+  try {
+  // SÉCURITÉ: Vérifier que l'utilisateur peut voir le projet de ce lot
+  const projectId = await getProjectIdForLot(id);
+  if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+  const canView = await canViewProject(req.user.id, projectId, req.user.role, userCompanyId);
+  if (!canView) return res.status(403).json({ error: 'Accès refusé à ce lot' });
+
   const itemsRes = await query('SELECT * FROM items WHERE lot_id=$1 ORDER BY position NULLS LAST, id', [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
 
@@ -221,25 +241,46 @@ router.get('/:id/table', async (req, res) => {
     rows.forEach(r => { r.moe = { qty: null, pu: null, mt: null }; });
   }
   res.json({ companies, rows });
+  } catch (err) {
+    console.error('Erreur GET lot table:', err);
+    res.status(500).json({ error: 'Erreur lors du chargement du tableau' });
+  }
 });
 
 /* ---------- ENTREPRISES DU LOT ---------- */
 router.get('/:id/companies', async (req, res) => {
   const id = Number(req.params.id);
-  const r = await query(
-    'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
-    [id]
-  );
-  res.json(r.rows);
+  try {
+    // SÉCURITÉ: Vérifier accès au projet
+    const projectId = await getProjectIdForLot(id);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
+    const r = await query(
+      'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
+      [id]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('Erreur GET lot companies:', err);
+    res.status(500).json({ error: 'Erreur lors du chargement des entreprises' });
+  }
 });
 
-router.post('/:id/companies', async (req, res) => {
+router.post('/:id/companies', isResponsableOrAdmin, async (req, res) => {
   const lotId = Number(req.params.id);
   const { name } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'Nom requis' });
 
   const client = await pool.connect();
   try {
+    // SÉCURITÉ: Vérifier que l'utilisateur peut éditer le projet de ce lot
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce lot' });
+
     await client.query('BEGIN');
     
     // 1. Vérifier si le lot existe
@@ -294,36 +335,73 @@ router.post('/:id/companies', async (req, res) => {
   }
 });
 
-router.delete('/:id/companies/:companyId', async (req, res) => {
+router.delete('/:id/companies/:companyId', isResponsableOrAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const companyId = Number(req.params.companyId);
-  // Supprimer les offres de cette entreprise sur les items de ce lot
-  await query(
-    'DELETE FROM offers WHERE company_id=$1 AND item_id IN (SELECT id FROM items WHERE lot_id=$2)',
-    [companyId, id]
-  );
-  // Supprimer les items ajoutés par cette entreprise
-  await query('DELETE FROM items WHERE lot_id=$1 AND source_company_id=$2', [id, companyId]);
-  await query('DELETE FROM lot_companies WHERE lot_id=$1 AND company_id=$2', [id, companyId]);
-  res.json({ ok: true });
+  try {
+    // SÉCURITÉ: Vérifier que l'utilisateur peut éditer le projet de ce lot
+    const projectId = await getProjectIdForLot(id);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce lot' });
+
+    // Supprimer les offres de cette entreprise sur les items de ce lot
+    await query(
+      'DELETE FROM offers WHERE company_id=$1 AND item_id IN (SELECT id FROM items WHERE lot_id=$2)',
+      [companyId, id]
+    );
+    // Supprimer les items ajoutés par cette entreprise
+    await query('DELETE FROM items WHERE lot_id=$1 AND source_company_id=$2', [id, companyId]);
+    await query('DELETE FROM lot_companies WHERE lot_id=$1 AND company_id=$2', [id, companyId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erreur suppression entreprise du lot:', err);
+    res.status(500).json({ error: 'Erreur lors de la suppression' });
+  }
 });
 
 /* ---------- COULEUR ENTREPRISE ---------- */
-router.patch('/companies/:companyId/color', async (req, res) => {
+router.patch('/companies/:companyId/color', isResponsableOrAdmin, async (req, res) => {
   const companyId = Number(req.params.companyId);
   const { color } = req.body || {};
   if (!color) return res.status(400).json({ error: 'Couleur requise' });
-  await query('UPDATE companies SET color = $1 WHERE id = $2', [color, companyId]);
-  res.json({ ok: true, color });
+  try {
+    await query('UPDATE companies SET color = $1 WHERE id = $2', [color, companyId]);
+    res.json({ ok: true, color });
+  } catch (err) {
+    console.error('Erreur mise à jour couleur:', err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour' });
+  }
 });
 
 /* ---------- SAUVEGARDE DU TABLEUR (édition) ---------- */
 // Body: { rows: [ { item_id?, num, designation, unit, moe:{qty,pu}, offers:{ [companyId]:{u,qty,pu} } } ] }
-router.post('/:id/save-grid', async (req, res) => {
+router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']), async (req, res) => {
   const lotId = Number(req.params.id);
   const { rows, round_id } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] requis' });
   if (!round_id) return res.status(400).json({ error: 'round_id requis' });
+  
+  // SÉCURITÉ: Vérifier l'accès au projet
+  const projectId = await getProjectIdForLot(lotId);
+  if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+  
+  const isEntreprise = req.user?.role === 'entreprise';
+  const userCompanyId = req.user?.company_id || null;
+  
+  // Entreprise: vérifier que leur company est liée au lot
+  if (isEntreprise) {
+    if (!userCompanyId) return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
+    const companyLink = await query(
+      'SELECT 1 FROM lot_companies WHERE lot_id = $1 AND company_id = $2',
+      [lotId, userCompanyId]
+    );
+    if (companyLink.rowCount === 0) return res.status(403).json({ error: 'Votre entreprise n\'est pas associée à ce lot' });
+  } else {
+    // Admin/Responsable: vérifier canEditProject
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce lot' });
+  }
   
   const roundId = Number(round_id);
   const client = await pool.connect();
@@ -389,8 +467,8 @@ router.post('/:id/save-grid', async (req, res) => {
       }
     }
 
-    // 2. Batch UPDATE items existants
-    if (itemsToUpdate.length > 0) {
+    // 2. Batch UPDATE items existants (interdit pour entreprise)
+    if (itemsToUpdate.length > 0 && !isEntreprise) {
       for (const item of itemsToUpdate) {
         await client.query(
           'UPDATE items SET num=$2, designation=$3, unit=$4, position=$5 WHERE id=$1',
@@ -399,9 +477,9 @@ router.post('/:id/save-grid', async (req, res) => {
       }
     }
 
-    // 3. Batch INSERT nouveaux items (on doit le faire en séquentiel pour récupérer les IDs)
+    // 3. Batch INSERT nouveaux items (interdit pour entreprise)
     const newItemIds = [];
-    if (itemsToInsert.length > 0) {
+    if (itemsToInsert.length > 0 && !isEntreprise) {
       for (const item of itemsToInsert) {
         const ins = await client.query(
           'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
@@ -425,8 +503,8 @@ router.post('/:id/save-grid', async (req, res) => {
       }
     }
 
-    // 5. Batch upsert MOE
-    if (moeData.length > 0) {
+    // 5. Batch upsert MOE (interdit pour entreprise)
+    if (moeData.length > 0 && !isEntreprise) {
       for (const moe of moeData) {
         if (!moe.itemId) continue;
         await client.query(`
@@ -439,9 +517,12 @@ router.post('/:id/save-grid', async (req, res) => {
     }
 
     // 6. Batch upsert OFFERS
+    // SÉCURITÉ: Entreprise ne peut sauvegarder que les offres de sa propre company
     if (offersData.length > 0) {
       for (const offer of offersData) {
         if (!offer.itemId) continue;
+        // Entreprise: filtrer uniquement ses propres offres
+        if (isEntreprise && Number(offer.companyId) !== Number(userCompanyId)) continue;
         await client.query(`
           INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
           VALUES ($1,$2,$3,$4,$5,$6,$7)

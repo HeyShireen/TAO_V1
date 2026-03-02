@@ -1,12 +1,12 @@
 import jwt from 'jsonwebtoken';
+import { redisSet, redisExists } from '../utils/redis.js';
 
-// SÉCURITÉ: Token blacklist global (à remplacer par Redis en prod)
-let tokenBlacklist = new Set();
+// SÉCURITÉ: Token blacklist via Redis (fallback mémoire auto si Redis indisponible)
+const BLACKLIST_PREFIX = 'blacklist:';
 
-export function revokeToken(token) {
-  tokenBlacklist.add(token);
-  // Nettoyer après expiration du token (7j = 604800s)
-  setTimeout(() => tokenBlacklist.delete(token), 7 * 24 * 60 * 60 * 1000);
+export async function revokeToken(token) {
+  // Stocker avec TTL de 7 jours (durée max d'un JWT)
+  await redisSet(`${BLACKLIST_PREFIX}${token}`, '1', 7 * 24 * 60 * 60);
 }
 
 export function requireAuth(req, res, next) {
@@ -21,22 +21,34 @@ export function requireAuth(req, res, next) {
   
   if (!token) return res.status(401).json({ error: 'Missing token' });
   
-  // SÉCURITÉ: Vérifier si le token est révoqué (logout)
-  if (tokenBlacklist.has(token)) {
-    return res.status(401).json({ error: 'Token revoked' });
-  }
-  
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
-    req.token = token; // Garder le token pour le logout
-    next();
-  } catch (e) {
-    if (e.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+  // SÉCURITÉ: Vérifier si le token est révoqué (lookup Redis async)
+  redisExists(`${BLACKLIST_PREFIX}${token}`).then(isRevoked => {
+    if (isRevoked) {
+      return res.status(401).json({ error: 'Token revoked' });
     }
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+    
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = payload;
+      req.token = token; // Garder le token pour le logout
+      next();
+    } catch (e) {
+      if (e.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Token expired' });
+      }
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }).catch(() => {
+    // Si Redis échoue, on laisse passer (sécurité dégradée > blocage total)
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = payload;
+      req.token = token;
+      next();
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  });
 }
 
 export function requireAdmin(req, res, next) {
