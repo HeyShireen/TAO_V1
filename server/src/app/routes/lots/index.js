@@ -350,6 +350,17 @@ router.delete('/:id/companies/:companyId', isResponsableOrAdmin, async (req, res
       'DELETE FROM offers WHERE company_id=$1 AND item_id IN (SELECT id FROM items WHERE lot_id=$2)',
       [companyId, id]
     );
+    // Supprimer les offres d'options de cette entreprise sur ce lot
+    await query(
+      `DELETE FROM option_item_offers WHERE company_id=$1 AND option_item_id IN (
+         SELECT oi.id FROM option_items oi
+         JOIN options o ON o.id = oi.option_id
+         WHERE o.lot_id=$2
+       )`,
+      [companyId, id]
+    );
+    // Supprimer les questions générées pour cette entreprise sur ce lot
+    await query('DELETE FROM generated_questions WHERE company_id=$1 AND lot_id=$2', [companyId, id]);
     // Supprimer les items ajoutés par cette entreprise
     await query('DELETE FROM items WHERE lot_id=$1 AND source_company_id=$2', [id, companyId]);
     await query('DELETE FROM lot_companies WHERE lot_id=$1 AND company_id=$2', [id, companyId]);

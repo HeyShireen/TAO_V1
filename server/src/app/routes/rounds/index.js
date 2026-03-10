@@ -573,10 +573,10 @@ router.get('/project/:projectId/compare', async (req, res) => {
            LEFT JOIN offers o ON o.company_id = c.id AND o.round_id = $2
            LEFT JOIN items i ON i.id = o.item_id AND i.lot_id = $1
            WHERE lc.lot_id = $1
-           ${isEntreprise && req.user?.company_id ? 'AND c.id = ' + req.user.company_id : ''}
+           ${isEntreprise && req.user?.company_id ? 'AND c.id = $3' : ''}
            GROUP BY c.id, c.name
-           HAVING COALESCE(SUM(o.qty * o.unit_price), 0) > 0
            ORDER BY c.name`,
+          isEntreprise && req.user?.company_id ? [lot.id, round.id, req.user.company_id] :
           [lot.id, round.id]
         );
         

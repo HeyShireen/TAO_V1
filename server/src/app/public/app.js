@@ -5812,8 +5812,24 @@ if (typeof window !== 'undefined') {
       if (roundFrom) params.set('round_from', roundFrom);
       if (roundTo) params.set('round_to', roundTo);
       const requestUrl = `${API_BASE}/exports/rounds-comparison/${currentProject.id}${params.toString() ? `?${params.toString()}` : ''}`;
+
+      // Sérialiser les simulations pour l'onglet Simulation
+      const simData = roundsSimulations.map(sim => ({
+        name: sim.name,
+        defaultCompanyId: sim.defaultCompanyId,
+        selections: Object.fromEntries(sim.selections)
+      }));
+      const simulationRoundId = qs('#compare-round')?.value || '';
+
       const res = await fetch(requestUrl, {
-        credentials: 'include'
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          simulations: simData,
+          simulationRoundId: simulationRoundId,
+          selectedOptions: Array.from(selectedRoundOptions)
+        })
       });
       if (!res.ok) throw new Error('Erreur export');
       const blob = await res.blob();

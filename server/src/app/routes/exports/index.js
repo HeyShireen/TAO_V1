@@ -282,7 +282,7 @@ router.get('/summary/:roundId', async (req, res) => {
 });
 
 // Export Excel de la comparaison des tours
-router.get('/rounds-comparison/:projectId', async (req, res) => {
+async function handleRoundsComparison(req, res) {
   try {
     const { projectId } = req.params;
     const userId = req.user.id;
@@ -318,9 +318,10 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
       return res.status(404).json({ error: 'Aucun tour trouvé' });
     }
 
-    // Récupérer les lots
+    // Récupérer les lots (tri numérique par code)
     const lotsRes = await query(
-      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+      `SELECT id, code, name FROM lots WHERE project_id = $1
+       ORDER BY CASE WHEN code ~ '^[0-9]+' THEN CAST(SUBSTRING(code FROM '^[0-9]+') AS INTEGER) ELSE 999999 END, code, name`,
       [projectId]
     );
     const lots = lotsRes.rows;
@@ -356,6 +357,7 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
        JOIN items i ON i.id = o.item_id
        JOIN rounds r ON r.id = o.round_id
        JOIN companies c ON c.id = o.company_id
+       JOIN lot_companies lc ON lc.company_id = o.company_id AND lc.lot_id = i.lot_id
        WHERE r.project_id = $1
        ${offersWhere}
        GROUP BY i.lot_id, o.round_id, o.company_id, c.name`,
@@ -384,6 +386,31 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
       const best = bestPriceByLotRound.get(roundKey);
       if (best === undefined || total < best) {
         bestPriceByLotRound.set(roundKey, total);
+      }
+    }
+
+    // Récupérer toutes les entreprises assignées aux lots (y compris sans offres)
+    const lotCompaniesParams = [projectId];
+    let lcWhere = '';
+    if (isEntreprise && companyId) {
+      lotCompaniesParams.push(companyId);
+      lcWhere = 'AND c.id = $2';
+    }
+    const lotCompaniesRes = await query(
+      `SELECT lc.lot_id, c.id as company_id, c.name as company_name
+       FROM lot_companies lc
+       JOIN companies c ON c.id = lc.company_id
+       JOIN lots l ON l.id = lc.lot_id
+       WHERE l.project_id = $1 ${lcWhere}
+       ORDER BY c.name`,
+      lotCompaniesParams
+    );
+    for (const row of lotCompaniesRes.rows) {
+      if (!companiesByLot.has(row.lot_id)) {
+        companiesByLot.set(row.lot_id, new Map());
+      }
+      if (!companiesByLot.get(row.lot_id).has(row.company_id)) {
+        companiesByLot.get(row.lot_id).set(row.company_id, row.company_name);
       }
     }
 
@@ -641,6 +668,196 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
       }
     }
 
+    // --- Onglet Simulation (si données fournies en POST) ---
+    const simulationData = req.body?.simulations;
+    const simulationRoundId = Number(req.body?.simulationRoundId);
+    const selectedOptionIds = (req.body?.selectedOptions || []).map(Number).filter(Number.isFinite);
+
+    if (Array.isArray(simulationData) && simulationData.length > 0 && Number.isFinite(simulationRoundId)) {
+      // Calculer les totaux d'offres par lot/entreprise pour le tour de simulation
+      const simOffersRes = await query(
+        `SELECT i.lot_id, o.company_id, c.name as company_name,
+                COALESCE(SUM(o.qty * o.unit_price), 0) as total
+         FROM offers o
+         JOIN items i ON i.id = o.item_id
+         JOIN companies c ON c.id = o.company_id
+         JOIN lot_companies lc ON lc.company_id = o.company_id AND lc.lot_id = i.lot_id
+         WHERE o.round_id = $1 AND i.lot_id = ANY($2::int[])
+         GROUP BY i.lot_id, o.company_id, c.name`,
+        [simulationRoundId, lots.map(l => l.id)]
+      );
+
+      const simOffersByLotCompany = new Map();
+      const allCompanyNames = new Map();
+      for (const row of simOffersRes.rows) {
+        const key = `${row.lot_id}:${row.company_id}`;
+        simOffersByLotCompany.set(key, parseFloat(row.total) || 0);
+        allCompanyNames.set(Number(row.company_id), row.company_name);
+      }
+
+      // Calculer les totaux des options sélectionnées par lot/entreprise
+      const optionTotalsByLotCompany = new Map();
+      if (selectedOptionIds.length > 0) {
+        const optRes = await query(
+          `SELECT o.lot_id, oio.company_id, SUM(oio.qty * oio.unit_price) as total
+           FROM option_item_offers oio
+           JOIN option_items oi ON oi.id = oio.option_item_id
+           JOIN options o ON o.id = oi.option_id
+           WHERE oio.round_id = $1 AND o.id = ANY($2::int[])
+           GROUP BY o.lot_id, oio.company_id`,
+          [simulationRoundId, selectedOptionIds]
+        );
+        for (const row of optRes.rows) {
+          const key = `${row.lot_id}:${row.company_id}`;
+          optionTotalsByLotCompany.set(key, (optionTotalsByLotCompany.get(key) || 0) + (parseFloat(row.total) || 0));
+        }
+      }
+
+      // Fonction pour obtenir le total d'une entreprise sur un lot (offres + options)
+      function getCompanyLotTotal(lotId, compId) {
+        const base = simOffersByLotCompany.get(`${lotId}:${compId}`) || 0;
+        const opt = optionTotalsByLotCompany.get(`${lotId}:${compId}`) || 0;
+        return base + opt;
+      }
+
+      const simSheet = workbook.addWorksheet('Simulation');
+      const simPerCol = isEntreprise ? 1 : 2;
+      const simTotalCols = 1 + (isEntreprise ? 0 : 1) + (simulationData.length * simPerCol);
+
+      // Titre
+      simSheet.mergeCells(1, 1, 1, simTotalCols);
+      const simTitleCell = simSheet.getCell('A1');
+      simTitleCell.value = `Simulation - ${project.name}`;
+      simTitleCell.font = { size: 16, bold: true };
+      simTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      simSheet.getRow(1).height = 30;
+      simSheet.addRow([]);
+
+      // En-têtes (2 lignes)
+      const simHeaderRow1 = simSheet.addRow([]);
+      const simHeaderRow2 = simSheet.addRow([]);
+      simHeaderRow1.height = 30;
+      simHeaderRow2.height = 30;
+
+      let sCol = 1;
+      simSheet.mergeCells(simHeaderRow1.number, sCol, simHeaderRow2.number, sCol);
+      simHeaderRow1.getCell(sCol).value = 'Lot';
+      sCol += 1;
+
+      if (!isEntreprise) {
+        simSheet.mergeCells(simHeaderRow1.number, sCol, simHeaderRow2.number, sCol);
+        simHeaderRow1.getCell(sCol).value = 'MOE (€)';
+        sCol += 1;
+      }
+
+      for (const sim of simulationData) {
+        const startCol = sCol;
+        const endCol = sCol + simPerCol - 1;
+        simSheet.mergeCells(simHeaderRow1.number, startCol, simHeaderRow1.number, endCol);
+        simHeaderRow1.getCell(startCol).value = sim.name || 'Simulation';
+        simHeaderRow2.getCell(sCol).value = 'Montant (€)';
+        if (!isEntreprise) {
+          simHeaderRow2.getCell(sCol + 1).value = 'Entreprise';
+        }
+        sCol += simPerCol;
+      }
+
+      // Style des en-têtes
+      for (let c = 1; c <= simTotalCols; c++) {
+        [simHeaderRow1.getCell(c), simHeaderRow2.getCell(c)].forEach(cell => {
+          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        });
+      }
+
+      const simTotalBySim = simulationData.map(() => 0);
+
+      for (const lot of lots) {
+        const lotLabel = `${lot.code || ''} ${lot.name}`.trim();
+        const moeTotal = moeTotals.get(lot.id) || 0;
+        const simRow = simSheet.addRow([]);
+        simRow.getCell(1).value = lotLabel;
+
+        let cIdx = 2;
+        if (!isEntreprise) {
+          simRow.getCell(cIdx).value = moeTotal;
+          simRow.getCell(cIdx).numFmt = currencyFmt;
+          cIdx += 1;
+        }
+
+        simulationData.forEach((sim, simIdx) => {
+          const selections = sim.selections || {};
+          const lotIdStr = String(lot.id);
+          const hasExplicit = lotIdStr in selections;
+          const selectedValue = hasExplicit ? selections[lotIdStr] : sim.defaultCompanyId;
+          const selectedCompanyId = (selectedValue === 0 || selectedValue === null || selectedValue === undefined) ? null : Number(selectedValue);
+
+          let amount = null;
+          let companyName = 'MOE';
+
+          if (selectedCompanyId) {
+            const compTotal = getCompanyLotTotal(lot.id, selectedCompanyId);
+            if (compTotal > 0) {
+              amount = compTotal;
+              companyName = allCompanyNames.get(selectedCompanyId) || `Entreprise ${selectedCompanyId}`;
+            } else {
+              amount = moeTotal > 0 ? moeTotal : null;
+              companyName = 'MOE (pas d\'offre)';
+            }
+          } else {
+            amount = moeTotal > 0 ? moeTotal : null;
+            companyName = 'MOE';
+          }
+
+          simRow.getCell(cIdx).value = amount;
+          simRow.getCell(cIdx).numFmt = currencyFmt;
+          if (!isEntreprise) {
+            simRow.getCell(cIdx + 1).value = companyName;
+          }
+          cIdx += simPerCol;
+
+          if (amount !== null) {
+            simTotalBySim[simIdx] += amount;
+          }
+        });
+      }
+
+      // Ligne totaux
+      simSheet.addRow([]);
+      const simTotalRow = simSheet.addRow([]);
+      simTotalRow.getCell(1).value = 'TOTAL';
+      simTotalRow.font = { bold: true, size: 12 };
+      simTotalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F3F3' } };
+
+      let tIdx = 2;
+      if (!isEntreprise) { tIdx += 1; }
+      simulationData.forEach((sim, simIdx) => {
+        simTotalRow.getCell(tIdx).value = simTotalBySim[simIdx];
+        simTotalRow.getCell(tIdx).numFmt = currencyFmt;
+        tIdx += simPerCol;
+      });
+
+      // Largeurs
+      simSheet.getColumn(1).width = 30;
+      for (let i = 2; i <= simTotalCols; i++) {
+        simSheet.getColumn(i).width = 18;
+      }
+
+      // Bordures
+      const simLastRow = simSheet.lastRow.number;
+      for (let r = simHeaderRow1.number; r <= simLastRow; r++) {
+        for (let c = 1; c <= simTotalCols; c++) {
+          simSheet.getCell(r, c).border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        }
+      }
+    }
+
     const buffer = await workbook.xlsx.writeBuffer();
     const filename = `ComparaisonTours_${project.name.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
 
@@ -652,7 +869,9 @@ router.get('/rounds-comparison/:projectId', async (req, res) => {
     console.error('Export rounds comparison error:', err);
     res.status(500).json({ error: 'Erreur lors de l\'export' });
   }
-});
+}
+router.get('/rounds-comparison/:projectId', handleRoundsComparison);
+router.post('/rounds-comparison/:projectId', handleRoundsComparison);
 
 // Générer le RAO (Rapport d'Analyse d'Offre) complet pour un projet en Word
 router.get('/rao/:projectId', async (req, res) => {
