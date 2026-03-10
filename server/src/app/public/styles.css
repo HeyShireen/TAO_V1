@@ -1422,31 +1422,173 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
 #questions-editor-table tbody tr:hover td.moe-cell {
   background: rgba(var(--accent-rgb), 0.12);
 }
-#questions-editor-table .ecart-high {
-  color: var(--danger);
+/* Écarts avec couleurs selon le niveau */
+#questions-editor-table .ecart-very-low {
+  background: rgba(13, 110, 253, 0.15);
+  color: #0d6efd;
+  font-weight: 700;
+  border-left: 3px solid #0d6efd;
+}
+#questions-editor-table .ecart-low {
+  background: rgba(13, 202, 240, 0.15);
+  color: #0dcaf0;
   font-weight: 600;
+  border-left: 3px solid #0dcaf0;
+}
+#questions-editor-table .ecart-high {
+  background: rgba(253, 126, 20, 0.15);
+  color: #fd7e14;
+  font-weight: 600;
+  border-left: 3px solid #fd7e14;
+}
+#questions-editor-table .ecart-very-high {
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+  font-weight: 700;
+  border-left: 3px solid #dc3545;
+}
+#questions-editor-table .ecart-unanswered {
+  font-weight: 600;
+}
+#questions-editor-table td.ecart-unanswered.target-company-highlight {
+  border-right: 3px solid #6f42c1;
 }
 /* Surbrillance de l'entreprise ciblée */
 #questions-editor-table th.target-company-highlight {
-  background: rgba(var(--blueprint-rgb), 0.15);
-  border-left: 3px solid var(--blueprint);
-  border-right: 3px solid var(--blueprint);
+  background: rgba(111, 66, 193, 0.12);
+  border-left: 3px solid #6f42c1;
+  border-right: 3px solid #6f42c1;
   font-weight: 700;
-  color: var(--blueprint);
+  color: #6f42c1;
 }
 #questions-editor-table td.target-company-highlight {
-  background: rgba(var(--blueprint-rgb), 0.12);
-  border-left: 3px solid var(--blueprint);
-  border-right: 3px solid var(--blueprint);
+  background: rgba(111, 66, 193, 0.08);
+  border-left: 3px solid #6f42c1;
+  border-right: 3px solid #6f42c1;
   font-weight: 600;
 }
 #questions-editor-table tbody tr:hover td.target-company-highlight {
-  background: rgba(var(--blueprint-rgb), 0.18);
+  background: rgba(111, 66, 193, 0.14);
+}
+
+/* Les couleurs d'écart ont la priorité sur la surbrillance */
+#questions-editor-table td.ecart-very-low.target-company-highlight,
+#questions-editor-table td.ecart-low.target-company-highlight,
+#questions-editor-table td.ecart-high.target-company-highlight,
+#questions-editor-table td.ecart-very-high.target-company-highlight {
+  border-right: 3px solid #6f42c1;
+}
+#questions-editor-table td.ecart-very-low.target-company-highlight {
+  background: rgba(13, 110, 253, 0.15);
+  color: #0d6efd;
+  border-left: 3px solid #0d6efd;
+}
+#questions-editor-table td.ecart-low.target-company-highlight {
+  background: rgba(13, 202, 240, 0.15);
+  color: #0dcaf0;
+  border-left: 3px solid #0dcaf0;
+}
+#questions-editor-table td.ecart-high.target-company-highlight {
+  background: rgba(253, 126, 20, 0.15);
+  color: #fd7e14;
+  border-left: 3px solid #fd7e14;
+}
+#questions-editor-table td.ecart-very-high.target-company-highlight {
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+  border-left: 3px solid #dc3545;
 }
 .question-text-editor {
   font-size: 12px;
   font-family: 'Archivo', sans-serif;
   resize: vertical;
+}
+
+/* Légende des écarts dans l'onglet questions */
+#questions-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+#questions-legend > span:first-child {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--fg);
+}
+#questions-legend > div {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 300px;
+}
+#questions-legend > div > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.04);
+  transition: all 0.2s;
+}
+#questions-legend > div > div:hover {
+  background: rgba(var(--accent-rgb), 0.08);
+  transform: translateY(-1px);
+}
+#questions-legend span {
+  font-size: 0.9rem;
+  color: var(--fg);
+}
+#questions-legend span.muted {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Autosave status buttons */
+#save-thresholds,
+#save-project-questions {
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#save-thresholds:disabled,
+#save-project-questions:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Autosave grid button */
+#save-grid {
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#save-grid.btn-unsaved {
+  animation: pulse-unsaved 0.8s ease-in-out infinite;
+}
+
+@keyframes pulse-unsaved {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.spinner {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* ================= Modal ================= */
@@ -1769,8 +1911,25 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   #questions-editor-table th,
   #questions-editor-table td{ padding:6px 8px }
   .question-text-editor{ font-size:11px }
+  
+  /* ---- Questions legend ---- */
+  #questions-legend {
+    flex-direction: column;
+    align-items: flex-start !important;
+  }
+  #questions-legend > div {
+    min-width: auto !important;
+    width: 100%;
+    flex-direction: column;
+    gap: 8px !important;
+  }
+  #questions-legend > div > div {
+    width: 100%;
+    padding: 8px;
+  }
 
   /* ---- Summary table ---- */
+
   .summary-table{ font-size:11px }
   .summary-table th,.summary-table td{ padding:8px 10px; font-size:11px }
   .summary-table .lot-name-cell{ min-width:100px; font-size:12px }

@@ -31,6 +31,7 @@ let currentLot = null;
 let lotCompanies = [];      // [{id,name}]
 let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
 let lotOptions = [];        // [{ id, designation, unit, offers:[{company_id,qty,unit_price}], checked:bool }]
+let unansweredConfig = { comment: 'Article sans réponse', color: '#fff3cd' }; // config for unanswered cells
 let selectedRoundOptions = new Set();
 const undoStack = [];
 const redoStack = [];
@@ -117,6 +118,38 @@ function amountCellHtml(q, pu, comment){
   const amt = amountOf(q, pu);
   if (!comment) return amt;
   return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
+}
+/** Returns true when a company has not answered an item (empty or zero for both qty and pu) */
+function isOfferUnanswered(qty, pu) {
+  const qStr = (qty == null ? '' : String(qty)).trim();
+  const pStr = (pu  == null ? '' : String(pu )).trim();
+  const qEmpty = qStr === '' || parseFloat(qStr) === 0 || isNaN(parseFloat(qStr));
+  const pEmpty = pStr === '' || parseFloat(pStr) === 0 || isNaN(parseFloat(pStr));
+  return qEmpty && pEmpty;
+}
+/** Convert hex color (#rrggbb) to rgba string */
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0,2), 16) || 0;
+  const g = parseInt(h.substring(2,4), 16) || 0;
+  const b = parseInt(h.substring(4,6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+/** Apply unanswered style to a DOM cell: border-left solid + transparent bg */
+function applyUnansweredStyle(td, color) {
+  if (!color) return;
+  td.style.borderLeft = `3px solid ${color}`;
+  td.style.backgroundColor = hexToRgba(color, 0.15);
+}
+/** Remove unanswered style from a DOM cell */
+function removeUnansweredStyle(td) {
+  td.style.borderLeft = '';
+  td.style.backgroundColor = '';
+}
+/** Generate inline style string for unanswered cells in HTML templates */
+function unansweredStyleStr(color) {
+  if (!color) return '';
+  return `border-left:3px solid ${color};background:${hexToRgba(color, 0.15)};`;
 }
 
 /* ====== Loading Spinner ====== */
@@ -1868,13 +1901,20 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
       optNone.value = '';
       optNone.textContent = 'MOE';
       select.appendChild(optNone);
-      for (const c of companies) {
+      // N'afficher que les entreprises ayant une offre réelle pour ce lot
+      const companiesForDropdown = companies.filter(c => totalsByCompany.has(c.id));
+      for (const c of companiesForDropdown) {
         const opt = document.createElement('option');
         opt.value = String(c.id);
         opt.textContent = c.name;
         select.appendChild(opt);
       }
-      select.value = selectedCompanyId ? String(selectedCompanyId) : '';
+      // Si l'entreprise sélectionnée n'a pas d'offre pour ce lot, remettre à MOE
+      const validSelectedId = selectedCompanyId && totalsByCompany.has(selectedCompanyId) ? selectedCompanyId : null;
+      if (validSelectedId !== selectedCompanyId && hasExplicit) {
+        sim.selections.set(lotId, 0);
+      }
+      select.value = validSelectedId ? String(validSelectedId) : '';
       select.addEventListener('change', () => {
         const val = select.value ? parseInt(select.value, 10) : null;
         if (val) sim.selections.set(lotId, val);
@@ -2323,18 +2363,168 @@ function parseOptionNum(raw) {
   return s.replace(/^O\s*/i, '').trim();
 }
 
+/* ================= Autosave avec debounce ================= */
+const autosaveTimers = {};
+
+function debounceAutoSave(key, fn, delay = 600) {
+  if (autosaveTimers[key]) clearTimeout(autosaveTimers[key]);
+  autosaveTimers[key] = setTimeout(fn, delay);
+}
+
+function showSaveStatus(elementId, status) {
+  const btn = qs(elementId);
+  if (!btn) return;
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'default';
+  btn.style.pointerEvents = 'none';
+  
+  if (status === 'saving') {
+    btn.innerHTML = `${icon('loader', 'spinner')}En cours...`;
+  } else if (status === 'saved') {
+    btn.innerHTML = `${icon('check-circle')}Sauvegardé`;
+    setTimeout(() => {
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.style.pointerEvents = 'auto';
+    }, 2000);
+  } else if (status === 'error') {
+    btn.innerHTML = `${icon('x-circle')}Erreur`;
+  }
+}
+
+function resetSaveButton(elementId) {
+  const btn = qs(elementId);
+  if (btn) {
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+    btn.style.pointerEvents = 'auto';
+  }
+}
+
+/* ================= Sauvegarde auto des seuils ================= */
+async function autoSaveLotThresholds() {
+  if (isVisionneur() || isEntreprise() || !currentLot) return;
+  
+  showSaveStatus('#save-thresholds', 'saving');
+  try {
+    const body = {
+      qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value),
+      qty_low_threshold: parseFloat(qs('#threshold-qty-low').value),
+      qty_high_threshold: parseFloat(qs('#threshold-qty-high').value),
+      qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value),
+      price_very_low_threshold: parseFloat(qs('#threshold-price-very-low').value),
+      price_low_threshold: parseFloat(qs('#threshold-price-low').value),
+      price_high_threshold: parseFloat(qs('#threshold-price-high').value),
+      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value)
+    };
+    await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
+    updateQuestionsLegend(body);
+    showSaveStatus('#save-thresholds', 'saved');
+  } catch (err) {
+    console.error('Erreur autosave seuils:', err);
+    showSaveStatus('#save-thresholds', 'error');
+    resetSaveButton('#save-thresholds');
+  }
+}
+
+/* ================= Sauvegarde auto des questions du projet ================= */
+async function autoSaveProjectQuestionConfig() {
+  if (!currentProject) return;
+  
+  showSaveStatus('#save-project-questions', 'saving');
+  try {
+    const body = {
+      question_qty_very_low: qs('#q-qty-very-low').value.trim(),
+      question_qty_low: qs('#q-qty-low').value.trim(),
+      question_qty_high: qs('#q-qty-high').value.trim(),
+      question_qty_very_high: qs('#q-qty-very-high').value.trim(),
+      question_price_very_low: qs('#q-price-very-low').value.trim(),
+      question_price_low: qs('#q-price-low').value.trim(),
+      question_price_high: qs('#q-price-high').value.trim(),
+      question_price_very_high: qs('#q-price-very-high').value.trim(),
+      unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
+      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd'
+    };
+    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
+    unansweredConfig.comment = body.unanswered_comment;
+    unansweredConfig.color = body.unanswered_color;
+    // Re-render the sheet to apply updated unanswered styles
+    for (let r = 0; r < sheetRows.length; r++) recalcRowAmountsRow(r);
+    showSaveStatus('#save-project-questions', 'saved');
+  } catch (err) {
+    console.error('Erreur autosave config questions projet:', err);
+    showSaveStatus('#save-project-questions', 'error');
+    resetSaveButton('#save-project-questions');
+  }
+}
 
 /* ================= Configuration Questions (Projet) ================= */
 async function loadProjectQuestionConfig(){
   if (!currentProject) return;
   try {
     const config = await api(`/question-config/project/${currentProject.id}`);
+    qs('#q-qty-very-low').value = config.question_qty_very_low || '';
     qs('#q-qty-low').value = config.question_qty_low || '';
     qs('#q-qty-high').value = config.question_qty_high || '';
+    qs('#q-qty-very-high').value = config.question_qty_very_high || '';
+    qs('#q-price-very-low').value = config.question_price_very_low || '';
     qs('#q-price-low').value = config.question_price_low || '';
     qs('#q-price-high').value = config.question_price_high || '';
+    qs('#q-price-very-high').value = config.question_price_very_high || '';
+    qs('#q-unanswered-comment').value = config.unanswered_comment || 'Article sans réponse';
+    qs('#q-unanswered-color').value = config.unanswered_color || '#fff3cd';
+    unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
+    unansweredConfig.color = config.unanswered_color || '#fff3cd';
+    attachProjectQuestionsListeners();
   } catch (err) {
     console.error('Erreur chargement config questions:', err);
+  }
+}
+
+function updateQuestionsLegend(thresholds) {
+  // Mettre à jour les valeurs de seuils dans la légende
+  // Les écarts sont exprimés en %, et les seuils sont symétriques (négatifs et positifs)
+  const qtyVeryLow = parseFloat(thresholds?.qty_very_low_threshold) || 25;
+  const qtyLow = parseFloat(thresholds?.qty_low_threshold) || 10;
+  const qtyHigh = parseFloat(thresholds?.qty_high_threshold) || 10;
+  const qtyVeryHigh = parseFloat(thresholds?.qty_very_high_threshold) || 25;
+  
+  // Très bas: < -qtyVeryLow
+  if (qs('#legend-qty-very-low-val')) {
+    qs('#legend-qty-very-low-val').textContent = qtyVeryLow;
+  }
+  
+  // Bas: -qtyVeryLow à -qtyLow
+  if (qs('#legend-qty-very-low-val2')) {
+    qs('#legend-qty-very-low-val2').textContent = qtyVeryLow;
+  }
+  if (qs('#legend-qty-low-val')) {
+    qs('#legend-qty-low-val').textContent = qtyLow;
+  }
+  
+  // Haut: +qtyHigh à +qtyVeryHigh
+  if (qs('#legend-qty-high-val')) {
+    qs('#legend-qty-high-val').textContent = qtyHigh;
+  }
+  if (qs('#legend-qty-high-val2')) {
+    qs('#legend-qty-high-val2').textContent = qtyVeryHigh;
+  }
+  
+  // Très haut: > +qtyVeryHigh
+  if (qs('#legend-qty-very-high-val')) {
+    qs('#legend-qty-very-high-val').textContent = qtyVeryHigh;
+  }
+
+  // Réponses Oubliées: mettre à jour le swatch et le commentaire
+  const swatch = qs('#legend-unanswered-swatch');
+  if (swatch) {
+    const c = unansweredConfig.color || '#ffc107';
+    swatch.style.borderLeft = `3px solid ${c}`;
+    swatch.style.background = hexToRgba(c, 0.15);
+  }
+  const commentEl = qs('#legend-unanswered-comment');
+  if (commentEl) {
+    commentEl.textContent = unansweredConfig.comment || 'Article sans réponse';
   }
 }
 
@@ -2342,12 +2532,21 @@ async function saveProjectQuestionConfig(){
   if (!currentProject) return;
   try {
     const body = {
+      question_qty_very_low: qs('#q-qty-very-low').value.trim(),
       question_qty_low: qs('#q-qty-low').value.trim(),
       question_qty_high: qs('#q-qty-high').value.trim(),
+      question_qty_very_high: qs('#q-qty-very-high').value.trim(),
+      question_price_very_low: qs('#q-price-very-low').value.trim(),
       question_price_low: qs('#q-price-low').value.trim(),
-      question_price_high: qs('#q-price-high').value.trim()
+      question_price_high: qs('#q-price-high').value.trim(),
+      question_price_very_high: qs('#q-price-very-high').value.trim(),
+      unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
+      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd'
     };
     await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
+    unansweredConfig.comment = body.unanswered_comment;
+    unansweredConfig.color = body.unanswered_color;
+    for (let r = 0; r < sheetRows.length; r++) recalcRowAmountsRow(r);
     showNotify({ title: 'Succès', message: 'Configuration sauvegardée', type: 'success' });
   } catch (err) {
     showNotify({ title: 'Erreur', message: err.message, type: 'error' });
@@ -2359,26 +2558,76 @@ async function loadLotThresholds(){
   if (!currentLot) return;
   try {
     const thresholds = await api(`/question-config/lot/${currentLot.id}/thresholds`);
+    qs('#threshold-qty-very-low').value = thresholds.qty_very_low_threshold || 25;
     qs('#threshold-qty-low').value = thresholds.qty_low_threshold || 10;
     qs('#threshold-qty-high').value = thresholds.qty_high_threshold || 10;
+    qs('#threshold-qty-very-high').value = thresholds.qty_very_high_threshold || 25;
+    qs('#threshold-price-very-low').value = thresholds.price_very_low_threshold || 25;
     qs('#threshold-price-low').value = thresholds.price_low_threshold || 10;
     qs('#threshold-price-high').value = thresholds.price_high_threshold || 10;
+    qs('#threshold-price-very-high').value = thresholds.price_very_high_threshold || 25;
+    updateQuestionsLegend(thresholds);
+    attachThresholdListeners();
   } catch (err) {
     console.error('Erreur chargement seuils:', err);
   }
 }
+
+function attachThresholdListeners(){
+  // Attacher les listeners aux inputs des seuils de quantité
+  ['threshold-qty-very-low', 'threshold-qty-low', 'threshold-qty-high', 'threshold-qty-very-high'].forEach(id => {
+    const el = qs(`#${id}`);
+    if (el) {
+      el.removeEventListener('input', updateLegendFromInputs);
+      el.removeEventListener('change', () => debounceAutoSave('thresholds', autoSaveLotThresholds));
+      el.addEventListener('input', updateLegendFromInputs);
+      el.addEventListener('change', () => debounceAutoSave('thresholds', autoSaveLotThresholds));
+    }
+  });
+}
+
+function updateLegendFromInputs(){
+  // Récupérer les valeurs actuelles des inputs
+  const thresholds = {
+    qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value) || 25,
+    qty_low_threshold: parseFloat(qs('#threshold-qty-low').value) || 10,
+    qty_high_threshold: parseFloat(qs('#threshold-qty-high').value) || 10,
+    qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value) || 25
+  };
+  updateQuestionsLegend(thresholds);
+}
+
+function attachProjectQuestionsListeners(){
+  // Attacher les listeners aux textareas des questions du projet
+  const questionFieldIds = ['q-qty-very-low', 'q-qty-low', 'q-qty-high', 'q-qty-very-high',
+                           'q-price-very-low', 'q-price-low', 'q-price-high', 'q-price-very-high',
+                           'q-unanswered-comment', 'q-unanswered-color'];
+  questionFieldIds.forEach(id => {
+    const el = qs(`#${id}`);
+    if (el) {
+      el.removeEventListener('change', () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig));
+      el.addEventListener('change', () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig));
+    }
+  });
+}
+
 
 async function saveLotThresholds(){
   if (isVisionneur() || isEntreprise()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' }); return; }
   if (!currentLot) return;
   try {
     const body = {
+      qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value),
       qty_low_threshold: parseFloat(qs('#threshold-qty-low').value),
       qty_high_threshold: parseFloat(qs('#threshold-qty-high').value),
+      qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value),
+      price_very_low_threshold: parseFloat(qs('#threshold-price-very-low').value),
       price_low_threshold: parseFloat(qs('#threshold-price-low').value),
-      price_high_threshold: parseFloat(qs('#threshold-price-high').value)
+      price_high_threshold: parseFloat(qs('#threshold-price-high').value),
+      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
+    updateQuestionsLegend(body);
     showNotify({ title: 'Succès', message: 'Seuils sauvegardés', type: 'success' });
   } catch (err) {
     showNotify({ title: 'Erreur', message: err.message, type: 'error' });
@@ -2525,6 +2774,9 @@ async function refreshQuestions(){
     }
     
     const listDiv = qs('#questions-list');
+    // Le tableau questions-list a été supprimé, les données sont affichées dans questions-editor-table
+    if (!listDiv) return;
+    
     if (questions.length === 0) {
       listDiv.innerHTML = '<p class="muted" style="padding:20px;text-align:center">Aucune fiche question trouvée</p>';
       return;
@@ -2565,10 +2817,14 @@ async function refreshQuestions(){
     
     for (const q of questions) {
       const typeLabel = {
-        'qty_low': `${icon('trending-down')}Qté Basse`,
-        'qty_high': `${icon('trending-up')}Qté Haute`,
-        'price_low': `${icon('dollar-sign')}Prix Bas`,
-        'price_high': `${icon('dollar-sign')}Prix Haut`
+        'qty_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('trending-down')}Qté Très Basse</span>`,
+        'qty_low': `<span style="color:#0dcaf0;font-weight:600">${icon('trending-down')}Qté Basse</span>`,
+        'qty_high': `<span style="color:#fd7e14;font-weight:600">${icon('trending-up')}Qté Haute</span>`,
+        'qty_very_high': `<span style="color:#dc3545;font-weight:600">${icon('trending-up')}Qté Très Haute</span>`,
+        'price_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('dollar-sign')}Prix Très Bas</span>`,
+        'price_low': `<span style="color:#0dcaf0;font-weight:600">${icon('dollar-sign')}Prix Bas</span>`,
+        'price_high': `<span style="color:#fd7e14;font-weight:600">${icon('dollar-sign')}Prix Haut</span>`,
+        'price_very_high': `<span style="color:#dc3545;font-weight:600">${icon('dollar-sign')}Prix Très Haut</span>`
       }[q.question_type] || q.question_type;
       
       const statusValue = q.status || 'pending';
@@ -2787,6 +3043,12 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   // Afficher toutes les entreprises dans les colonnes de comparaison
   let companies = lotData.companies || [];
   
+  // Créer une map des données MOE par item_id
+  const moeByItem = new Map();
+  for (const moe of lotData.moe || []) {
+    moeByItem.set(moe.item_id, moe);
+  }
+  
   // Créer une map des questions par item_id + company_id
   const questionsMap = new Map();
   for (const q of questionsData || []) {
@@ -2832,21 +3094,28 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   
   // Pour chaque ligne du lot (une ligne par item, pas par entreprise)
   for (const item of lotData.items) {
-    const moeQty = item.quantity_moe || 0;
-    const moePU = item.unit_price_moe || 0;
+    // Récupérer les données MOE pour cet item
+    const moe = moeByItem.get(item.id) || {};
+    const moeQty = moe.qty || 0;
+    const moePU = moe.unit_price || 0;
     const moeTotal = moeQty * moePU;
+    const moeHasTotal = moeQty > 0 && moePU > 0;
     
     // Collecter les offres de toutes les entreprises pour cet item
     const itemOffers = companies.map(company => {
       const offer = (lotData.offers || []).find(o => 
-        o.item_id === item.id && o.company_id === company.id
+        Number(o.item_id) === Number(item.id) && Number(o.company_id) === Number(company.id)
       );
+      const qty = offer?.qty || 0;
+      const pu  = offer?.unit_price || 0;
+      const isUnanswered = moeHasTotal && (!offer || (qty === 0 && pu === 0));
       return {
         company_id: company.id,
         company_name: company.name,
-        quantity: offer?.quantity || 0,
-        unit_price: offer?.unit_price || 0,
-        total: (offer?.quantity || 0) * (offer?.unit_price || 0)
+        quantity: qty,
+        unit_price: pu,
+        total: offer?.amount || (qty * pu),
+        isUnanswered
       };
     });
     
@@ -2877,10 +3146,20 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     if (viewFilter === 'all' || viewFilter === 'quantities') {
       html += `<td class="moe-cell">${fmtNum(moeQty)}</td>`;
       for (const offer of itemOffers) {
-        const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
-        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}</td>`;
+        if (offer.isUnanswered) {
+          const sty = unansweredStyleStr(unansweredConfig.color);
+          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtNum(offer.quantity)}</td>`;
+        } else {
+          const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
+          let deviationClass = '';
+          if (deviation < -25) deviationClass = 'ecart-very-low';
+          else if (deviation < -10) deviationClass = 'ecart-low';
+          else if (deviation > 25) deviationClass = 'ecart-very-high';
+          else if (deviation > 10) deviationClass = 'ecart-high';
+          html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}</td>`;
+        }
       }
     }
     
@@ -2888,10 +3167,20 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     if (viewFilter === 'all' || viewFilter === 'unit_prices') {
       html += `<td class="moe-cell">${fmtEuro(moePU)}</td>`;
       for (const offer of itemOffers) {
-        const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
-        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
+        if (offer.isUnanswered) {
+          const sty = unansweredStyleStr(unansweredConfig.color);
+          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.unit_price)}</td>`;
+        } else {
+          const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
+          let deviationClass = '';
+          if (deviation < -25) deviationClass = 'ecart-very-low';
+          else if (deviation < -10) deviationClass = 'ecart-low';
+          else if (deviation > 25) deviationClass = 'ecart-very-high';
+          else if (deviation > 10) deviationClass = 'ecart-high';
+          html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
+        }
       }
     }
     
@@ -2899,10 +3188,20 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     if (viewFilter === 'all' || viewFilter === 'totals') {
       html += `<td class="moe-cell">${fmtEuro(moeTotal)}</td>`;
       for (const offer of itemOffers) {
-        const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
-        const deviationClass = Math.abs(deviation) > 10 ? 'ecart-high' : '';
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}</td>`;
+        if (offer.isUnanswered) {
+          const sty = unansweredStyleStr(unansweredConfig.color);
+          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.total)}</td>`;
+        } else {
+          const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
+          let deviationClass = '';
+          if (deviation < -25) deviationClass = 'ecart-very-low';
+          else if (deviation < -10) deviationClass = 'ecart-low';
+          else if (deviation > 25) deviationClass = 'ecart-very-high';
+          else if (deviation > 10) deviationClass = 'ecart-high';
+          html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}</td>`;
+        }
       }
     }
     
@@ -3702,7 +4001,18 @@ function appendRowDOM(rIndex, data){
     if (col.key.startsWith('c.') && col.key.endsWith('.mt')) {
       const [, cid] = col.key.split('.');
       const o = data.offers?.[cid] || {};
-      td.innerHTML = amountCellHtml(o.qty, o.pu, o.comment);
+      const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
+      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : (o.comment || '');
+      td.innerHTML = amountCellHtml(o.qty, o.pu, cellComment);
+      if (isUnanswered) applyUnansweredStyle(td, unansweredConfig.color);
+    } else if (col.key.startsWith('c.')) {
+      const [, cid] = col.key.split('.');
+      const o = data.offers?.[cid] || {};
+      const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
+      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      td.textContent = valueForCell(data, col.key);
+      if (isUnanswered) applyUnansweredStyle(td, unansweredConfig.color);
     } else {
       td.textContent = valueForCell(data, col.key);
     }
@@ -3774,9 +4084,13 @@ function recalcRowAmountsRow(r){
   const cQty = colModel.findIndex(c => c.key === 'moe.qty');
   const cPu  = colModel.findIndex(c => c.key === 'moe.pu');
   const cMt  = colModel.findIndex(c => c.key === 'moe.mt');
+  // MOE values for unanswered check
+  const moeQtyVal = getCell(r,cQty)?.textContent.trim();
+  const moePuVal  = getCell(r,cPu )?.textContent.trim();
+  const moeHasTotal = parseNum(moeQtyVal) > 0 && parseNum(moePuVal) > 0;
   if (cQty>=0 && cPu>=0 && cMt>=0){
-    const qty = getCell(r,cQty)?.textContent.trim();
-    const pu  = getCell(r,cPu )?.textContent.trim();
+    const qty = moeQtyVal;
+    const pu  = moePuVal;
     const mt  = getCell(r,cMt );
     if (mt) mt.textContent = amountOf(qty, pu);
   }
@@ -3786,13 +4100,26 @@ function recalcRowAmountsRow(r){
     const ciQty = colModel.findIndex(x => x.key === base+'qty');
     const ciPu  = colModel.findIndex(x => x.key === base+'pu');
     const ciMt  = colModel.findIndex(x => x.key === base+'mt');
+    const ciU   = colModel.findIndex(x => x.key === base+'u');
     if (ciQty>=0 && ciPu>=0 && ciMt>=0){
       const qty = getCell(r,ciQty)?.textContent.trim();
       const pu  = getCell(r,ciPu )?.textContent.trim();
       const mt  = getCell(r,ciMt );
       if (mt) {
-        const comment = sheetRows[r]?.offers?.[c.id]?.comment || '';
-        mt.innerHTML = amountCellHtml(qty, pu, comment);
+        const existingComment = sheetRows[r]?.offers?.[c.id]?.comment || '';
+        const isUnanswered = moeHasTotal && isOfferUnanswered(qty, pu);
+        const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : existingComment;
+        mt.innerHTML = amountCellHtml(qty, pu, cellComment);
+        if (isUnanswered) {
+          applyUnansweredStyle(mt, unansweredConfig.color);
+        } else {
+          removeUnansweredStyle(mt);
+        }
+        const qtyCell = getCell(r, ciQty);
+        const puCell  = getCell(r, ciPu);
+        if (qtyCell) { if (isUnanswered) applyUnansweredStyle(qtyCell, unansweredConfig.color); else removeUnansweredStyle(qtyCell); }
+        if (puCell)  { if (isUnanswered) applyUnansweredStyle(puCell, unansweredConfig.color);  else removeUnansweredStyle(puCell); }
+        if (ciU >= 0) { const uCell = getCell(r, ciU); if (uCell) { if (isUnanswered) applyUnansweredStyle(uCell, unansweredConfig.color); else removeUnansweredStyle(uCell); } }
       }
     }
   }
@@ -3945,6 +4272,8 @@ let isSaving = false;
 function markAsChanged() {
   hasUnsavedChanges = true;
   updateSaveButton();
+  // Déclencher autosave avec debounce
+  debounceAutoSave('grid', autoSaveGrid, 800);
 }
 
 function updateSaveButton() {
@@ -4036,6 +4365,101 @@ function addRow(){
   const r = qsa('#sheet-body tr').length - 1;
   const firstEditable = colModel.findIndex(c => c.editable);
   if (firstEditable >= 0) focusCell(r, firstEditable);
+}
+
+async function autoSaveGrid(){
+  // Version silencieuse et automatique de saveGrid()
+  if (!currentLot || isSaving) return;
+  
+  try {
+    const rows = [];
+    const totalRows = qsa('#sheet-body tr').length;
+
+    for (let r=0; r<totalRows; r++){
+      const getByKey = (key) => {
+        const c = colModel.findIndex(x => x.key === key);
+        return c >= 0 ? (getCell(r, c)?.textContent.trim() ?? '') : '';
+      };
+
+      const designation = getByKey('designation');
+      const num = getByKey('num');
+      const unit = getByKey('unit');
+      const moeQty = getByKey('moe.qty');
+      const moePu  = getByKey('moe.pu');
+
+      // Validation et conversion PU MOE
+      if (moePu !== '') {
+        const parsedPu = parseNum(moePu);
+        if (isNaN(parsedPu)) {
+          console.warn('PU MOE invalide:', moePu);
+          return;
+        }
+      }
+
+      // Sauvegarder toutes les lignes, même vides
+      const row = {
+        item_id: sheetRows[r]?.item_id || null,
+        num, designation, unit,
+        moe: { qty: moeQty, pu: moePu },
+        offers: {}
+      };
+
+      for (const c of lotCompanies){
+        const base = `c.${c.id}.`;
+        const offerPu = getByKey(base+'pu');
+        
+        // Validation et conversion PU offre
+        if (offerPu !== '') {
+          const parsedOfferPu = parseNum(offerPu);
+          if (isNaN(parsedOfferPu)) {
+            console.warn('PU offre invalide:', offerPu);
+            return;
+          }
+        }
+        
+        row.offers[c.id] = {
+          u:  getByKey(base+'u'),
+          qty:getByKey(base+'qty'),
+          pu: offerPu,
+        };
+      }
+      rows.push(row);
+    }
+
+    // Empêcher les sauvegardes multiples simultanées
+    if (isSaving) return;
+
+    isSaving = true;
+    
+    // Sauvegarde silencieuse en arrière-plan
+    const result = await api(`/lots/${currentLot.id}/save-grid`, { 
+      method:'POST', 
+      body:{ rows, round_id: currentRound?.id },
+      showLoader: false 
+    });
+
+    // Synchroniser les item_id
+    if (result && result.items && Array.isArray(result.items)) {
+      for (let i = 0; i < Math.min(result.items.length, sheetRows.length); i++) {
+        if (sheetRows[i] && result.items[i] && result.items[i].id) {
+          sheetRows[i].item_id = result.items[i].id;
+        }
+      }
+    }
+    
+    // Rafraîchir sans bruit
+    await refreshCompare();
+    
+    hasUnsavedChanges = false;
+    updateSaveButton();
+    
+    console.log('Autosave grille réussi');
+  } catch (err) {
+    console.error('Erreur autosave grille:', err);
+    // Garder les changements non sauvegardés visibles
+  } finally {
+    isSaving = false;
+  }
 }
 
 async function saveGrid(){
@@ -4169,7 +4593,8 @@ function renderSheetBindings(){
     qs('#company-input').value = '';
   });
 
-  qs('#save-grid')?.addEventListener('click', saveGrid);
+  // Autosave activé - le bouton montre juste le statut
+  // qs('#save-grid')?.addEventListener('click', saveGrid);
   qs('#undo')?.addEventListener('click', undo);
   qs('#redo')?.addEventListener('click', redo);
 
@@ -5300,11 +5725,11 @@ if (typeof window !== 'undefined') {
   window.initRoundsDragAndDrop = initRoundsDragAndDrop;
 }
 
-  // Config questions projet
-  qs('#save-project-questions')?.addEventListener('click', saveProjectQuestionConfig);
+  // Config questions projet (autosave activée)
+  // qs('#save-project-questions')?.addEventListener('click', saveProjectQuestionConfig);
   
-  // Fiches questions lot
-  qs('#save-thresholds')?.addEventListener('click', saveLotThresholds);
+  // Fiches questions lot (autosave activée)
+  // qs('#save-thresholds')?.addEventListener('click', saveLotThresholds);
   qs('#generate-questions')?.addEventListener('click', generateQuestions);
   qs('#delete-all-questions')?.addEventListener('click', deleteAllQuestions);
   qs('#refresh-questions')?.addEventListener('click', refreshQuestions);
@@ -5769,7 +6194,7 @@ function annotateDynamicHelp(){
   setHelp(document.getElementById('create-project'), 'Créer un nouveau projet');
   setHelp(document.getElementById('add-round'), 'Ajouter un tour (phase) au projet');
   setHelp(document.getElementById('add-lot'), 'Créer un lot à l’intérieur du tour sélectionné');
-  setHelp(document.getElementById('save-grid'), 'Sauvegarder les valeurs saisies dans la grille');
+  setHelp(document.getElementById('save-grid'), 'Les modifications sont sauvegardées automatiquement dans la grille');
   setHelp(document.getElementById('mode-edit'), 'Basculer en mode édition de la grille');
   setHelp(document.getElementById('mode-compare'), 'Afficher le comparatif consolidé des offres');
   setHelp(document.getElementById('generate-questions'), 'Générer automatiquement les fiches questions pour ce lot');

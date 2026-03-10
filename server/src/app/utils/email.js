@@ -17,6 +17,13 @@ function getTransporter() {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
+      // Optimisations de performance
+      pool: true,              // Réutilise les connexions SMTP (évite reconnexion à chaque email)
+      maxConnections: 3,       // Max 3 connexions simultanées
+      maxMessages: 100,        // Max 100 messages par connexion avant renouvellement
+      connectionTimeout: 10000, // 10s timeout connexion
+      greetingTimeout: 10000,  // 10s timeout greeting SMTP
+      socketTimeout: 30000,    // 30s timeout socket
     });
   }
   return transporter;

@@ -200,7 +200,7 @@
                 </select>
               </div>
               <div class="row gap" style="margin-left:auto;align-items:flex-end;flex-wrap:wrap">
-                <button id="update-comparison" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Mettre a jour</button>
+                <button id="update-comparison" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Mettre a jour</button>
                 <button id="export-rounds-compare-pdf" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-printer"></use></svg>Export PDF</button>
                 <button id="export-rounds-compare-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Export Excel</button>
               </div>
@@ -322,7 +322,7 @@
             <button id="open-import-modal" class="btn ghost" title="Importer un fichier Excel"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer</button>
             <button id="undo" class="btn ghost">↶</button>
             <button id="redo" class="btn ghost">↷</button>
-            <button id="save-grid" class="btn">Sauvegarder</button>
+            <button id="save-grid" class="btn" title="Sauvegarde automatique activée">Sauvegarder</button>
           </div>
 
           <!-- VUE TABLEUR -->
@@ -396,6 +396,47 @@
               </div>
             </div>
             
+            <!-- Légende des couleurs d'écarts -->
+            <div id="questions-legend" style="margin:16px 0;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+              <span style="font-weight:600;color:var(--fg)">Légende des écarts (%) :</span>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                <!-- Très Basse (écart très négatif) -->
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:16px;height:16px;background:rgba(13, 110, 253, 0.15);border-left:3px solid #0d6efd;border-radius:2px"></div>
+                  <span style="font-size:0.9rem;color:var(--fg)">Très bas</span>
+                  <span id="legend-qty-very-low" style="font-size:0.85rem;color:var(--muted);font-weight:600">&lt; -<span id="legend-qty-very-low-val">25</span>%</span>
+                </div>
+                
+                <!-- Basse (écart négatif modéré) -->
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:16px;height:16px;background:rgba(13, 202, 240, 0.15);border-left:3px solid #0dcaf0;border-radius:2px"></div>
+                  <span style="font-size:0.9rem;color:var(--fg)">Bas</span>
+                  <span id="legend-qty-low" style="font-size:0.85rem;color:var(--muted);font-weight:600">-<span id="legend-qty-very-low-val2">25</span> à -<span id="legend-qty-low-val">10</span>%</span>
+                </div>
+                
+                <!-- Haute (écart positif modéré) -->
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:16px;height:16px;background:rgba(253, 126, 20, 0.15);border-left:3px solid #fd7e14;border-radius:2px"></div>
+                  <span style="font-size:0.9rem;color:var(--fg)">Haut</span>
+                  <span id="legend-qty-high" style="font-size:0.85rem;color:var(--muted);font-weight:600">+<span id="legend-qty-high-val">10</span> à +<span id="legend-qty-high-val2">25</span>%</span>
+                </div>
+                
+                <!-- Très Haute (écart très positif) -->
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:16px;height:16px;background:rgba(220, 53, 69, 0.15);border-left:3px solid #dc3545;border-radius:2px"></div>
+                  <span style="font-size:0.9rem;color:var(--fg)">Très haut</span>
+                  <span id="legend-qty-very-high" style="font-size:0.85rem;color:var(--muted);font-weight:600">&gt; +<span id="legend-qty-very-high-val">25</span>%</span>
+                </div>
+
+                <!-- Réponses Oubliées -->
+                <div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)">
+                  <div id="legend-unanswered-swatch" style="width:16px;height:16px;background:rgba(255,193,7,0.15);border-left:3px solid #ffc107;border-radius:2px"></div>
+                  <span style="font-size:0.9rem;color:var(--fg)">Réponse oubliée</span>
+                  <span id="legend-unanswered-comment" style="font-size:0.85rem;color:var(--muted);font-weight:600">Article sans réponse</span>
+                </div>
+              </div>
+            </div>
+            
             <!-- Tableau des questions éditables -->
             <div class="table-wrapper tall">
               <table id="questions-editor-table">
@@ -407,10 +448,6 @@
                 </tbody>
               </table>
             </div>
-
-            <div id="questions-list" class="table-wrapper">
-              <p class="muted" style="padding:20px;text-align:center">Aucune fiche question générée</p>
-            </div>
           </div>
         </div>
 
@@ -420,62 +457,132 @@
             <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Configuration des Questions</h3>
             <p class="muted">Questions automatiques selon les écarts détectés</p>
           
-          <div class="table-wrapper" style="margin-bottom:16px">
-            <table class="summary-table" style="min-width:720px">
-              <thead>
-                <tr>
-                  <th style="width:220px">Type</th>
-                  <th style="width:140px">Seuil (%)</th>
-                  <th>Question</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>Quantite basse</strong> (inferieure a MOE)</td>
-                  <td>
-                    <input id="threshold-qty-low" name="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" />
-                  </td>
-                  <td>
-                    <textarea id="q-qty-low" name="q-qty-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-                  </td>
-                </tr>
-                <tr>
-                  <td><strong>Quantite haute</strong> (superieure a MOE)</td>
-                  <td>
-                    <input id="threshold-qty-high" name="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" />
-                  </td>
-                  <td>
-                    <textarea id="q-qty-high" name="q-qty-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-                  </td>
-                </tr>
-                <tr>
-                  <td><strong>Prix unitaire bas</strong> (inferieur a MOE)</td>
-                  <td>
-                    <input id="threshold-price-low" name="threshold-price-low" type="number" min="0" max="100" step="1" value="10" />
-                  </td>
-                  <td>
-                    <textarea id="q-price-low" name="q-price-low" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-                  </td>
-                </tr>
-                <tr>
-                  <td><strong>Prix unitaire haut</strong> (superieur a MOE)</td>
-                  <td>
-                    <input id="threshold-price-high" name="threshold-price-high" type="number" min="0" max="100" step="1" value="10" />
-                  </td>
-                  <td>
-                    <textarea id="q-price-high" name="q-price-high" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"></textarea>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <!-- Section Quantités -->
+            <div style="margin-bottom:32px">
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">📦 Seuils de Quantité</h4>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
+                <!-- Quantité très basse -->
+                <div style="border-radius:12px;border:2px solid #0d6efd;background:rgba(13, 110, 253, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0d6efd"></span>
+                    <strong style="color:#0d6efd">Très Basse</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-qty-very-low" name="threshold-qty-very-low" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-qty-very-low" name="q-qty-very-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Quantité basse -->
+                <div style="border-radius:12px;border:2px solid #0dcaf0;background:rgba(13, 202, 240, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0dcaf0"></span>
+                    <strong style="color:#0dcaf0">Basse</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-qty-low" name="threshold-qty-low" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-qty-low" name="q-qty-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Quantité haute -->
+                <div style="border-radius:12px;border:2px solid #fd7e14;background:rgba(253, 126, 20, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#fd7e14"></span>
+                    <strong style="color:#fd7e14">Haute</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-qty-high" name="threshold-qty-high" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-qty-high" name="q-qty-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Quantité très haute -->
+                <div style="border-radius:12px;border:2px solid #dc3545;background:rgba(220, 53, 69, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#dc3545"></span>
+                    <strong style="color:#dc3545">Très Haute</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-qty-very-high" name="threshold-qty-very-high" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-qty-very-high" name="q-qty-very-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section Prix -->
+            <div>
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">💰 Seuils de Prix Unitaire</h4>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
+                <!-- Prix très bas -->
+                <div style="border-radius:12px;border:2px solid #0d6efd;background:rgba(13, 110, 253, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0d6efd"></span>
+                    <strong style="color:#0d6efd">Très Bas</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-price-very-low" name="threshold-price-very-low" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-price-very-low" name="q-price-very-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Prix bas -->
+                <div style="border-radius:12px;border:2px solid #0dcaf0;background:rgba(13, 202, 240, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0dcaf0"></span>
+                    <strong style="color:#0dcaf0">Bas</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-price-low" name="threshold-price-low" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-price-low" name="q-price-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Prix haut -->
+                <div style="border-radius:12px;border:2px solid #fd7e14;background:rgba(253, 126, 20, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#fd7e14"></span>
+                    <strong style="color:#fd7e14">Haut</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-price-high" name="threshold-price-high" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-price-high" name="q-price-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Prix très haut -->
+                <div style="border-radius:12px;border:2px solid #dc3545;background:rgba(220, 53, 69, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#dc3545"></span>
+                    <strong style="color:#dc3545">Très Haut</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-price-very-high" name="threshold-price-very-high" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-price-very-high" name="q-price-very-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section Réponses Oubliées -->
+            <div style="margin-top:32px">
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">⚠️ Réponses Oubliées</h4>
+              <div style="border-radius:12px;border:2px solid #ffc107;background:rgba(255,193,7,0.08);padding:16px;max-width:560px">
+                <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Commentaire et couleur de fond appliqués automatiquement aux cellules d'une entreprise qui n'a pas répondu à un article (quantité et prix vides).</p>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+                  <div style="flex:1;min-width:200px">
+                    <label style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">Commentaire :</label>
+                    <input id="q-unanswered-comment" name="q-unanswered-comment" type="text" value="Article sans réponse" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem" />
+                  </div>
+                  <div style="min-width:120px">
+                    <label style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">Couleur de fond :</label>
+                    <input id="q-unanswered-color" name="q-unanswered-color" type="color" value="#fff3cd" style="width:60px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);cursor:pointer" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row gap" style="margin-top:24px;margin-bottom:16px">
+              <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder les seuils</button>
+            </div>
+            
+            <button id="save-project-questions" class="btn" style="margin-top:16px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder</button>
           </div>
-          <div class="row gap" style="margin-bottom:16px">
-            <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder les seuils</button>
-          </div>
-          
-          <button id="save-project-questions" class="btn" style="margin-top:16px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder</button>
-          </div>
-        </div>
 
         
       </section>

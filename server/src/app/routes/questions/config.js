@@ -47,21 +47,27 @@ router.get('/project/:projectId', requireManager, async (req, res) => {
 router.put('/project/:projectId', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { question_qty_low, question_qty_high, question_price_low, question_price_high } = req.body;
+    const { question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color } = req.body;
     
     const result = await query(
       `INSERT INTO project_question_config 
-        (project_id, question_qty_low, question_qty_high, question_price_low, question_price_high, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now())
+        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
        ON CONFLICT (project_id) 
        DO UPDATE SET 
+         question_qty_very_low = EXCLUDED.question_qty_very_low,
          question_qty_low = EXCLUDED.question_qty_low,
          question_qty_high = EXCLUDED.question_qty_high,
+         question_qty_very_high = EXCLUDED.question_qty_very_high,
+         question_price_very_low = EXCLUDED.question_price_very_low,
          question_price_low = EXCLUDED.question_price_low,
          question_price_high = EXCLUDED.question_price_high,
+         question_price_very_high = EXCLUDED.question_price_very_high,
+         unanswered_comment = EXCLUDED.unanswered_comment,
+         unanswered_color = EXCLUDED.unanswered_color,
          updated_at = now()
        RETURNING *`,
-      [projectId, question_qty_low, question_qty_high, question_price_low, question_price_high]
+      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color]
     );
     
     res.json(result.rows[0]);
@@ -103,21 +109,25 @@ router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
 router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold } = req.body;
+    const { qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold } = req.body;
     
     const result = await query(
       `INSERT INTO lot_threshold_config 
-        (lot_id, qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now())
+        (lot_id, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
        ON CONFLICT (lot_id) 
        DO UPDATE SET 
+         qty_very_low_threshold = EXCLUDED.qty_very_low_threshold,
          qty_low_threshold = EXCLUDED.qty_low_threshold,
          qty_high_threshold = EXCLUDED.qty_high_threshold,
+         qty_very_high_threshold = EXCLUDED.qty_very_high_threshold,
+         price_very_low_threshold = EXCLUDED.price_very_low_threshold,
          price_low_threshold = EXCLUDED.price_low_threshold,
          price_high_threshold = EXCLUDED.price_high_threshold,
+         price_very_high_threshold = EXCLUDED.price_very_high_threshold,
          updated_at = now()
        RETURNING *`,
-      [lotId, qty_low_threshold, qty_high_threshold, price_low_threshold, price_high_threshold]
+      [lotId, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold]
     );
     
     res.json(result.rows[0]);
@@ -146,10 +156,14 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       [lotId]
     );
     const thresholds = thresholdsRes.rows[0] || {
+      qty_very_low_threshold: 25,
       qty_low_threshold: 10,
       qty_high_threshold: 10,
+      qty_very_high_threshold: 25,
+      price_very_low_threshold: 25,
       price_low_threshold: 10,
-      price_high_threshold: 10
+      price_high_threshold: 10,
+      price_very_high_threshold: 25
     };
     
     // 2. Récupérer les questions du projet
@@ -164,10 +178,14 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       [projectId]
     );
     const questions = questionsRes.rows[0] || {
+      question_qty_very_low: 'Pourquoi la quantité est-elle bien inférieure à la MOE ?',
       question_qty_low: 'Pourquoi la quantité est-elle inférieure à la MOE ?',
       question_qty_high: 'Pourquoi la quantité est-elle supérieure à la MOE ?',
+      question_qty_very_high: 'Pourquoi la quantité est-elle bien supérieure à la MOE ?',
+      question_price_very_low: 'Pourquoi le prix unitaire est-il bien inférieur à la MOE ?',
       question_price_low: 'Pourquoi le prix unitaire est-il inférieur à la MOE ?',
-      question_price_high: 'Pourquoi le prix unitaire est-il supérieur à la MOE ?'
+      question_price_high: 'Pourquoi le prix unitaire est-il supérieur à la MOE ?',
+      question_price_very_high: 'Pourquoi le prix unitaire est-il bien supérieur à la MOE ?'
     };
     
     // 3. Récupérer les items, MOE et offres
@@ -225,11 +243,28 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       const moe = moeByItem.get(offer.item_id);
       if (!moe) continue;
       
+      // Offre considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
+      const offerQty = parseFloat(offer.qty) || 0;
+      const offerPU  = parseFloat(offer.unit_price) || 0;
+      if (offerQty === 0 && offerPU === 0) continue;
+      
       // Vérifier écart quantité
       if (moe.qty != null && offer.qty != null && moe.qty !== 0) {
         const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
         
-        if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
+        if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
+          // Quantité très basse
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'qty_very_low',
+            text: questions.question_qty_very_low,
+            moeValue: moe.qty,
+            offerValue: offer.qty,
+            deviationPct: qtyDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_very_low' });
+        } else if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
           // Quantité basse
           await upsertQuestion({
             itemId: offer.item_id,
@@ -241,6 +276,18 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
             deviationPct: qtyDev
           });
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_low' });
+        } else if (qtyDev > Math.abs(thresholds.qty_very_high_threshold)) {
+          // Quantité très haute
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'qty_very_high',
+            text: questions.question_qty_very_high,
+            moeValue: moe.qty,
+            offerValue: offer.qty,
+            deviationPct: qtyDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_very_high' });
         } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
           // Quantité haute
           await upsertQuestion({
@@ -260,7 +307,19 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       if (moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
         const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
         
-        if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
+        if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
+          // Prix très bas
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'price_very_low',
+            text: questions.question_price_very_low,
+            moeValue: moe.unit_price,
+            offerValue: offer.unit_price,
+            deviationPct: priceDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_very_low' });
+        } else if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
           // Prix bas
           await upsertQuestion({
             itemId: offer.item_id,
@@ -272,6 +331,18 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
             deviationPct: priceDev
           });
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_low' });
+        } else if (priceDev > Math.abs(thresholds.price_very_high_threshold)) {
+          // Prix très haut
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'price_very_high',
+            text: questions.question_price_very_high,
+            moeValue: moe.unit_price,
+            offerValue: offer.unit_price,
+            deviationPct: priceDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_very_high' });
         } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
           // Prix haut
           await upsertQuestion({
@@ -314,9 +385,25 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         const moe = moeByOptionItem.get(offer.option_item_id);
         if (!moe) continue;
 
+        // Offre option considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
+        const optOfferQty = parseFloat(offer.qty) || 0;
+        const optOfferPU  = parseFloat(offer.unit_price) || 0;
+        if (optOfferQty === 0 && optOfferPU === 0) continue;
+
         if (moe.qty != null && offer.qty != null && moe.qty !== 0) {
           const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
-          if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
+          if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'qty_very_low',
+              text: questions.question_qty_very_low,
+              moeValue: moe.qty,
+              offerValue: offer.qty,
+              deviationPct: qtyDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_very_low' });
+          } else if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
               companyId: offer.company_id,
@@ -327,6 +414,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
               deviationPct: qtyDev
             });
             generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_low' });
+          } else if (qtyDev > Math.abs(thresholds.qty_very_high_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'qty_very_high',
+              text: questions.question_qty_very_high,
+              moeValue: moe.qty,
+              offerValue: offer.qty,
+              deviationPct: qtyDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_very_high' });
           } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
@@ -343,7 +441,18 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
 
         if (moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
           const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
-          if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
+          if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'price_very_low',
+              text: questions.question_price_very_low,
+              moeValue: moe.unit_price,
+              offerValue: offer.unit_price,
+              deviationPct: priceDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_very_low' });
+          } else if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
               companyId: offer.company_id,
@@ -354,6 +463,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
               deviationPct: priceDev
             });
             generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_low' });
+          } else if (priceDev > Math.abs(thresholds.price_very_high_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'price_very_high',
+              text: questions.question_price_very_high,
+              moeValue: moe.unit_price,
+              offerValue: offer.unit_price,
+              deviationPct: priceDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_very_high' });
           } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
