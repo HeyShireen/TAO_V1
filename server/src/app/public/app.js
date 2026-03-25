@@ -27,17 +27,27 @@ let currentUser = null;     // {id, email, role}
 let currentProject = null;
 let currentRound = null;    // Tour/phase actuel
 let currentLot = null;
+let currentProjectLots = [];
 
 let lotCompanies = [];      // [{id,name}]
 let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
 let lotOptions = [];        // [{ id, designation, unit, offers:[{company_id,qty,unit_price}], checked:bool }]
 let unansweredConfig = { comment: 'Article sans réponse', color: '#fff3cd' }; // config for unanswered cells
+const unexpectedAnswerMarker = {
+  label: 'Réponse non attendue',
+  color: '#e83e8c'
+};
 let selectedRoundOptions = new Set();
+let questionsEditorAutoRefreshInterval = null; // Pour l'auto-actualisation de l'éditeur
 const undoStack = [];
 const redoStack = [];
 const DEFAULT_SIMULATIONS = 3;
 let roundsSimulations = [];
+let pendingEmailExport = null;
+let dataExportContext = 'data-sheet';
+let currentProjectExport = { projectId: null, projectName: '', lots: [], scopeLevel: 'project', scopeLotId: null };
 let nextSimulationId = 1;
+const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -70,6 +80,41 @@ const hide = (sel) => {
 };
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 const setHtml = (sel, html) => { const el = qs(sel); if (el) el.innerHTML = html; };
+
+/* ====== Delete Confirmation Modal ====== */
+let deleteConfirmationCallback = null;
+const showDeleteConfirmation = (options = {}) => {
+  const {
+    title = 'Confirmer la suppression',
+    message = 'Êtes-vous sûr de vouloir supprimer cet élément ?',
+    extra = '', // texte supplémentaire (ex: avertissements)
+    onConfirm = null,
+    onCancel = null
+  } = options;
+  
+  // Mettre à jour le contenu de la modal
+  setText('#delete-confirmation-title', title);
+  setText('#delete-confirmation-message', message);
+  
+  const extraEl = qs('#delete-confirmation-extra');
+  if (extra) {
+    setHtml('#delete-confirmation-extra', extra);
+    extraEl.style.display = 'block';
+  } else {
+    extraEl.style.display = 'none';
+  }
+  
+  // Stocker le callback
+  deleteConfirmationCallback = onConfirm;
+  
+  // Afficher la modal
+  show('#delete-confirmation-modal');
+};
+
+const hideDeleteConfirmation = () => {
+  hide('#delete-confirmation-modal');
+  deleteConfirmationCallback = null;
+};
 
 /* ====== Num parse/format (FR friendly) ====== */
 function parseNum(v){
@@ -119,6 +164,23 @@ function amountCellHtml(q, pu, comment){
   if (!comment) return amt;
   return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
 }
+
+/**
+ * Génère un HTML pour afficher un commentaire d'offre sous forme de pastille colorée
+ * @param {string} comment - Le texte du commentaire
+ * @param {string} companyColor - La couleur hex de l'entreprise (ex: #ff0000)
+ * @param {string} companyName - Le nom de l'entreprise
+ * @returns {string} HTML de la pastille
+ */
+function offerCommentBadgeHtml(comment, companyColor, companyName) {
+  if (!comment) return '';
+  
+  // Couleur par défaut si pas de couleur d'entreprise
+  const bgColor = companyColor || '#999';
+  const style = `background-color: ${bgColor}; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 4px; display: inline-block; vertical-align: middle;`;
+  
+  return `<span class="offer-comment-badge" style="${style}" title="${escapeHtml(companyName || '')}: ${escapeHtml(comment)}">${escapeHtml(comment.substring(0, 50) || '💬')}</span>`;
+}
 /** Returns true when a company has not answered an item (empty or zero for both qty and pu) */
 function isOfferUnanswered(qty, pu) {
   const qStr = (qty == null ? '' : String(qty)).trim();
@@ -126,6 +188,15 @@ function isOfferUnanswered(qty, pu) {
   const qEmpty = qStr === '' || parseFloat(qStr) === 0 || isNaN(parseFloat(qStr));
   const pEmpty = pStr === '' || parseFloat(pStr) === 0 || isNaN(parseFloat(pStr));
   return qEmpty && pEmpty;
+}
+/** Returns true when an offer has values while MOE has no expected total on that row */
+function isOfferUnexpected(moeHasTotal, qty, pu) {
+  if (moeHasTotal) return false;
+  const q = parseNum(qty);
+  const p = parseNum(pu);
+  const hasQty = Number.isFinite(q) && q !== 0;
+  const hasPu = Number.isFinite(p) && p !== 0;
+  return hasQty || hasPu;
 }
 /** Convert hex color (#rrggbb) to rgba string */
 function hexToRgba(hex, alpha) {
@@ -150,6 +221,30 @@ function removeUnansweredStyle(td) {
 function unansweredStyleStr(color) {
   if (!color) return '';
   return `border-left:3px solid ${color};background:${hexToRgba(color, 0.15)};`;
+}
+
+function updateSheetLegend() {
+  const unansweredSwatch = qs('#sheet-legend-unanswered-swatch');
+  if (unansweredSwatch) {
+    const c = unansweredConfig.color || '#ffc107';
+    unansweredSwatch.style.borderLeft = `3px solid ${c}`;
+    unansweredSwatch.style.background = hexToRgba(c, 0.15);
+  }
+  const unansweredLabel = qs('#sheet-legend-unanswered-label');
+  if (unansweredLabel) {
+    unansweredLabel.textContent = unansweredConfig.comment || 'Article sans réponse';
+  }
+
+  const unexpectedSwatch = qs('#sheet-legend-unexpected-swatch');
+  if (unexpectedSwatch) {
+    const c = unexpectedAnswerMarker.color;
+    unexpectedSwatch.style.borderLeft = `3px solid ${c}`;
+    unexpectedSwatch.style.background = hexToRgba(c, 0.15);
+  }
+  const unexpectedLabel = qs('#sheet-legend-unexpected-label');
+  if (unexpectedLabel) {
+    unexpectedLabel.textContent = unexpectedAnswerMarker.label;
+  }
 }
 
 /* ====== Loading Spinner ====== */
@@ -326,10 +421,15 @@ function activateSubtab(id){
   qsa('.subnav-tab').forEach(b => b.classList.toggle('active', b.dataset.subtab === id));
   qsa('.subtabpanel').forEach(p => p.id === id ? p.classList.remove('hidden') : p.classList.add('hidden'));
   
+  // Arrêter l'auto-actualisation si on quitte l'éditeur de questions
+  if (id !== 'subtab-questions-editor') {
+    stopQuestionsEditorAutoRefresh();
+  }
+  
   // Charger la liste et l'éditeur de questions
   if (id === 'subtab-questions-editor' && currentLot) {
     refreshQuestions();
-    loadQuestionsEditor();
+    loadQuestionsEditor({ silent: true });
   }
 }
 
@@ -469,15 +569,20 @@ async function changeUserRole(userId) {
 }
 
 async function deleteUser(userId) {
-  if (!confirm('Êtes-vous sûr de vouloir supprimer cet utilisateur ?')) return;
-  
-  try {
-    await api(`/users/${userId}`, { method: 'DELETE' });
-    showNotify({ title: 'Succès', message: 'Utilisateur supprimé', type: 'success' });
-    loadUsers();
-  } catch (err) {
-    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-  }
+  showDeleteConfirmation({
+    title: 'Supprimer un utilisateur',
+    message: 'Êtes-vous sûr de vouloir supprimer cet utilisateur ? Cette action ne peut pas être annulée.',
+    extra: '<strong>⚠️ Attention:</strong> Cet utilisateur ne pourra plus accéder à l\'application.',
+    onConfirm: async () => {
+      try {
+        await api(`/users/${userId}`, { method: 'DELETE' });
+        showNotify({ title: 'Succès', message: 'Utilisateur supprimé', type: 'success' });
+        loadUsers();
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    }
+  });
 }
 
 /* ================= Attribution d'entreprise ================= */
@@ -677,15 +782,19 @@ async function shareProject() {
 }
 
 async function removeShare(projectId, userId) {
-  if (!confirm('Retirer ce partage ?')) return;
-  
-  try {
-    await api(`/shares/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
-    showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
-    await openShareModal(projectId);
-  } catch (err) {
-    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-  }
+  showDeleteConfirmation({
+    title: 'Retirer ce partage',
+    message: 'Êtes-vous sûr de vouloir retirer ce partage ? Cet utilisateur ne pourra plus accéder au projet.',
+    onConfirm: async () => {
+      try {
+        await api(`/shares/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
+        showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
+        await openShareModal(projectId);
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    }
+  });
 }
 
 function closeShareModal() {
@@ -793,17 +902,21 @@ async function addEditProjectShare() {
 }
 
 async function removeProjectShare(shareId) {
-  if (!confirm('Retirer ce partage ?')) return;
-  
-  try {
-    // shareId est en réalité shared_with_user_id, donc on a besoin du projectId aussi
-    await api(`/shares/projects/${currentEditProjectId}/users/${shareId}`, { method: 'DELETE' });
-    showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
-    await loadEditShareViewers();
-    await loadEditExistingShares(currentEditProjectId);
-  } catch (err) {
-    showNotify({ title: 'Erreur', message: 'Erreur lors de la suppression: ' + err.message, type: 'error' });
-  }
+  showDeleteConfirmation({
+    title: 'Retirer ce partage',
+    message: 'Êtes-vous sûr de vouloir retirer ce partage ? Cet utilisateur ne pourra plus accéder au projet.',
+    onConfirm: async () => {
+      try {
+        // shareId est en réalité shared_with_user_id, donc on a besoin du projectId aussi
+        await api(`/shares/projects/${currentEditProjectId}/users/${shareId}`, { method: 'DELETE' });
+        showNotify({ title: 'Succès', message: 'Partage retiré', type: 'success' });
+        await loadEditShareViewers();
+        await loadEditExistingShares(currentEditProjectId);
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: 'Erreur lors de la suppression: ' + err.message, type: 'error' });
+      }
+    }
+  });
 }
 
 async function saveEditProject() {
@@ -1175,10 +1288,274 @@ function renderProjects(list){
     if (shareBtnEl) {
       shareBtnEl.addEventListener('click', () => openShareModal(p.id));
     }
-    
+
     tbody.appendChild(tr);
   }
 }
+
+function extractFilenameFromDisposition(contentDisposition, fallback) {
+  if (!contentDisposition) return fallback;
+  const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+async function downloadFromApi(url, {
+  method = 'GET',
+  body = null,
+  filenameFallback = 'export.bin'
+} = {}) {
+  const options = {
+    method,
+    credentials: 'include',
+    headers: {}
+  };
+  if (token) {
+    options.headers.Authorization = `Bearer ${token}`;
+  }
+  if (body) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    let msg = 'Erreur export';
+    try {
+      const data = await response.json();
+      msg = data?.error || msg;
+    } catch {
+      try { msg = await response.text(); } catch {}
+    }
+    throw new Error(msg || 'Erreur export');
+  }
+
+  const blob = await response.blob();
+  const filename = extractFilenameFromDisposition(response.headers.get('content-disposition'), filenameFallback);
+  const link = document.createElement('a');
+  const downloadUrl = URL.createObjectURL(blob);
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(downloadUrl);
+}
+
+function populateProjectExportSelects() {
+  const questionLotSelect = qs('#project-export-question-lot');
+  if (!questionLotSelect) return;
+
+  const allLotsOption = '<option value="all">Tous les lots</option>';
+  const lotOptions = currentProjectExport.lots.map(l =>
+    `<option value="${l.id}">${l.code ? `${l.code} - ` : ''}${l.name}</option>`
+  ).join('');
+
+  questionLotSelect.innerHTML = `${allLotsOption}${lotOptions}`;
+
+  if (currentProjectExport.scopeLevel === 'lot' && currentProjectExport.scopeLotId) {
+    questionLotSelect.value = String(currentProjectExport.scopeLotId);
+    questionLotSelect.disabled = true;
+  } else {
+    questionLotSelect.value = 'all';
+    questionLotSelect.disabled = false;
+  }
+}
+
+function applyProjectExportScopeUI() {
+  const scopeHint = qs('#project-export-scope-hint');
+  const isLotScope = currentProjectExport.scopeLevel === 'lot';
+
+  if (scopeHint) {
+    scopeHint.textContent = isLotScope
+      ? 'Portée: lot courant uniquement. Les exports non liés au lot sont masqués.'
+      : 'Portée: affaire/projet complet. Sélectionnez les exports à inclure dans le ZIP.';
+  }
+
+  const roundsCompareInput = qs('#project-export-rounds-compare');
+  const roundsCompareLabel = roundsCompareInput?.closest('label');
+
+  if (roundsCompareInput && roundsCompareLabel) {
+    roundsCompareInput.checked = isLotScope ? false : roundsCompareInput.checked;
+    roundsCompareInput.disabled = isLotScope;
+    roundsCompareLabel.classList.toggle('hidden', isLotScope);
+  }
+}
+
+function toggleProjectExportFields() {
+  const questionChecked = !!qs('#project-export-question-sheets')?.checked;
+  const questionFields = qs('#project-export-question-fields');
+  if (questionFields) questionFields.classList.toggle('hidden', !questionChecked);
+}
+
+function closeProjectExportModal() {
+  hide('#project-export-modal');
+}
+
+async function openProjectExportModal(projectId, projectName = '', context = {}) {
+  try {
+    if (!currentRound?.id) {
+      throw new Error('Sélectionnez d\'abord une phase');
+    }
+
+    const title = qs('#project-export-title');
+    if (title) {
+      const phaseLabel = `Tour ${currentRound.round_number}${currentRound.name ? ` - ${currentRound.name}` : ''}`;
+      title.textContent = `${projectName ? `Projet: ${projectName}` : `Projet #${projectId}`} • ${phaseLabel}`;
+    }
+
+    qs('#project-export-rounds-compare').checked = false;
+    qs('#project-export-lot-analysis').checked = false;
+    qs('#project-export-question-sheets').checked = false;
+    toggleProjectExportFields();
+
+    const projectData = await api(`/projects/${projectId}`);
+
+    const requestedScope = context?.scopeLevel === 'lot' ? 'lot' : 'project';
+    const requestedScopeLotId = Number(context?.scopeLotId);
+
+    currentProjectExport = {
+      projectId,
+      projectName: projectData?.project?.name || projectName,
+      lots: projectData?.lots || [],
+      scopeLevel: requestedScope,
+      scopeLotId: Number.isFinite(requestedScopeLotId) ? requestedScopeLotId : null
+    };
+
+    if (currentProjectExport.lots.length === 0) {
+      throw new Error('Aucun lot disponible pour ce projet');
+    }
+
+    if (currentProjectExport.scopeLevel === 'lot' && currentProjectExport.scopeLotId) {
+      const lotExistsInProject = currentProjectExport.lots.some(l => Number(l.id) === currentProjectExport.scopeLotId);
+      if (!lotExistsInProject) {
+        throw new Error('Le lot sélectionné n\'appartient pas au projet courant');
+      }
+    }
+
+    applyProjectExportScopeUI();
+    populateProjectExportSelects();
+    show('#project-export-modal');
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+async function confirmProjectExport() {
+  const projectId = currentProjectExport.projectId;
+  if (!projectId) {
+    showNotify({ title: 'Validation', message: 'Aucun projet sélectionné', type: 'info' });
+    return;
+  }
+
+  const selections = {
+    roundsCompare: !!qs('#project-export-rounds-compare')?.checked,
+    lotAnalysis: !!qs('#project-export-lot-analysis')?.checked,
+    questionSheets: !!qs('#project-export-question-sheets')?.checked,
+  };
+
+  if (!Object.values(selections).some(Boolean)) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez au moins un export', type: 'info' });
+    return;
+  }
+
+  const currentRoundId = currentRound?.id;
+  const questionLotId = qs('#project-export-question-lot')?.value || '';
+  const questionLotIds = currentProjectExport.scopeLevel === 'lot' && Number.isFinite(currentProjectExport.scopeLotId)
+    ? [currentProjectExport.scopeLotId]
+    : [];
+
+  if ((selections.lotAnalysis || selections.questionSheets) && !currentRoundId) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez d\'abord une phase', type: 'info' });
+    return;
+  }
+  if (selections.questionSheets && !questionLotId && questionLotIds.length === 0) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez un lot pour les fiches questions', type: 'info' });
+    return;
+  }
+
+  try {
+    await downloadFromApi(`${API_BASE}/exports/project-bundle-zip`, {
+      method: 'POST',
+      body: {
+        projectId,
+        currentRoundId,
+        questionLotId,
+        questionLotIds,
+        selections
+      },
+      filenameFallback: `Exports_Projet_${projectId}.zip`
+    });
+    closeProjectExportModal();
+    showNotify({ title: 'Succès', message: 'Export(s) lancé(s) avec succès', type: 'success' });
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+async function exportFullProjectBundleFromRound(round) {
+  if (!currentProject?.id) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez un projet', type: 'info' });
+    return;
+  }
+
+  const targetRound = round || currentRound;
+
+  try {
+    let lots = Array.isArray(currentProjectLots)
+      ? currentProjectLots.filter(l => Number.isFinite(Number(l?.id)))
+      : [];
+
+    if (lots.length === 0) {
+      const projectData = await api(`/projects/${currentProject.id}`);
+      lots = Array.isArray(projectData?.lots)
+        ? projectData.lots.filter(l => Number.isFinite(Number(l?.id)))
+        : [];
+      currentProjectLots = lots;
+    }
+
+    const lotIds = lots.map(l => Number(l.id)).filter(Number.isFinite);
+    if (lotIds.length === 0) {
+      showNotify({ title: 'Validation', message: 'Aucun lot disponible pour cet export', type: 'info' });
+      return;
+    }
+
+    const roundsComparisonParams = (() => {
+      try {
+        const { exportParams = {} } = getRoundsComparisonExportParams() || {};
+        return {
+          roundFrom: exportParams.roundFrom,
+          roundTo: exportParams.roundTo,
+          simulations: exportParams.simulations || [],
+          simulationRoundId: exportParams.simulationRoundId,
+          selectedOptions: exportParams.selectedOptions || []
+        };
+      } catch (_) {
+        return {};
+      }
+    })();
+
+    await downloadFromApi(`${API_BASE}/exports/project-bundle-zip`, {
+      method: 'POST',
+      body: {
+        projectId: currentProject.id,
+        currentRoundId: targetRound?.id || null,
+        questionLotIds: lotIds,
+        selections: {
+          rao: true,
+          roundsCompare: true,
+          lotAnalysis: true,
+          questionSheets: true
+        },
+        roundsComparisonParams
+      },
+      filenameFallback: `Exports_Affaire_${currentProject.id}.zip`
+    });
+
+    showNotify({ title: 'Succès', message: 'Export ZIP de l\'affaire généré', type: 'success' });
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
 async function refreshProjects(){ const list = await api('/projects'); renderProjects(list); }
 
 async function openProject(id){
@@ -1217,6 +1594,7 @@ async function loadRounds(){
       }
       card.dataset.roundId = round.id;
       const actionsHTML = isVisionneur() ? '' : `
+        <button class="export-round-bundle" title="Exporter tous les documents de l'affaire (ZIP)">ZIP</button>
         <button class="edit-round" title="Modifier">${icon('edit','icon-only')}</button>
         <button class="duplicate-round" title="Dupliquer">${icon('copy','icon-only')}</button>
         <button class="delete-round" title="Supprimer">${icon('trash','icon-only')}</button>
@@ -1268,6 +1646,11 @@ async function loadRounds(){
         nameEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
           else if (e.key === 'Escape') { nameEl.textContent = round.name; nameEl.blur(); }
+        });
+        const exportBundleBtn = card.querySelector('.export-round-bundle');
+        exportBundleBtn?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await exportFullProjectBundleFromRound(round);
         });
         const editBtn = card.querySelector('.edit-round');
         editBtn?.addEventListener('click', (e) => { e.stopPropagation(); openRoundEditModal(round); });
@@ -1328,6 +1711,7 @@ async function loadLotsForRound(){
   if (!currentRound) return;
   
   const { project, lots } = await api('/projects/'+currentProject.id);
+  currentProjectLots = Array.isArray(lots) ? lots : [];
   const tbody = qs('#lots-table tbody');
   if (!tbody) {
     console.warn('lots-table manquant dans le DOM; chargement des lots ignoré');
@@ -1346,7 +1730,12 @@ async function loadLotsForRound(){
       <td class="drag-handle" style="cursor:grab">⋮⋮</td>
       <td>${l.id}</td>
       <td>${l.code||''}</td>
-      <td>${l.name}</td>
+      <td>
+        <div class="lot-name-macro-inline">
+          <span class="lot-name-inline-text">${l.name}</span>
+          ${l.macro_lot ? `<span class="macro-lot-chip">Macrolot: ${escapeHtml(l.macro_lot)}</span>` : ''}
+        </div>
+      </td>
       <td style="display:flex;gap:8px;align-items:center">
         <button class="btn">${isVisionneur() ? `${icon('eye')}Voir` : 'Ouvrir'}</button>
         ${isVisionneur() ? '' : `<button class="btn ghost btn-edit-lot">${icon('edit')}Modifier</button>`}
@@ -1392,6 +1781,139 @@ function resolveRoundsComparisonTargets(rounds, selectedRoundId) {
   return { sortedRounds, openingRound, previousRound, selectedRound };
 }
 
+function normalizeMacroLot(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function getProjectMacroLots(extraMacroLot = null) {
+  const values = (currentProjectLots || [])
+    .map(l => normalizeMacroLot(l.macro_lot))
+    .filter(Boolean);
+  const extra = normalizeMacroLot(extraMacroLot);
+  if (extra) values.push(extra);
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
+function toggleMacroLotNewInput() {
+  const select = qs('#lot-macro-group');
+  const wrapper = qs('#lot-macro-new-wrapper');
+  const input = qs('#lot-macro-new');
+  if (!select || !wrapper || !input) return;
+  const isNew = select.value === '__new__';
+  wrapper.classList.toggle('hidden', !isNew);
+  if (!isNew) input.value = '';
+}
+
+function populateMacroLotSelect(selectedMacroLot = null) {
+  const select = qs('#lot-macro-group');
+  if (!select) return;
+
+  const selected = normalizeMacroLot(selectedMacroLot);
+  const macroLots = getProjectMacroLots(selected);
+  let html = '<option value="">Aucun macrolot</option>';
+  for (const macro of macroLots) {
+    html += `<option value="${escapeHtml(macro)}">${escapeHtml(macro)}</option>`;
+  }
+  html += '<option value="__new__">+ Nouveau macrolot...</option>';
+  select.innerHTML = html;
+  select.value = selected || '';
+  toggleMacroLotNewInput();
+}
+
+function getMacroLotFromModal() {
+  const select = qs('#lot-macro-group');
+  const customInput = qs('#lot-macro-new');
+  if (!select) return null;
+  if (select.value === '__new__') return normalizeMacroLot(customInput?.value || '');
+  return normalizeMacroLot(select.value);
+}
+
+function hashString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = value.charCodeAt(i) + ((hash << 5) - hash);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function loadMacroLotColorsByProject() {
+  try {
+    const raw = localStorage.getItem(MACRO_LOT_COLORS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveMacroLotColorsByProject(state) {
+  try {
+    localStorage.setItem(MACRO_LOT_COLORS_STORAGE_KEY, JSON.stringify(state || {}));
+  } catch (_) {}
+}
+
+function getCurrentProjectMacroLotColorMap() {
+  if (!currentProject?.id) return {};
+  const all = loadMacroLotColorsByProject();
+  const map = all[String(currentProject.id)];
+  return map && typeof map === 'object' ? map : {};
+}
+
+function setCurrentProjectMacroLotColor(macroLot, color) {
+  if (!currentProject?.id || !macroLot) return;
+  const key = String(currentProject.id);
+  const all = loadMacroLotColorsByProject();
+  const projectMap = all[key] && typeof all[key] === 'object' ? all[key] : {};
+  projectMap[macroLot] = color;
+  all[key] = projectMap;
+  saveMacroLotColorsByProject(all);
+}
+
+function renderRoundsMacroLotColorControls(lots) {
+  const wrap = qs('#rounds-macro-lot-colors');
+  if (!wrap) return;
+
+  const macroLots = [...new Set((lots || [])
+    .map(l => normalizeMacroLot(l.macro_lot))
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'fr'));
+
+  if (macroLots.length === 0) {
+    wrap.classList.add('hidden');
+    wrap.innerHTML = '';
+    return;
+  }
+
+  const colorMap = getCurrentProjectMacroLotColorMap();
+  wrap.classList.remove('hidden');
+  wrap.innerHTML = `<span class="muted" style="font-size:12px">Couleurs des macrolots:</span>`;
+
+  for (const macro of macroLots) {
+    const chip = document.createElement('span');
+    chip.className = 'chip macro-lot-color-chip';
+    const color = colorMap[macro] || getMacroLotColor(macro);
+    chip.style.borderLeft = `4px solid ${color}`;
+    chip.style.background = `${color}15`;
+    chip.innerHTML = `<input type="color" value="${color}" title="Couleur du macrolot" style="width:18px;height:18px;border:none;cursor:pointer;padding:0;background:none;vertical-align:middle;margin-right:4px">${escapeHtml(macro)}`;
+    chip.querySelector('input[type="color"]')?.addEventListener('change', (e) => {
+      setCurrentProjectMacroLotColor(macro, e.target.value);
+      loadRoundsComparison();
+    });
+    wrap.appendChild(chip);
+  }
+}
+
+function getMacroLotColor(macroLot) {
+  const m = normalizeMacroLot(macroLot);
+  if (!m) return null;
+  const custom = getCurrentProjectMacroLotColorMap()[m];
+  if (custom) return custom;
+  const hue = hashString(m) % 360;
+  return `hsl(${hue}, 65%, 42%)`;
+}
+
 async function loadRoundsComparison(){
   if (!currentProject) return;
   
@@ -1399,6 +1921,16 @@ async function loadRoundsComparison(){
     const data = await api(`/rounds/project/${currentProject.id}/compare`);
     const { lots, rounds } = data;
     const entrepriseMode = isEntreprise();
+    const sortedLots = [...lots].sort((a, b) => {
+      const aMacro = normalizeMacroLot(a.macro_lot) || '';
+      const bMacro = normalizeMacroLot(b.macro_lot) || '';
+      if (aMacro !== bMacro) return aMacro.localeCompare(bMacro, 'fr');
+      const aCode = String(a.lot_code || '');
+      const bCode = String(b.lot_code || '');
+      if (aCode !== bCode) return aCode.localeCompare(bCode, 'fr');
+      return String(a.lot_name || '').localeCompare(String(b.lot_name || ''), 'fr');
+    });
+    renderRoundsMacroLotColorControls(sortedLots);
     
     if (rounds.length === 0) {
       qs('#rounds-compare-table').innerHTML = '<tbody><tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucun tour disponible</td></tr></tbody>';
@@ -1418,10 +1950,10 @@ async function loadRoundsComparison(){
       || (rounds[rounds.length - 1] ? String(rounds[rounds.length - 1].id) : '');
     if (defaultId) selectRound.value = defaultId;
 
-    const companiesIndex = buildCompaniesIndex(lots, rounds);
-    const optionsData = await loadRoundsOptionsData(lots, rounds);
-    renderRoundsOptionsSelection(lots, rounds, companiesIndex, optionsData);
-    renderRoundsSimulation(lots, rounds, optionsData);
+    const companiesIndex = buildCompaniesIndex(sortedLots, rounds);
+    const optionsData = await loadRoundsOptionsData(sortedLots, rounds);
+    renderRoundsOptionsSelection(sortedLots, rounds, companiesIndex, optionsData);
+    renderRoundsSimulation(sortedLots, rounds, optionsData);
     
     const table = qs('#rounds-compare-table');
     const thead = table.querySelector('thead');
@@ -1523,17 +2055,38 @@ async function loadRoundsComparison(){
     rounds.forEach(r => totalsByRound[r.id] = 0);
     const bestPriceByLotRound = new Map();
 
-    for (const lot of lots) {
+    let lastMacroLot = null;
+    for (const lot of sortedLots) {
       const lotId = lot.lot_id ?? lot.id;
+      const macroLot = normalizeMacroLot(lot.macro_lot);
+      const macroColor = getMacroLotColor(macroLot);
+
+      if (macroLot && macroLot !== lastMacroLot) {
+        const macroRow = document.createElement('tr');
+        macroRow.className = 'macro-lot-separator-row';
+        const macroCell = document.createElement('td');
+        macroCell.colSpan = headerRow2.children.length + (entrepriseMode ? 1 : 2);
+        macroCell.innerHTML = `<span class="macro-lot-badge" style="border-color:${macroColor};color:${macroColor}">Groupe macrolot: ${escapeHtml(macroLot)}</span>`;
+        macroRow.appendChild(macroCell);
+        tbody.appendChild(macroRow);
+      }
+      lastMacroLot = macroLot;
+
       // Ligne d'en-tête du lot
       const lotRow = document.createElement('tr');
       lotRow.className = 'lot-header-row';
+      if (macroColor) {
+        lotRow.style.borderLeftColor = macroColor;
+      }
 
       const lotCell = document.createElement('td');
       lotCell.className = 'lot-name-cell sticky-col';
-      lotCell.innerHTML = lot.lot_code
+      const lotLabelHtml = lot.lot_code
         ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>`
         : `<strong>${lot.lot_name}</strong>`;
+      lotCell.innerHTML = macroLot
+        ? `${lotLabelHtml}<br><span class="macro-lot-badge" style="border-color:${macroColor};color:${macroColor}">Macrolot: ${escapeHtml(macroLot)}</span>`
+        : lotLabelHtml;
       lotRow.appendChild(lotCell);
 
       if (!entrepriseMode) {
@@ -1784,8 +2337,18 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
   }
 
   const entrepriseMode = isEntreprise();
+  const sortedLots = [...lots].sort((a, b) => {
+    const aMacro = normalizeMacroLot(a.macro_lot) || '';
+    const bMacro = normalizeMacroLot(b.macro_lot) || '';
+    if (aMacro !== bMacro) return aMacro.localeCompare(bMacro, 'fr');
+    const aCode = String(a.lot_code || '');
+    const bCode = String(b.lot_code || '');
+    if (aCode !== bCode) return aCode.localeCompare(bCode, 'fr');
+    return String(a.lot_name || '').localeCompare(String(b.lot_name || ''), 'fr');
+  });
+
   const companiesMap = new Map();
-  for (const lot of lots) {
+  for (const lot of sortedLots) {
     const companies = lot.companies_by_round?.[roundId] || [];
     for (const c of companies) {
       const companyId = Number(c.company_id);
@@ -1804,7 +2367,7 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
     return;
   }
 
-  ensureRoundSimulations(companies);
+  ensureRoundSimulations(companies, sortedLots, roundId, optionsData);
 
   const headerRow1 = document.createElement('tr');
   const headerRow2 = document.createElement('tr');
@@ -1835,15 +2398,38 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
   const missingMoeBySim = new Map();
   roundsSimulations.forEach(sim => { totalBySim.set(sim.id, 0); missingMoeBySim.set(sim.id, false); });
 
-  const rerender = () => renderRoundsSimulation(lots, rounds, optionsData);
+  const rerender = () => renderRoundsSimulation(sortedLots, rounds, optionsData);
 
-  for (const lot of lots) {
+  let lastMacroLot = null;
+  for (const lot of sortedLots) {
     const lotId = lot.lot_id ?? lot.id;
+    const macroLot = normalizeMacroLot(lot.macro_lot);
+    const macroColor = getMacroLotColor(macroLot);
+
+    if (macroLot && macroLot !== lastMacroLot) {
+      const macroRow = document.createElement('tr');
+      macroRow.className = 'macro-lot-separator-row';
+      const macroCell = document.createElement('td');
+      macroCell.colSpan = 1 + (entrepriseMode ? 0 : 1) + (roundsSimulations.length * 2);
+      macroCell.innerHTML = `<span class="macro-lot-badge" style="border-color:${macroColor};color:${macroColor}">Groupe macrolot: ${escapeHtml(macroLot)}</span>`;
+      macroRow.appendChild(macroCell);
+      tbody.appendChild(macroRow);
+    }
+    lastMacroLot = macroLot;
+
     const lotLabel = lot.lot_code
-      ? `${lot.lot_code} ${lot.lot_name}`
-      : lot.lot_name;
+      ? `<strong><span class="lot-code">${escapeHtml(lot.lot_code)}</span> ${escapeHtml(lot.lot_name || '')}</strong>`
+      : `<strong>${escapeHtml(lot.lot_name || '')}</strong>`;
+
     const lotRow = document.createElement('tr');
-    const tdLot = document.createElement('td'); tdLot.className = 'sticky-col'; tdLot.textContent = lotLabel;
+    lotRow.className = 'lot-header-row';
+    if (macroColor) lotRow.style.borderLeftColor = macroColor;
+
+    const tdLot = document.createElement('td');
+    tdLot.className = 'sticky-col lot-name-cell';
+    tdLot.innerHTML = macroLot
+      ? `${lotLabel}<br><span class="macro-lot-badge" style="border-color:${macroColor};color:${macroColor}">Macrolot: ${escapeHtml(macroLot)}</span>`
+      : lotLabel;
     lotRow.appendChild(tdLot);
 
     const hasMoe = Number.isFinite(lot.moe_total);
@@ -1870,7 +2456,6 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
       const hasExplicit = sim.selections.has(lotId);
       const selectedValue = hasExplicit ? sim.selections.get(lotId) : sim.defaultCompanyId;
       const selectedCompanyId = selectedValue === 0 ? null : (selectedValue ?? null);
-      const selectedCompany = companies.find(c => c.id === selectedCompanyId);
       const hasOffer = selectedCompanyId ? totalsByCompany.has(selectedCompanyId) : false;
       let amount = null;
       let missingMoe = false;
@@ -1959,7 +2544,20 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
   tfoot.appendChild(totalRow);
 }
 
-function ensureRoundSimulations(companies) {
+function getLotTotalsByCompany(lot, roundId, optionsData) {
+  const lotId = lot.lot_id ?? lot.id;
+  const companiesForLot = lot.companies_by_round?.[roundId] || [];
+  const optionTotalsByCompany = getSelectedOptionTotals(optionsData, lotId, roundId);
+  const totalsByCompany = new Map();
+  for (const c of companiesForLot) {
+    const companyId = Number(c.company_id);
+    if (!Number.isFinite(companyId)) continue;
+    totalsByCompany.set(companyId, (c.total || 0) + (optionTotalsByCompany[companyId] || 0));
+  }
+  return totalsByCompany;
+}
+
+function ensureRoundSimulations(companies, lots = [], roundId = null, optionsData = null) {
   if (!roundsSimulations.length) {
     for (let i = 0; i < DEFAULT_SIMULATIONS; i++) {
       roundsSimulations.push({
@@ -1974,6 +2572,49 @@ function ensureRoundSimulations(companies) {
   roundsSimulations.forEach((sim, idx) => {
     if (!sim.defaultCompanyId || !companies.find(c => c.id === sim.defaultCompanyId)) {
       sim.defaultCompanyId = companies[idx]?.id || companies[0]?.id || null;
+    }
+  });
+
+  if (!roundId || !optionsData || !Array.isArray(lots) || lots.length === 0) return;
+
+  const lotsByMacro = new Map();
+  for (const lot of lots) {
+    const lotId = lot.lot_id ?? lot.id;
+    const macro = normalizeMacroLot(lot.macro_lot);
+    if (!macro || !lotId) continue;
+    if (!lotsByMacro.has(macro)) lotsByMacro.set(macro, []);
+    lotsByMacro.get(macro).push(lot);
+  }
+
+  const candidatesByMacro = new Map();
+  for (const [macro, macroLots] of lotsByMacro.entries()) {
+    let candidateSet = null;
+    for (const lot of macroLots) {
+      const totalsByCompany = getLotTotalsByCompany(lot, roundId, optionsData);
+      const lotCompanies = new Set(Array.from(totalsByCompany.keys()));
+      if (candidateSet === null) {
+        candidateSet = lotCompanies;
+      } else {
+        candidateSet = new Set([...candidateSet].filter(cid => lotCompanies.has(cid)));
+      }
+      if (!candidateSet.size) break;
+    }
+    const ordered = [...(candidateSet || [])].filter(cid => companies.some(c => c.id === cid));
+    candidatesByMacro.set(macro, ordered);
+  }
+
+  roundsSimulations.forEach((sim, simIndex) => {
+    for (const [macro, macroLots] of lotsByMacro.entries()) {
+      const candidates = candidatesByMacro.get(macro) || [];
+      if (!candidates.length) continue;
+      const chosenCompanyId = candidates[simIndex % candidates.length];
+      for (const lot of macroLots) {
+        const lotId = lot.lot_id ?? lot.id;
+        if (!lotId) continue;
+        if (!sim.selections.has(lotId)) {
+          sim.selections.set(lotId, chosenCompanyId);
+        }
+      }
     }
   });
 }
@@ -2184,31 +2825,37 @@ async function duplicateRound(roundId){
 }
 
 async function deleteRound(roundId){
-  if (!confirm('Supprimer ce tour et toutes ses données ?')) return;
-  
-  try {
-    await api(`/rounds/${roundId}`, { method: 'DELETE' });
-    
-    // Supprimer la carte du DOM
-    const card = qs(`.round-card[data-round-id="${roundId}"]`);
-    if (card) {
-      card.remove();
+  showDeleteConfirmation({
+    title: 'Supprimer un tour',
+    message: 'Êtes-vous sûr de vouloir supprimer ce tour et toutes ses données ?',
+    extra: '<strong>⚠️ Attention:</strong> Cette action supprimera tous les articles, offres et réponses associés à ce tour. Cette action ne peut pas être annulée.',
+    onConfirm: async () => {
+      try {
+        await api(`/rounds/${roundId}`, { method: 'DELETE' });
+        
+        // Supprimer la carte du DOM
+        const card = qs(`.round-card[data-round-id="${roundId}"]`);
+        if (card) {
+          card.remove();
+        }
+        
+        // Supprimer l'onglet de la sous-navigation
+        const tab = qs(`#rounds-tabs button[data-round-id="${roundId}"]`);
+        if (tab) {
+          tab.remove();
+        }
+        
+        // Si c'était le tour actuel, revenir à la liste
+        if (currentRound && currentRound.id === roundId) {
+          currentRound = null;
+          activateTab('tab-rounds');
+        }
+        showNotify({ title: 'Succès', message: 'Tour supprimé avec succès', type: 'success' });
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
     }
-    
-    // Supprimer l'onglet de la sous-navigation
-    const tab = qs(`#rounds-tabs button[data-round-id="${roundId}"]`);
-    if (tab) {
-      tab.remove();
-    }
-    
-    // Si c'était le tour actuel, revenir à la liste
-    if (currentRound && currentRound.id === roundId) {
-      currentRound = null;
-      activateTab('tab-rounds');
-    }
-  } catch (err) {
-    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-  }
+  });
 }
 
 async function openLot(id, lotMeta){
@@ -2324,8 +2971,6 @@ function setupOptionsSheetControls(){
           method: 'POST', body: { round_id: currentRound.id, designation: design }
         });
         await loadLotOptions();
-        renderOptionsSheetTable();
-        setupOptionsSheetControls();
         await refreshCompare();
       } catch (err) {
         showNotify({ title: 'Erreur', message: err.message, type: 'error' });
@@ -2336,18 +2981,32 @@ function setupOptionsSheetControls(){
     btn.disabled = true;
     if (createBtn) createBtn.style.display = 'none';
   }
-  btn.onclick = async () => {
+  const addOptionItem = async () => {
     if (isVisionneur()) return;
     const optionId = Number(sel.value);
     if (!optionId) return;
     try {
-      // Crée un article vide (modifiable ensuite)
-      await api(`/options/${optionId}/items`, { method:'POST', body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null } });
-      await loadLotOptions();
-      renderOptionsSheetTable();
+      const res = await api(`/options/${optionId}/items`, { method:'POST', body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null } });
+      const opt = lotOptions.find(o => Number(o.id) === optionId);
+      if (opt) opt.items = [...(opt.items||[]), { id: res.id, num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null, offers:[] }];
+      // Add to model and DOM directly
+      const newRow = { item_id: res.id, option_id: optionId, option_designation: opt?.designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
+      for (const c of lotCompanies) newRow.offers[c.id] = { u:'', qty:'', pu:'' };
+      optionsSheetRows.push(newRow);
+      // Remove "aucune option" placeholder if present
+      const body = qs('#options-sheet-body');
+      if (body && optionsSheetRows.length === 1) { renderOptionsSheetTable(); }
+      else { appendOptionsRowDOM(optionsSheetRows.length - 1, newRow); }
       showNotify({ title:'Option', message:'Article ajouté', type:'success' });
     } catch (err) {
       showNotify({ title:'Erreur', message: err.message, type:'error' });
+    }
+  };
+  btn.onclick = addOptionItem;
+  sel.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addOptionItem();
     }
   };
 }
@@ -2365,6 +3024,10 @@ function parseOptionNum(raw) {
 
 /* ================= Autosave avec debounce ================= */
 const autosaveTimers = {};
+const autosaveHandlers = {
+  thresholds: () => debounceAutoSave('thresholds', autoSaveLotThresholds),
+  projectQuestions: () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig)
+};
 
 function debounceAutoSave(key, fn, delay = 600) {
   if (autosaveTimers[key]) clearTimeout(autosaveTimers[key]);
@@ -2415,7 +3078,11 @@ async function autoSaveLotThresholds() {
       price_very_low_threshold: parseFloat(qs('#threshold-price-very-low').value),
       price_low_threshold: parseFloat(qs('#threshold-price-low').value),
       price_high_threshold: parseFloat(qs('#threshold-price-high').value),
-      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value)
+      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value),
+      amount_very_low_threshold: parseFloat(qs('#threshold-amount-very-low').value),
+      amount_low_threshold: parseFloat(qs('#threshold-amount-low').value),
+      amount_high_threshold: parseFloat(qs('#threshold-amount-high').value),
+      amount_very_high_threshold: parseFloat(qs('#threshold-amount-very-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
     updateQuestionsLegend(body);
@@ -2431,7 +3098,7 @@ async function autoSaveLotThresholds() {
 async function autoSaveProjectQuestionConfig() {
   if (!currentProject) return;
   
-  showSaveStatus('#save-project-questions', 'saving');
+  showSaveStatus('#save-thresholds', 'saving');
   try {
     const body = {
       question_qty_very_low: qs('#q-qty-very-low').value.trim(),
@@ -2442,19 +3109,24 @@ async function autoSaveProjectQuestionConfig() {
       question_price_low: qs('#q-price-low').value.trim(),
       question_price_high: qs('#q-price-high').value.trim(),
       question_price_very_high: qs('#q-price-very-high').value.trim(),
+      question_amount_very_low: qs('#q-amount-very-low').value.trim(),
+      question_amount_low: qs('#q-amount-low').value.trim(),
+      question_amount_high: qs('#q-amount-high').value.trim(),
+      question_amount_very_high: qs('#q-amount-very-high').value.trim(),
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
-      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd'
+      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
+      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim()
     };
     await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
     unansweredConfig.comment = body.unanswered_comment;
     unansweredConfig.color = body.unanswered_color;
     // Re-render the sheet to apply updated unanswered styles
     for (let r = 0; r < sheetRows.length; r++) recalcRowAmountsRow(r);
-    showSaveStatus('#save-project-questions', 'saved');
+    showSaveStatus('#save-thresholds', 'saved');
   } catch (err) {
     console.error('Erreur autosave config questions projet:', err);
-    showSaveStatus('#save-project-questions', 'error');
-    resetSaveButton('#save-project-questions');
+    showSaveStatus('#save-thresholds', 'error');
+    resetSaveButton('#save-thresholds');
   }
 }
 
@@ -2471,8 +3143,13 @@ async function loadProjectQuestionConfig(){
     qs('#q-price-low').value = config.question_price_low || '';
     qs('#q-price-high').value = config.question_price_high || '';
     qs('#q-price-very-high').value = config.question_price_very_high || '';
+    qs('#q-amount-very-low').value = config.question_amount_very_low || '';
+    qs('#q-amount-low').value = config.question_amount_low || '';
+    qs('#q-amount-high').value = config.question_amount_high || '';
+    qs('#q-amount-very-high').value = config.question_amount_very_high || '';
     qs('#q-unanswered-comment').value = config.unanswered_comment || 'Article sans réponse';
     qs('#q-unanswered-color').value = config.unanswered_color || '#fff3cd';
+    qs('#q-offer-amount-mismatch-comment').value = config.offer_amount_mismatch_comment || 'Montant total incohérent dans la DPGF : le montant importé est conservé.';
     unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
     unansweredConfig.color = config.unanswered_color || '#fff3cd';
     attachProjectQuestionsListeners();
@@ -2526,6 +3203,8 @@ function updateQuestionsLegend(thresholds) {
   if (commentEl) {
     commentEl.textContent = unansweredConfig.comment || 'Article sans réponse';
   }
+
+  updateSheetLegend();
 }
 
 async function saveProjectQuestionConfig(){
@@ -2540,10 +3219,15 @@ async function saveProjectQuestionConfig(){
       question_price_low: qs('#q-price-low').value.trim(),
       question_price_high: qs('#q-price-high').value.trim(),
       question_price_very_high: qs('#q-price-very-high').value.trim(),
+      question_amount_very_low: qs('#q-amount-very-low').value.trim(),
+      question_amount_low: qs('#q-amount-low').value.trim(),
+      question_amount_high: qs('#q-amount-high').value.trim(),
+      question_amount_very_high: qs('#q-amount-very-high').value.trim(),
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
-      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd'
+      unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
+      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim()
     };
-    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
+    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body, showLoader: false });
     unansweredConfig.comment = body.unanswered_comment;
     unansweredConfig.color = body.unanswered_color;
     for (let r = 0; r < sheetRows.length; r++) recalcRowAmountsRow(r);
@@ -2566,6 +3250,10 @@ async function loadLotThresholds(){
     qs('#threshold-price-low').value = thresholds.price_low_threshold || 10;
     qs('#threshold-price-high').value = thresholds.price_high_threshold || 10;
     qs('#threshold-price-very-high').value = thresholds.price_very_high_threshold || 25;
+    qs('#threshold-amount-very-low').value = thresholds.amount_very_low_threshold || 25;
+    qs('#threshold-amount-low').value = thresholds.amount_low_threshold || 10;
+    qs('#threshold-amount-high').value = thresholds.amount_high_threshold || 10;
+    qs('#threshold-amount-very-high').value = thresholds.amount_very_high_threshold || 25;
     updateQuestionsLegend(thresholds);
     attachThresholdListeners();
   } catch (err) {
@@ -2574,14 +3262,22 @@ async function loadLotThresholds(){
 }
 
 function attachThresholdListeners(){
-  // Attacher les listeners aux inputs des seuils de quantité
-  ['threshold-qty-very-low', 'threshold-qty-low', 'threshold-qty-high', 'threshold-qty-very-high'].forEach(id => {
+  const thresholdIds = [
+    'threshold-qty-very-low', 'threshold-qty-low', 'threshold-qty-high', 'threshold-qty-very-high',
+    'threshold-price-very-low', 'threshold-price-low', 'threshold-price-high', 'threshold-price-very-high',
+    'threshold-amount-very-low', 'threshold-amount-low', 'threshold-amount-high', 'threshold-amount-very-high'
+  ];
+  const qtyThresholdIds = ['threshold-qty-very-low', 'threshold-qty-low', 'threshold-qty-high', 'threshold-qty-very-high'];
+
+  thresholdIds.forEach(id => {
     const el = qs(`#${id}`);
     if (el) {
-      el.removeEventListener('input', updateLegendFromInputs);
-      el.removeEventListener('change', () => debounceAutoSave('thresholds', autoSaveLotThresholds));
-      el.addEventListener('input', updateLegendFromInputs);
-      el.addEventListener('change', () => debounceAutoSave('thresholds', autoSaveLotThresholds));
+      el.removeEventListener('input', autosaveHandlers.thresholds);
+      el.addEventListener('input', autosaveHandlers.thresholds);
+      if (qtyThresholdIds.includes(id)) {
+        el.removeEventListener('input', updateLegendFromInputs);
+        el.addEventListener('input', updateLegendFromInputs);
+      }
     }
   });
 }
@@ -2598,15 +3294,20 @@ function updateLegendFromInputs(){
 }
 
 function attachProjectQuestionsListeners(){
-  // Attacher les listeners aux textareas des questions du projet
   const questionFieldIds = ['q-qty-very-low', 'q-qty-low', 'q-qty-high', 'q-qty-very-high',
                            'q-price-very-low', 'q-price-low', 'q-price-high', 'q-price-very-high',
-                           'q-unanswered-comment', 'q-unanswered-color'];
+                           'q-amount-very-low', 'q-amount-low', 'q-amount-high', 'q-amount-very-high',
+                           'q-unanswered-comment', 'q-unanswered-color', 'q-offer-amount-mismatch-comment'];
   questionFieldIds.forEach(id => {
     const el = qs(`#${id}`);
     if (el) {
-      el.removeEventListener('change', () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig));
-      el.addEventListener('change', () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig));
+      if (el.type === 'color') {
+        el.removeEventListener('change', autosaveHandlers.projectQuestions);
+        el.addEventListener('change', autosaveHandlers.projectQuestions);
+      } else {
+        el.removeEventListener('input', autosaveHandlers.projectQuestions);
+        el.addEventListener('input', autosaveHandlers.projectQuestions);
+      }
     }
   });
 }
@@ -2624,7 +3325,11 @@ async function saveLotThresholds(){
       price_very_low_threshold: parseFloat(qs('#threshold-price-very-low').value),
       price_low_threshold: parseFloat(qs('#threshold-price-low').value),
       price_high_threshold: parseFloat(qs('#threshold-price-high').value),
-      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value)
+      price_very_high_threshold: parseFloat(qs('#threshold-price-very-high').value),
+      amount_very_low_threshold: parseFloat(qs('#threshold-amount-very-low').value),
+      amount_low_threshold: parseFloat(qs('#threshold-amount-low').value),
+      amount_high_threshold: parseFloat(qs('#threshold-amount-high').value),
+      amount_very_high_threshold: parseFloat(qs('#threshold-amount-very-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
     updateQuestionsLegend(body);
@@ -2649,19 +3354,31 @@ async function generateQuestions(){
   }
 }
 
+function openQuestionsEditorModal(){
+  show('#questions-editor-modal');
+  setText('#questions-editor-modal-msg', '');
+}
+
 async function deleteAllQuestions(){
   if (isVisionneur() || isEntreprise()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas supprimer les fiches questions.', type:'error' }); return; }
   if (!currentLot || !currentRound) return;
-  if (!confirm('Supprimer toutes les fiches questions pour ce lot et ce tour ?')) return;
-  try {
-    const result = await api(`/question-config/lot/${currentLot.id}?round_id=${currentRound.id}`, {
-      method: 'DELETE'
-    });
-    showNotify({ title: 'Succès', message: `${result.deleted || 0} fiche(s) supprimée(s)`, type: 'success' });
-    await refreshQuestions();
-  } catch (err) {
-    showNotify({ title:'Erreur', message: err.message, type:'error' });
-  }
+  
+  showDeleteConfirmation({
+    title: 'Supprimer toutes les fiches questions',
+    message: 'Êtes-vous sûr de vouloir supprimer toutes les fiches questions pour ce lot et ce tour ?',
+    extra: '<strong>⚠️ Attention:</strong> Cette action supprimera toutes les fiches questions générées. Les réponses des entreprises seront perdues. Cette action ne peut pas être annulée.',
+    onConfirm: async () => {
+      try {
+        const result = await api(`/question-config/lot/${currentLot.id}?round_id=${currentRound.id}`, {
+          method: 'DELETE'
+        });
+        showNotify({ title: 'Succès', message: `${result.deleted || 0} fiche(s) supprimée(s)`, type: 'success' });
+        await refreshQuestions();
+      } catch (err) {
+        showNotify({ title:'Erreur', message: err.message, type:'error' });
+      }
+    }
+  });
 }
 
 function populateCompanyFilter(){
@@ -2682,7 +3399,7 @@ async function exportQuestionsExcel(){
     const companyId = qs('#filter-company')?.value || '';
     const status = qs('#filter-status')?.value || '';
     
-    let url = `/question-config/lot/${currentLot.id}/export-excel?round_id=${currentRound.id}`;
+    let url = `/exports/questions-by-company/${currentLot.id}?round_id=${currentRound.id}`;
     if (companyId) url += `&company_id=${companyId}`;
     if (status) url += `&status=${status}`;
     
@@ -2701,7 +3418,7 @@ async function exportQuestionsExcel(){
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = downloadUrl;
-    a.download = `Fiches_Questions_Lot_${currentLot.id}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.download = `Fiches_Questions_Lot_${currentLot.id}_Par_Entreprise_${new Date().toISOString().split('T')[0]}.zip`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2709,6 +3426,210 @@ async function exportQuestionsExcel(){
   } catch (err) {
     showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
+}
+
+/* ====== Suivi des envois de fiches questions ====== */
+
+let questionsSendData = []; // cache des données de suivi pour le modal courant
+
+async function openQuestionsSendModal() {
+  if (!currentLot || !currentRound) {
+    showNotify({ title:'Validation', message:'Sélectionnez un lot et un tour', type:'info' });
+    return;
+  }
+
+  // Pré-remplir l'objet du mail
+  const subjectEl = qs('#qs-send-subject');
+  const messageEl = qs('#qs-send-message');
+  if (subjectEl) subjectEl.value = `Fiches Questions - ${currentLot.name || 'Lot ' + currentLot.id} - Tour ${currentRound.round_number}`;
+  if (messageEl) messageEl.value = 'Bonjour,\n\nVeuillez trouver en pièce jointe les fiches questions associées à votre offre.\n\nCordialement';
+
+  // Libellé lot/tour
+  const labelEl = qs('#qs-send-lot-label');
+  if (labelEl) labelEl.textContent = `Lot : ${currentLot.code ? currentLot.code + ' — ' : ''}${currentLot.name || currentLot.id}  |  Tour ${currentRound.round_number}${currentRound.name ? ' — ' + currentRound.name : ''}`;
+
+  show('#questions-send-modal');
+  await refreshQuestionsSendTable();
+}
+
+function closeQuestionsSendModal() {
+  hide('#questions-send-modal');
+  questionsSendData = [];
+}
+
+async function refreshQuestionsSendTable() {
+  if (!currentLot || !currentRound) return;
+  const body = qs('#qs-send-table-body');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Chargement…</td></tr>';
+  try {
+    const data = await api(`/exports/questions-send-status?lotId=${currentLot.id}&roundId=${currentRound.id}`);
+    questionsSendData = data;
+    renderQuestionsSendTable(data);
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--danger)">${err.message}</td></tr>`;
+  }
+}
+
+function renderQuestionsSendTable(companies) {
+  const body = qs('#qs-send-table-body');
+  if (!body) return;
+  if (!companies || companies.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Aucune entreprise associée à ce lot.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = companies.map(c => {
+    const hasSent = !!c.last_sent_at;
+    const sentDate = hasSent ? new Date(c.last_sent_at).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+    const sentCount = Number(c.send_count) || 0;
+    const colorBar = c.color ? `border-left: 4px solid ${c.color};` : '';
+
+    const statusBadge = hasSent
+      ? `<span style="display:inline-flex;align-items:center;gap:5px;color:#198754;font-weight:600;font-size:0.85em"><svg class="icon" style="width:14px;height:14px" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Envoyé</span>`
+      : `<span style="display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:0.85em"><svg class="icon" style="width:14px;height:14px" aria-hidden="true"><use href="./assets/icons.svg#icon-clock"></use></svg>Non envoyé</span>`;
+
+    const sentInfo = hasSent
+      ? `<div style="font-size:0.82em;color:var(--fg);font-weight:600">${sentDate}</div><div style="font-size:0.78em;color:var(--muted)">${c.last_sent_to_email}${c.sent_by_email ? ' · par ' + c.sent_by_email : ''}</div>`
+      : `<span style="color:var(--muted);font-size:0.82em">—</span>`;
+
+    return `<tr style="${colorBar}" data-company-id="${c.id}">
+      <td style="padding:10px 14px;font-weight:600;border-bottom:1px solid var(--border)">${c.name}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="email"
+            class="qs-email-input"
+            data-company-id="${c.id}"
+            value="${c.email ? c.email.replace(/"/g,'&quot;') : ''}"
+            placeholder="email@entreprise.fr"
+            style="padding:5px 8px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.88em;width:200px;min-width:0"
+          />
+          <button class="btn ghost qs-save-email-btn" data-company-id="${c.id}" title="Sauvegarder l'email" style="padding:4px 8px;font-size:0.8em">
+            <svg class="icon" style="width:14px;height:14px" aria-hidden="true"><use href="./assets/icons.svg#icon-check"></use></svg>
+          </button>
+        </div>
+      </td>
+      <td style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--border)">${statusBadge}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border)">${sentInfo}</td>
+      <td style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--border)">
+        ${sentCount > 0 ? `<span style="font-weight:600;color:var(--copper)">${sentCount}</span>` : '<span style="color:var(--muted)">0</span>'}
+      </td>
+      <td style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--border)">
+        <button class="btn ghost qs-send-one-btn" data-company-id="${c.id}" title="Envoyer à cette entreprise" ${!c.email ? 'disabled title="Aucun email renseigné"' : ''} style="padding:5px 10px;font-size:0.85em">
+          <svg class="icon" style="width:14px;height:14px" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Attacher les événements
+  body.querySelectorAll('.qs-save-email-btn').forEach(btn => {
+    btn.addEventListener('click', () => saveCompanyEmail(Number(btn.dataset.companyId)));
+  });
+  body.querySelectorAll('.qs-email-input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveCompanyEmail(Number(input.dataset.companyId));
+    });
+  });
+  body.querySelectorAll('.qs-send-one-btn').forEach(btn => {
+    btn.addEventListener('click', () => sendQuestionsToCompany(Number(btn.dataset.companyId)));
+  });
+}
+
+async function saveCompanyEmail(companyId) {
+  const input = qs(`input.qs-email-input[data-company-id="${companyId}"]`);
+  if (!input) return;
+  const email = input.value.trim();
+  try {
+    await api(`/lots/companies/${companyId}/email`, { method: 'PATCH', body: { email } });
+    // Mettre à jour le cache local
+    const entry = questionsSendData.find(c => Number(c.id) === Number(companyId));
+    if (entry) entry.email = email || null;
+    // Mettre à jour le bouton d'envoi de la ligne
+    const sendBtn = qs(`.qs-send-one-btn[data-company-id="${companyId}"]`);
+    if (sendBtn) sendBtn.disabled = !email;
+    showNotify({ title: 'Succès', message: `Email sauvegardé pour ${entry?.name || 'l\'entreprise'}`, type: 'success' });
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+async function sendQuestionsToCompany(companyId) {
+  const company = questionsSendData.find(c => Number(c.id) === Number(companyId));
+  if (!company) return;
+
+  const emailInput = qs(`input.qs-email-input[data-company-id="${companyId}"]`);
+  const email = emailInput?.value.trim() || company.email;
+  if (!email) {
+    showNotify({ title: 'Validation', message: `Renseignez l'email de ${company.name}`, type: 'info' });
+    return;
+  }
+
+  const subject = qs('#qs-send-subject')?.value.trim() || `Fiches Questions - Lot ${currentLot.id}`;
+  const message = qs('#qs-send-message')?.value.trim() || '';
+
+  const sendBtn = qs(`.qs-send-one-btn[data-company-id="${companyId}"]`);
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
+
+  try {
+    await api('/exports/send-questions-to-company', {
+      method: 'POST',
+      body: { lotId: currentLot.id, roundId: currentRound.id, companyId, email, subject, message }
+    });
+    showNotify({ title: 'Envoyé', message: `Fiches questions envoyées à ${company.name} (${email})`, type: 'success' });
+    await refreshQuestionsSendTable();
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.innerHTML = '<svg class="icon" style="width:14px;height:14px" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer'; }
+  }
+}
+
+async function sendQuestionsToAll(onlyUnsent = false) {
+  const targets = questionsSendData.filter(c => {
+    // Récupérer l'email depuis le champ (peut avoir été modifié)
+    const inputEl = qs(`input.qs-email-input[data-company-id="${c.id}"]`);
+    const email = inputEl?.value.trim() || c.email;
+    if (!email) return false;
+    if (onlyUnsent && c.last_sent_at) return false;
+    return true;
+  });
+
+  if (targets.length === 0) {
+    const msg = onlyUnsent ? 'Toutes les entreprises ont déjà reçu les fiches (ou n\'ont pas d\'email).' : 'Aucune entreprise avec un email valide trouvée.';
+    showNotify({ title: 'Info', message: msg, type: 'info' });
+    return;
+  }
+
+  const subject = qs('#qs-send-subject')?.value.trim() || `Fiches Questions - Lot ${currentLot.id}`;
+  const message = qs('#qs-send-message')?.value.trim() || '';
+
+  const allBtn = qs('#qs-send-all-btn');
+  const unsentBtn = qs('#qs-send-unsent-btn');
+  if (allBtn) allBtn.disabled = true;
+  if (unsentBtn) unsentBtn.disabled = true;
+
+  let successCount = 0;
+  let failCount = 0;
+  for (const c of targets) {
+    const inputEl = qs(`input.qs-email-input[data-company-id="${c.id}"]`);
+    const email = inputEl?.value.trim() || c.email;
+    try {
+      await api('/exports/send-questions-to-company', {
+        method: 'POST',
+        body: { lotId: currentLot.id, roundId: currentRound.id, companyId: c.id, email, subject, message }
+      });
+      successCount++;
+    } catch {
+      failCount++;
+    }
+  }
+
+  if (allBtn) allBtn.disabled = false;
+  if (unsentBtn) unsentBtn.disabled = false;
+
+  const msg = `${successCount} envoi(s) réussi(s)${failCount > 0 ? `, ${failCount} échec(s)` : ''}`;
+  showNotify({ title: successCount > 0 ? 'Envois terminés' : 'Erreur', message: msg, type: successCount > 0 ? 'success' : 'error' });
+  await refreshQuestionsSendTable();
 }
 
 async function exportRAO(){
@@ -2738,7 +3659,419 @@ async function exportRAO(){
   }
 }
 
-async function refreshQuestions(){
+function openRaoExportModal() {
+  if (!currentProject) {
+    showNotify({ title: 'Validation', message: 'Sélectionnez un projet', type: 'info' });
+    return;
+  }
+  const formatEl = qs('#rao-export-format');
+  const toEl = qs('#rao-export-email-to');
+  const subjectEl = qs('#rao-export-email-subject');
+  const messageEl = qs('#rao-export-email-message');
+  if (formatEl) formatEl.value = 'rao';
+  if (toEl) toEl.value = '';
+  if (subjectEl) subjectEl.value = `RAO - ${currentProject?.name || ''}`;
+  if (messageEl) messageEl.value = 'Bonjour,\nVeuillez trouver en pièce jointe le RAO Word.';
+  const emailFields = qs('#rao-export-email-fields');
+  if (emailFields) emailFields.classList.add('hidden');
+  show('#rao-export-modal');
+}
+
+function closeRaoExportModal() {
+  hide('#rao-export-modal');
+}
+
+function toggleRaoExportEmailFields() {
+  const format = qs('#rao-export-format')?.value || 'download';
+  const emailFields = qs('#rao-export-email-fields');
+  if (!emailFields) return;
+  if (format === 'email') emailFields.classList.remove('hidden');
+  else emailFields.classList.add('hidden');
+}
+
+async function confirmRaoExport() {
+  const format = qs('#rao-export-format')?.value || 'rao';
+  if (format === 'rao') {
+    closeRaoExportModal();
+    await exportRAO();
+    return;
+  }
+  if (format === 'zip') {
+    closeRaoExportModal();
+    await exportFullProjectBundleFromRound(currentRound);
+    return;
+  }
+  if (format === 'email') {
+    const to = qs('#rao-export-email-to')?.value?.trim() || '';
+    const subject = qs('#rao-export-email-subject')?.value?.trim() || '';
+    const message = qs('#rao-export-email-message')?.value?.trim() || '';
+    if (!to) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir au moins un destinataire', type: 'info' });
+      return;
+    }
+    if (!subject) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir un objet', type: 'info' });
+      return;
+    }
+    try {
+      await api('/exports/send-email', {
+        method: 'POST',
+        body: {
+          to,
+          subject,
+          message,
+          exportType: 'rao',
+          exportParams: { projectId: currentProject.id }
+        }
+      });
+      closeRaoExportModal();
+      showNotify({ title: 'Succès', message: 'Email envoyé avec la pièce jointe Word', type: 'success' });
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    }
+  }
+}
+
+function openExportEmailModal(config) {
+  pendingEmailExport = config;
+  const subjectInput = qs('#export-email-subject');
+  const toInput = qs('#export-email-to');
+  const messageInput = qs('#export-email-message');
+  if (subjectInput) subjectInput.value = config.subject || '';
+  if (toInput) toInput.value = '';
+  if (messageInput) messageInput.value = 'Bonjour,\nVeuillez trouver en pièce jointe l\'export Excel.';
+  show('#export-email-modal');
+}
+
+function closeExportEmailModal() {
+  hide('#export-email-modal');
+  pendingEmailExport = null;
+}
+
+async function sendExportByEmail() {
+  if (!pendingEmailExport) return;
+  const to = qs('#export-email-to')?.value?.trim() || '';
+  const subject = qs('#export-email-subject')?.value?.trim() || '';
+  const message = qs('#export-email-message')?.value?.trim() || '';
+
+  if (!to) {
+    showNotify({ title: 'Validation', message: 'Veuillez saisir au moins un destinataire', type: 'info' });
+    return;
+  }
+  if (!subject) {
+    showNotify({ title: 'Validation', message: 'Veuillez saisir un objet', type: 'info' });
+    return;
+  }
+
+  try {
+    await api('/exports/send-email', {
+      method: 'POST',
+      body: {
+        to,
+        subject,
+        message,
+        exportType: pendingEmailExport.exportType,
+        exportParams: pendingEmailExport.exportParams
+      }
+    });
+    closeExportEmailModal();
+    showNotify({ title: 'Succès', message: 'Email envoyé avec la pièce jointe Excel', type: 'success' });
+  } catch (err) {
+    showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+function getRoundsComparisonExportParams() {
+  const compareView = qs('#rounds-compare-view');
+  const roundSelected = compareView?.dataset.compareSelected || '';
+  const roundPrevious = compareView?.dataset.comparePrevious || '';
+  const roundOpening = compareView?.dataset.compareOpening || '';
+  const roundFrom = roundPrevious || roundOpening;
+  const roundTo = roundSelected;
+  const params = new URLSearchParams();
+  if (roundFrom) params.set('round_from', roundFrom);
+  if (roundTo) params.set('round_to', roundTo);
+
+  const simulations = roundsSimulations.map(sim => ({
+    name: sim.name,
+    defaultCompanyId: sim.defaultCompanyId,
+    selections: Object.fromEntries(sim.selections)
+  }));
+
+  return {
+    queryParams: params,
+    exportParams: {
+      projectId: currentProject?.id,
+      roundFrom,
+      roundTo,
+      simulations,
+      simulationRoundId: qs('#compare-round')?.value || '',
+      selectedOptions: Array.from(selectedRoundOptions)
+    }
+  };
+}
+
+function exportRoundsComparisonPDF() {
+  const title = `Comparaison des Tours - ${currentProject?.name || ''}`.trim();
+  exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
+}
+
+async function exportRoundsComparisonExcel() {
+  if (!currentProject) {
+    showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' });
+    return;
+  }
+  try {
+    const { queryParams, exportParams } = getRoundsComparisonExportParams();
+    const requestUrl = `${API_BASE}/exports/rounds-comparison/${currentProject.id}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const res = await fetch(requestUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        simulations: exportParams.simulations,
+        simulationRoundId: exportParams.simulationRoundId,
+        selectedOptions: exportParams.selectedOptions
+      })
+    });
+    if (!res.ok) throw new Error('Erreur export');
+    const blob = await res.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `ComparaisonTours_${currentProject?.name}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+  } catch (err) {
+    showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
+  }
+}
+
+function openRoundsExportModal() {
+  if (!currentProject) {
+    showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' });
+    return;
+  }
+  const formatEl = qs('#rounds-export-format');
+  const toEl = qs('#rounds-export-email-to');
+  const subjectEl = qs('#rounds-export-email-subject');
+  const messageEl = qs('#rounds-export-email-message');
+
+  if (formatEl) formatEl.value = 'excel';
+  if (toEl) toEl.value = '';
+  if (subjectEl) subjectEl.value = `Comparaison des Tours - ${currentProject?.name || ''}`;
+  if (messageEl) messageEl.value = 'Bonjour,\nVeuillez trouver en pièce jointe l\'export Excel.';
+
+  const emailFields = qs('#rounds-export-email-fields');
+  if (emailFields) emailFields.classList.add('hidden');
+  show('#rounds-export-modal');
+}
+
+function closeRoundsExportModal() {
+  hide('#rounds-export-modal');
+}
+
+function toggleRoundsExportEmailFields() {
+  const format = qs('#rounds-export-format')?.value || 'excel';
+  const emailFields = qs('#rounds-export-email-fields');
+  if (!emailFields) return;
+  if (format === 'email') emailFields.classList.remove('hidden');
+  else emailFields.classList.add('hidden');
+}
+
+async function confirmRoundsExport() {
+  const format = qs('#rounds-export-format')?.value || 'excel';
+
+  if (format === 'pdf') {
+    closeRoundsExportModal();
+    exportRoundsComparisonPDF();
+    return;
+  }
+
+  if (format === 'excel') {
+    closeRoundsExportModal();
+    await exportRoundsComparisonExcel();
+    return;
+  }
+
+  if (format === 'email') {
+    const to = qs('#rounds-export-email-to')?.value?.trim() || '';
+    const subject = qs('#rounds-export-email-subject')?.value?.trim() || '';
+    const message = qs('#rounds-export-email-message')?.value?.trim() || '';
+
+    if (!to) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir au moins un destinataire', type: 'info' });
+      return;
+    }
+    if (!subject) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir un objet', type: 'info' });
+      return;
+    }
+
+    try {
+      const { exportParams } = getRoundsComparisonExportParams();
+      await api('/exports/send-email', {
+        method: 'POST',
+        body: {
+          to,
+          subject,
+          message,
+          exportType: 'rounds-comparison',
+          exportParams
+        }
+      });
+      closeRoundsExportModal();
+      showNotify({ title: 'Succès', message: 'Email envoyé avec la pièce jointe Excel', type: 'success' });
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    }
+  }
+}
+
+function exportCurrentDataPDF() {
+  const isCompareContext = dataExportContext === 'lot-compare';
+  const selector = isCompareContext ? '#compare-table' : '#sheet-table';
+  const title = isCompareContext
+    ? `Comparatif Lot - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim()
+    : `Données Lot - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim();
+  exportTableToPDF(selector, title || 'Données Lot');
+}
+
+async function exportCurrentDataExcel() {
+  if (!currentRound) {
+    showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/exports/summary/${currentRound.id}`, {
+      credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Erreur export');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
+  }
+}
+
+function openDataExportModal() {
+  if (!currentRound) {
+    showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
+    return;
+  }
+  dataExportContext = 'data-sheet';
+  const formatEl = qs('#data-export-format');
+  const toEl = qs('#data-export-email-to');
+  const subjectEl = qs('#data-export-email-subject');
+  const messageEl = qs('#data-export-email-message');
+
+  if (formatEl) formatEl.value = 'excel';
+  if (toEl) toEl.value = '';
+  if (subjectEl) subjectEl.value = `Export Données Lot - ${currentProject?.name || ''}`;
+  if (messageEl) messageEl.value = 'Bonjour,\nVeuillez trouver en pièce jointe l\'export Excel.';
+
+  const emailFields = qs('#data-export-email-fields');
+  if (emailFields) emailFields.classList.add('hidden');
+  show('#data-export-modal');
+}
+
+function openLotCompareExportModal() {
+  if (!currentRound) {
+    showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
+    return;
+  }
+  dataExportContext = 'lot-compare';
+  const formatEl = qs('#data-export-format');
+  const toEl = qs('#data-export-email-to');
+  const subjectEl = qs('#data-export-email-subject');
+  const messageEl = qs('#data-export-email-message');
+
+  if (formatEl) formatEl.value = 'pdf';
+  if (toEl) toEl.value = '';
+  if (subjectEl) subjectEl.value = `Comparatif Lot - ${currentProject?.name || ''}`;
+  if (messageEl) messageEl.value = 'Bonjour,\nVeuillez trouver en pièce jointe l\'export Excel.';
+
+  const emailFields = qs('#data-export-email-fields');
+  if (emailFields) emailFields.classList.add('hidden');
+  show('#data-export-modal');
+}
+
+function closeDataExportModal() {
+  hide('#data-export-modal');
+}
+
+function toggleDataExportEmailFields() {
+  const format = qs('#data-export-format')?.value || 'excel';
+  const emailFields = qs('#data-export-email-fields');
+  if (!emailFields) return;
+  if (format === 'email') emailFields.classList.remove('hidden');
+  else emailFields.classList.add('hidden');
+}
+
+async function confirmDataExport() {
+  const format = qs('#data-export-format')?.value || 'excel';
+
+  if (format === 'pdf') {
+    closeDataExportModal();
+    exportCurrentDataPDF();
+    return;
+  }
+
+  if (format === 'excel') {
+    closeDataExportModal();
+    await exportCurrentDataExcel();
+    return;
+  }
+
+  if (format === 'email') {
+    const to = qs('#data-export-email-to')?.value?.trim() || '';
+    const subject = qs('#data-export-email-subject')?.value?.trim() || '';
+    const message = qs('#data-export-email-message')?.value?.trim() || '';
+
+    if (!to) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir au moins un destinataire', type: 'info' });
+      return;
+    }
+    if (!subject) {
+      showNotify({ title: 'Validation', message: 'Veuillez saisir un objet', type: 'info' });
+      return;
+    }
+    if (!currentRound) {
+      showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
+      return;
+    }
+
+    try {
+      await api('/exports/send-email', {
+        method: 'POST',
+        body: {
+          to,
+          subject,
+          message,
+          exportType: 'summary',
+          exportParams: {
+            roundId: currentRound.id
+          }
+        }
+      });
+      closeDataExportModal();
+      showNotify({ title: 'Succès', message: 'Email envoyé avec la pièce jointe Excel', type: 'success' });
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    }
+  }
+}
+
+async function refreshQuestions({ silent = false } = {}){
   if (!currentLot || !currentRound) return;
   try {
     const companyId = qs('#filter-company')?.value || '';
@@ -2748,7 +4081,7 @@ async function refreshQuestions(){
     if (companyId) url += `&company_id=${companyId}`;
     if (status) url += `&status=${status}`;
     
-    let questions = await api(url);
+    let questions = await api(url, { showLoader: !silent });
     // Filtrage combiné avancé
     const type = qs('#filter-type')?.value;
     const deviation = parseFloat(qs('#filter-deviation')?.value);
@@ -2824,13 +4157,18 @@ async function refreshQuestions(){
         'price_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('dollar-sign')}Prix Très Bas</span>`,
         'price_low': `<span style="color:#0dcaf0;font-weight:600">${icon('dollar-sign')}Prix Bas</span>`,
         'price_high': `<span style="color:#fd7e14;font-weight:600">${icon('dollar-sign')}Prix Haut</span>`,
-        'price_very_high': `<span style="color:#dc3545;font-weight:600">${icon('dollar-sign')}Prix Très Haut</span>`
+        'price_very_high': `<span style="color:#dc3545;font-weight:600">${icon('dollar-sign')}Prix Très Haut</span>`,
+        'amount_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('dollar-sign')}Montant Très Bas</span>`,
+        'amount_low': `<span style="color:#0dcaf0;font-weight:600">${icon('dollar-sign')}Montant Bas</span>`,
+        'amount_high': `<span style="color:#fd7e14;font-weight:600">${icon('dollar-sign')}Montant Haut</span>`,
+        'amount_very_high': `<span style="color:#dc3545;font-weight:600">${icon('dollar-sign')}Montant Très Haut</span>`
       }[q.question_type] || q.question_type;
       
       const statusValue = q.status || 'pending';
       const statusBadge = {
         'pending': `${icon('clock')}En attente`,
         'answered': `${icon('check-circle')}Répondue`,
+        'validated': `${icon('check-circle')}Validée`,
         'dismissed': `${icon('x-circle')}Ignorée`
       }[statusValue] || statusValue;
       
@@ -2940,18 +4278,25 @@ async function refreshQuestions(){
       qsa('.btn-delete-question').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           const qid = e.target.dataset.qid;
-          if (confirm('Supprimer cette question ?')) {
-            try {
-              await api(`/question-config/question/${qid}`, {
-                method: 'DELETE'
-              });
-              await refreshQuestions();
-            } catch (err) {
-              showNotify({ title:'Erreur', message: err.message, type:'error' });
+          showDeleteConfirmation({
+            title: 'Supprimer une fiche question',
+            message: 'Êtes-vous sûr de vouloir supprimer cette fiche question ?',
+            extra: '<strong>⚠️ Attention:</strong> Les réponses des entreprises seront perdues. Cette action ne peut pas être annulée.',
+            onConfirm: async () => {
+              try {
+                await api(`/question-config/question/${qid}`, {
+                  method: 'DELETE'
+                });
+                await refreshQuestions();
+                showNotify({ title: 'Succès', message: 'Fiche question supprimée', type: 'success' });
+              } catch (err) {
+                showNotify({ title:'Erreur', message: err.message, type:'error' });
+              }
             }
-          }
+          });
         });
       });
+    } // close else
     // Ajout question manuelle
     qs('#add-question-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2974,15 +4319,33 @@ async function refreshQuestions(){
         showNotify({ title:'Erreur', message: err.message, type:'error' });
       }
     });
-    }
   } catch (err) {
-    console.error('Erreur chargement questions:', err);
     showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
 }
 
 /* ================= Éditeur de Questions ================= */
-async function loadQuestionsEditor(){
+
+// Démarrer l'auto-actualisation de l'éditeur de questions (chaque 10 secondes)
+function startQuestionsEditorAutoRefresh() {
+  // Arrêter tout intervalle existant
+  stopQuestionsEditorAutoRefresh();
+  
+  // Démarrer le nouvel intervalle (10 secondes)
+  questionsEditorAutoRefreshInterval = setInterval(() => {
+    loadQuestionsEditor({ silent: true });
+  }, 10000);
+}
+
+// Arrêter l'auto-actualisation
+function stopQuestionsEditorAutoRefresh() {
+  if (questionsEditorAutoRefreshInterval) {
+    clearInterval(questionsEditorAutoRefreshInterval);
+    questionsEditorAutoRefreshInterval = null;
+  }
+}
+
+async function loadQuestionsEditor({ silent = false } = {}){
   if (!currentLot || !currentRound) return;
   
   try {
@@ -2992,8 +4355,25 @@ async function loadQuestionsEditor(){
     
     // Charger les données du lot et les questions
     const roundParam = `?round_id=${currentRound.id}`;
-    const lotData = await api(`/lots/${currentLot.id}${roundParam}`);
-    const questionsData = await api(`/question-config/lot/${currentLot.id}${roundParam}`);
+    const lotData = await api(`/lots/${currentLot.id}${roundParam}`, { showLoader: !silent });
+    const questionsData = await api(`/question-config/lot/${currentLot.id}${roundParam}`, { showLoader: !silent });
+
+    // Calcul du statut de validation par entreprise (toutes les fiches du tour validées)
+    const companyValidation = new Map();
+    for (const q of questionsData || []) {
+      const companyId = Number(q.company_id);
+      if (!Number.isFinite(companyId)) continue;
+      const stats = companyValidation.get(companyId) || { total: 0, validated: 0 };
+      stats.total += 1;
+      if (q.status === 'validated') stats.validated += 1;
+      companyValidation.set(companyId, stats);
+    }
+
+    const formatCompanyLabel = (company) => {
+      const stats = companyValidation.get(Number(company.id));
+      const allValidated = Boolean(stats && stats.total > 0 && stats.validated === stats.total);
+      return allValidated ? `${company.name} ✅` : company.name;
+    };
     
     // Peupler le sélecteur d'entreprise ciblée (header)
     const targetCompany = qs('#questions-target-company');
@@ -3001,7 +4381,7 @@ async function loadQuestionsEditor(){
     for (const c of lotData.companies || []) {
       const opt = document.createElement('option');
       opt.value = c.id;
-      opt.textContent = c.name;
+      opt.textContent = formatCompanyLabel(c);
       targetCompany.appendChild(opt);
     }
     
@@ -3016,12 +4396,17 @@ async function loadQuestionsEditor(){
     for (const c of lotData.companies || []) {
       const opt = document.createElement('option');
       opt.value = c.id;
-      opt.textContent = c.name;
+      opt.textContent = formatCompanyLabel(c);
       modalTargetCompany.appendChild(opt);
     }
     
     // Construire le tableau
     renderQuestionsEditorTable(lotData, questionsData);
+    
+    // Démarrer l'auto-actualisation si ce n'est pas déjà fait
+    if (!questionsEditorAutoRefreshInterval) {
+      startQuestionsEditorAutoRefresh();
+    }
     
   } catch (err) {
     console.error('Erreur chargement éditeur questions:', err);
@@ -3032,8 +4417,38 @@ async function loadQuestionsEditor(){
 function renderQuestionsEditorTable(lotData, questionsData) {
   const viewFilter = qs('#questions-view-filter').value;
   const targetCompany = qs('#questions-target-company').value;
+  const amountFilter = qs('#questions-amount-filter')?.value || 'all';
   const thead = qs('#questions-editor-head');
   const tbody = qs('#questions-editor-body');
+
+  const thresholds = {
+    qty: {
+      veryLow: parseFloat(qs('#threshold-qty-very-low')?.value) || 25,
+      low: parseFloat(qs('#threshold-qty-low')?.value) || 10,
+      high: parseFloat(qs('#threshold-qty-high')?.value) || 10,
+      veryHigh: parseFloat(qs('#threshold-qty-very-high')?.value) || 25
+    },
+    price: {
+      veryLow: parseFloat(qs('#threshold-price-very-low')?.value) || 25,
+      low: parseFloat(qs('#threshold-price-low')?.value) || 10,
+      high: parseFloat(qs('#threshold-price-high')?.value) || 10,
+      veryHigh: parseFloat(qs('#threshold-price-very-high')?.value) || 25
+    },
+    amount: {
+      veryLow: parseFloat(qs('#threshold-amount-very-low')?.value) || 25,
+      low: parseFloat(qs('#threshold-amount-low')?.value) || 10,
+      high: parseFloat(qs('#threshold-amount-high')?.value) || 10,
+      veryHigh: parseFloat(qs('#threshold-amount-very-high')?.value) || 25
+    }
+  };
+
+  const getDeviationClass = (deviation, config) => {
+    if (deviation < -Math.abs(config.veryLow)) return 'ecart-very-low';
+    if (deviation < -Math.abs(config.low)) return 'ecart-low';
+    if (deviation > Math.abs(config.veryHigh)) return 'ecart-very-high';
+    if (deviation > Math.abs(config.high)) return 'ecart-high';
+    return '';
+  };
   
   if (!lotData.items || lotData.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Aucune donnée disponible</td></tr>';
@@ -3042,6 +4457,49 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   
   // Afficher toutes les entreprises dans les colonnes de comparaison
   let companies = lotData.companies || [];
+
+  // Pré-calcul des offres par item + montant de référence pour filtrage/tri
+  const offersByItemId = new Map();
+  const amountByItemId = new Map();
+  for (const item of lotData.items || []) {
+    const itemOffers = companies.map(company => {
+      const offer = (lotData.offers || []).find(o =>
+        Number(o.item_id) === Number(item.id) && Number(o.company_id) === Number(company.id)
+      );
+      const qty = parseNum(offer?.qty);
+      const pu = parseNum(offer?.unit_price);
+      const safeQty = Number.isFinite(qty) ? qty : null;
+      const safePu = Number.isFinite(pu) ? pu : null;
+      const total = parseNum(offer?.amount);
+      const safeTotal = Number.isFinite(total)
+        ? total
+        : (Number.isFinite(safeQty) && Number.isFinite(safePu) ? (safeQty * safePu) : null);
+      return {
+        company_id: company.id,
+        quantity: safeQty,
+        unit_price: safePu,
+        total: safeTotal
+      };
+    });
+
+    offersByItemId.set(Number(item.id), itemOffers);
+
+    let referenceAmount = 0;
+    if (targetCompany) {
+      const targetOffer = itemOffers.find(o => Number(o.company_id) === Number(targetCompany));
+      referenceAmount = Number(targetOffer?.total || 0);
+    } else {
+      referenceAmount = itemOffers.reduce((max, offer) => Math.max(max, Number(offer.total || 0)), 0);
+    }
+    amountByItemId.set(Number(item.id), Number.isFinite(referenceAmount) ? referenceAmount : 0);
+  }
+
+  const itemsToRender = [...(lotData.items || [])];
+  if (amountFilter === 'highest') {
+    itemsToRender.sort((a, b) => (amountByItemId.get(Number(b.id)) || 0) - (amountByItemId.get(Number(a.id)) || 0));
+  } else if (amountFilter === 'lowest') {
+    itemsToRender.sort((a, b) => (amountByItemId.get(Number(a.id)) || 0) - (amountByItemId.get(Number(b.id)) || 0));
+  }
   
   // Créer une map des données MOE par item_id
   const moeByItem = new Map();
@@ -3055,67 +4513,80 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const key = `${q.item_id}_${q.company_id}`;
     questionsMap.set(key, q);
   }
-  let headerHTML = '<tr>';
-  headerHTML += '<th style="width:50px">#</th>';
-  headerHTML += '<th style="width:200px">Désignation</th>';
-  headerHTML += '<th style="width:80px">Unité</th>';
-  
-  if (viewFilter === 'all' || viewFilter === 'quantities') {
-    headerHTML += '<th style="width:100px" class="moe-highlight">Qté MOE</th>';
+  const showQuantities = viewFilter === 'all' || viewFilter === 'quantities';
+  const showUnitPrices = viewFilter === 'all' || viewFilter === 'unit_prices';
+  const showTotals = viewFilter === 'all' || viewFilter === 'totals';
+
+  let headerTop = '<tr class="head-row-1">';
+  headerTop += '<th rowspan="2" class="sticky-col question-num-col">Num</th>';
+  headerTop += '<th rowspan="2" class="sticky-col2 question-designation-col">Désignation</th>';
+  headerTop += '<th rowspan="2" class="question-unit-col">Unité</th>';
+
+  if (showQuantities) {
+    headerTop += `<th colspan="${1 + companies.length}" class="moe-col">Quantités</th>`;
+  }
+  if (showUnitPrices) {
+    headerTop += `<th colspan="${1 + companies.length}" class="company-col">Prix Unitaires</th>`;
+  }
+  if (showTotals) {
+    headerTop += `<th colspan="${1 + companies.length}" class="company-col">Montants</th>`;
+  }
+
+  headerTop += '<th rowspan="2" class="questions-group-start question-text-col">Question</th>';
+  headerTop += '<th rowspan="2" class="question-validation-col">Validation</th>';
+  headerTop += '<th rowspan="2" class="question-actions-col">Actions</th>';
+  headerTop += '</tr>';
+
+  let headerSub = '<tr class="head-row-2">';
+  if (showQuantities) {
+    headerSub += '<th class="moe-border moe-highlight">Qté MOE</th>';
     for (const c of companies) {
       const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerHTML += `<th style="width:100px" class="${highlightClass}">Qté ${c.name}</th>`;
+      headerSub += `<th class="${highlightClass}">Qté ${c.name}</th>`;
     }
   }
-  
-  if (viewFilter === 'all' || viewFilter === 'unit_prices') {
-    headerHTML += '<th style="width:100px" class="moe-highlight">PU MOE</th>';
+  if (showUnitPrices) {
+    headerSub += '<th class="questions-group-start moe-highlight">PU MOE</th>';
     for (const c of companies) {
       const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerHTML += `<th style="width:100px" class="${highlightClass}">PU ${c.name}</th>`;
+      headerSub += `<th class="${highlightClass}">PU ${c.name}</th>`;
     }
   }
-  
-  if (viewFilter === 'all' || viewFilter === 'totals') {
-    headerHTML += '<th style="width:120px" class="moe-highlight">Total MOE</th>';
+  if (showTotals) {
+    headerSub += '<th class="questions-group-start moe-highlight">Total MOE</th>';
     for (const c of companies) {
       const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerHTML += `<th style="width:120px" class="${highlightClass}">Total ${c.name}</th>`;
+      headerSub += `<th class="${highlightClass}">Total ${c.name}</th>`;
     }
   }
-  
-  headerHTML += '<th style="min-width:220px">Question</th>';
-  headerHTML += '<th style="width:100px">Statut</th>';
-  headerHTML += '<th style="width:100px">Actions</th>';
-  headerHTML += '</tr>';
-  thead.innerHTML = headerHTML;
+  headerSub += '</tr>';
+
+  thead.innerHTML = headerTop + headerSub;
+  recalcQuestionsHeaderOffsets();
   
   let html = '';
   
   // Pour chaque ligne du lot (une ligne par item, pas par entreprise)
-  for (const item of lotData.items) {
+  for (const item of itemsToRender) {
     // Récupérer les données MOE pour cet item
     const moe = moeByItem.get(item.id) || {};
-    const moeQty = moe.qty || 0;
-    const moePU = moe.unit_price || 0;
-    const moeTotal = moeQty * moePU;
+    const parsedMoeQty = parseNum(moe.qty);
+    const parsedMoePU = parseNum(moe.unit_price);
+    const moeQty = Number.isFinite(parsedMoeQty) ? parsedMoeQty : null;
+    const moePU = Number.isFinite(parsedMoePU) ? parsedMoePU : null;
+    const moeTotal = Number.isFinite(moeQty) && Number.isFinite(moePU)
+      ? (moeQty * moePU)
+      : null;
     const moeHasTotal = moeQty > 0 && moePU > 0;
     
     // Collecter les offres de toutes les entreprises pour cet item
-    const itemOffers = companies.map(company => {
-      const offer = (lotData.offers || []).find(o => 
-        Number(o.item_id) === Number(item.id) && Number(o.company_id) === Number(company.id)
-      );
-      const qty = offer?.qty || 0;
-      const pu  = offer?.unit_price || 0;
-      const isUnanswered = moeHasTotal && (!offer || (qty === 0 && pu === 0));
+    const itemOffers = (offersByItemId.get(Number(item.id)) || []).map(offer => {
+      const hasQty = Number.isFinite(offer.quantity) && offer.quantity !== 0;
+      const hasPu = Number.isFinite(offer.unit_price) && offer.unit_price !== 0;
+      const hasAnyValue = hasQty || hasPu;
       return {
-        company_id: company.id,
-        company_name: company.name,
-        quantity: qty,
-        unit_price: pu,
-        total: offer?.amount || (qty * pu),
-        isUnanswered
+        ...offer,
+        isUnanswered: moeHasTotal && !hasAnyValue
       };
     });
     
@@ -3131,75 +4602,73 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const questionStatus = existingQuestion?.status || 'pending';
     const questionCompanyId = existingQuestion?.company_id || '';
     
-    const statusBadge = {
-      'pending': `${icon('clock')}En attente`,
-      'answered': `${icon('check-circle')}Répondue`,
-      'dismissed': `${icon('x-circle')}Ignorée`
-    }[questionStatus] || questionStatus;
+    const isValidated = questionStatus === 'validated';
+    const validationBadge = isValidated
+      ? `${icon('check-circle')}Validée`
+      : `${icon('clock')}À valider`;
     
+    const hierarchyClass = getQuestionHierarchyClass(item.num);
+
     html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}">`;
-    html += `<td>${item.num || ''}</td>`;
-    html += `<td>${item.designation || ''}</td>`;
+    html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
+    html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}">${item.designation || ''}</td>`;
     html += `<td>${item.unit || ''}</td>`;
     
     // Colonnes quantités
-    if (viewFilter === 'all' || viewFilter === 'quantities') {
-      html += `<td class="moe-cell">${fmtNum(moeQty)}</td>`;
+    if (showQuantities) {
+      html += `<td class="moe-cell moe-border">${fmtNum(moeQty)}</td>`;
       for (const offer of itemOffers) {
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        if (offer.isUnanswered) {
+        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+        if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${highlightClass}">${fmtNum(offer.quantity)}</td>`;
+        } else if (offer.isUnanswered) {
           const sty = unansweredStyleStr(unansweredConfig.color);
           const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
           html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtNum(offer.quantity)}</td>`;
         } else {
           const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
-          let deviationClass = '';
-          if (deviation < -25) deviationClass = 'ecart-very-low';
-          else if (deviation < -10) deviationClass = 'ecart-low';
-          else if (deviation > 25) deviationClass = 'ecart-very-high';
-          else if (deviation > 10) deviationClass = 'ecart-high';
+          const deviationClass = getDeviationClass(deviation, thresholds.qty);
           html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}</td>`;
         }
       }
     }
     
     // Colonnes prix unitaires
-    if (viewFilter === 'all' || viewFilter === 'unit_prices') {
-      html += `<td class="moe-cell">${fmtEuro(moePU)}</td>`;
+    if (showUnitPrices) {
+      html += `<td class="moe-cell questions-group-start">${fmtEuro(moePU)}</td>`;
       for (const offer of itemOffers) {
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        if (offer.isUnanswered) {
+        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+        if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
+        } else if (offer.isUnanswered) {
           const sty = unansweredStyleStr(unansweredConfig.color);
           const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
           html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.unit_price)}</td>`;
         } else {
           const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
-          let deviationClass = '';
-          if (deviation < -25) deviationClass = 'ecart-very-low';
-          else if (deviation < -10) deviationClass = 'ecart-low';
-          else if (deviation > 25) deviationClass = 'ecart-very-high';
-          else if (deviation > 10) deviationClass = 'ecart-high';
+          const deviationClass = getDeviationClass(deviation, thresholds.price);
           html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
         }
       }
     }
     
     // Colonnes totaux
-    if (viewFilter === 'all' || viewFilter === 'totals') {
-      html += `<td class="moe-cell">${fmtEuro(moeTotal)}</td>`;
+    if (showTotals) {
+      html += `<td class="moe-cell questions-group-start">${fmtEuro(moeTotal)}</td>`;
       for (const offer of itemOffers) {
         const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        if (offer.isUnanswered) {
+        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+        if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.total)}</td>`;
+        } else if (offer.isUnanswered) {
           const sty = unansweredStyleStr(unansweredConfig.color);
           const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
           html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.total)}</td>`;
         } else {
           const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
-          let deviationClass = '';
-          if (deviation < -25) deviationClass = 'ecart-very-low';
-          else if (deviation < -10) deviationClass = 'ecart-low';
-          else if (deviation > 25) deviationClass = 'ecart-very-high';
-          else if (deviation > 10) deviationClass = 'ecart-high';
+          const deviationClass = getDeviationClass(deviation, thresholds.amount);
           html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}</td>`;
         }
       }
@@ -3207,7 +4676,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     
     
     // Question avec statut sauvegarde
-    html += '<td style="position:relative">';
+    html += '<td class="questions-group-start" style="position:relative">';
     html += `<textarea 
       id="question-${item.id}"
       name="question-${item.id}"
@@ -3222,11 +4691,15 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     html += `<div class="save-status" data-item-id="${item.id}" style="position:absolute;top:6px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
     html += '</td>';
     
-    // Statut
-    html += `<td>${statusBadge}</td>`;
+    // Validation
+    html += `<td class="validation-status ${isValidated ? 'validated-question-status' : 'pending-question-status'}">${validationBadge}</td>`;
     
     // Actions
     html += '<td>';
+    const validateTitle = isValidated
+      ? 'Désactiver la validation'
+      : (questionId ? 'Valider' : 'Créer et valider');
+    html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" style="padding:4px 8px;font-size:12px;color:var(--success)" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
     if (questionId) {
       html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" style="padding:4px 8px;font-size:12px" title="Supprimer">${icon('trash','icon-only')}</button>`;
     }
@@ -3243,123 +4716,274 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   }
 }
 
+function getQuestionHierarchyClass(itemNum) {
+  const raw = String(itemNum || '').trim();
+  if (!raw) return 'qitem-level-3';
+
+  const exactNumeric = raw.match(/^(\d+(?:\.\d+)*)$/);
+  const extractedNumeric = exactNumeric || raw.match(/(\d+(?:\.\d+)*)/);
+  if (!extractedNumeric) return 'qitem-level-0';
+
+  const depth = Math.max(0, extractedNumeric[1].split('.').length - 1);
+  if (depth === 0) return 'qitem-level-0';
+  if (depth === 1) return 'qitem-level-1';
+  if (depth === 2) return 'qitem-level-2';
+  return 'qitem-level-3';
+}
+
+function recalcQuestionsHeaderOffsets() {
+  const head = qs('#questions-editor-head');
+  if (!head) return;
+  const row1 = head.querySelector('tr.head-row-1');
+  const row2 = head.querySelector('tr.head-row-2');
+  if (!row1 || !row2) return;
+
+  head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = '0px'; });
+
+  const setFromMeasure = () => {
+    const headRect = head.getBoundingClientRect();
+    const row2Rect = row2.getBoundingClientRect();
+    const offset = Math.max(0, Math.round(row2Rect.top - headRect.top) - 1);
+    head.style.setProperty('--questions-head-row1-height', `${offset}px`);
+    head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = `${offset}px`; });
+  };
+
+  setFromMeasure();
+  if (window.requestAnimationFrame) requestAnimationFrame(setFromMeasure);
+}
+
 function bindQuestionsEditorEvents() {
-  // Map pour garder les timers de debounce par item
-  const saveTimers = new Map();
-  
-  // Auto-save pour chaque textarea
+  // Auto-save avec le meme pattern que la grille d'edition:
+  // - etat "modifie"
+  // - debounce centralise
+  // - garde anti-sauvegardes simultanees
   qsa('.question-text-editor').forEach(textarea => {
-    textarea.addEventListener('input', async (e) => {
+    textarea.addEventListener('input', () => {
       const itemId = textarea.dataset.itemId;
       const questionId = textarea.dataset.questionId;
       const questionText = textarea.value.trim();
       const statusIndicator = qs(`.save-status[data-item-id="${itemId}"]`);
-      
-      // Annuler le timer précédent
-      if (saveTimers.has(itemId)) {
-        clearTimeout(saveTimers.get(itemId));
-      }
-      
+
+      if (!statusIndicator) return;
+
       // Si vide, ne pas sauvegarder
       if (!questionText) {
         statusIndicator.style.display = 'none';
+        pendingQuestionSaves.delete(String(itemId));
         return;
       }
-      
-      // Montrer l'indicateur "en attente"
+
+      const companyId = qs('#questions-target-company')?.value;
+      if (!companyId) {
+        showCompanySelectModal(itemId, questionId, questionText);
+        statusIndicator.style.display = 'block';
+        statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+        statusIndicator.style.color = 'var(--copper)';
+        return;
+      }
+
       statusIndicator.style.display = 'block';
       statusIndicator.innerHTML = icon('clock', 'icon-only');
       statusIndicator.style.color = 'var(--muted)';
-      
-      // Créer un nouveau timer (debounce 2s)
-      const timer = setTimeout(async () => {
-        try {
-          // Vérifier si une entreprise est sélectionnée
-          let companyId = qs('#questions-target-company')?.value;
-          
-          if (!companyId) {
-            // Afficher le modal
-            showCompanySelectModal(itemId, questionId, questionText);
-            statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
-            statusIndicator.style.color = 'var(--copper)';
-            return;
-          }
-          
-          // Sauvegarder
-          if (questionId) {
-            await api(`/question-config/question/${questionId}`, {
-              method: 'PUT',
-              body: { 
-                question_text: questionText,
-                company_id: parseInt(companyId)
-              }
-            });
-          } else {
-            const result = await api('/question-config/question', {
-              method: 'POST',
-              body: {
-                lot_id: currentLot.id,
-                round_id: currentRound.id,
-                item_id: parseInt(itemId),
-                company_id: parseInt(companyId),
-                question_text: questionText,
-                question_type: 'manual',
-                status: 'pending'
-              }
-            });
-            
-            // Mettre à jour le data-question-id après création
-            const row = textarea.closest('tr');
-            if (result && result.id) {
-              row.dataset.questionId = result.id;
-              textarea.dataset.questionId = result.id;
-            }
-          }
-          
-          // Afficher le succès
-          statusIndicator.innerHTML = icon('check', 'icon-only');
-          statusIndicator.style.color = 'var(--success)';
-          
-          // Cacher après 2s
-          setTimeout(() => {
-            statusIndicator.style.display = 'none';
-          }, 2000);
-          
-          // Rafraîchir les fiches questions
-          await refreshQuestions();
-          
-        } catch (err) {
-          console.error('Erreur auto-save:', err);
-          statusIndicator.innerHTML = icon('x', 'icon-only');
-          statusIndicator.style.color = 'var(--danger)';
-        }
-      }, 2000);
-      
-      saveTimers.set(itemId, timer);
+
+      markQuestionAsChanged({
+        itemId: String(itemId),
+        questionId: questionId ? Number(questionId) : null,
+        companyId: Number(companyId),
+        questionText,
+      });
     });
   });
   
-  // Supprimer une question
-  qsa('.btn-delete-editor-question').forEach(btn => {
+  // Valider une question
+  qsa('.btn-validate-editor-question').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      const questionId = e.target.dataset.questionId;
-      
-      if (!confirm('Supprimer cette question ?')) return;
-      
+      const currentBtn = e.currentTarget;
+      const itemId = Number(currentBtn.dataset.itemId);
+      let questionId = currentBtn.dataset.questionId ? Number(currentBtn.dataset.questionId) : null;
+      const isValidated = currentBtn.dataset.isValidated === '1';
       try {
-        await api(`/question-config/question/${questionId}`, {
-          method: 'DELETE'
-        });
-        
-        showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
+        if (isValidated) {
+          if (!questionId) {
+            showNotify({ title:'Validation', message:'Aucune fiche à dévalider', type:'info' });
+            return;
+          }
+          await api(`/question-config/question/${questionId}`, {
+            method: 'PUT',
+            body: { status: 'pending' }
+          });
+          await loadQuestionsEditor();
+          await refreshQuestions();
+          return;
+        }
+
+        const textarea = qs(`.question-text-editor[data-item-id="${itemId}"]`);
+        const questionText = textarea?.value?.trim() || '';
+        if (!questionText) {
+          showNotify({ title:'Validation', message:'Saisissez une question avant de valider', type:'info' });
+          return;
+        }
+
+        const row = qs(`#questions-editor-body tr[data-item-id="${itemId}"]`);
+        const companyId = Number(qs('#questions-target-company')?.value || row?.dataset.questionCompanyId || 0);
+        if (!companyId) {
+          showNotify({ title:'Validation', message:'Sélectionnez une entreprise ciblée avant de valider', type:'info' });
+          return;
+        }
+
+        const saveResult = await saveQuestionWithCompany(
+          itemId,
+          questionId,
+          companyId,
+          questionText,
+          { refreshList: false, silentError: true }
+        );
+
+        questionId = Number(saveResult?.id || questionId);
+        if (!questionId) {
+          throw new Error('Impossible de sauvegarder la fiche avant validation');
+        }
+
+        await api(`/question-config/question/${questionId}/validate`, { method: 'PUT' });
         await loadQuestionsEditor();
         await refreshQuestions();
-        
       } catch (err) {
         showNotify({ title:'Erreur', message: err.message, type:'error' });
       }
     });
   });
+
+  // Supprimer une question
+  qsa('.btn-delete-editor-question').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const questionId = e.currentTarget.dataset.questionId;
+      
+      showDeleteConfirmation({
+        title: 'Supprimer une fiche question',
+        message: 'Êtes-vous sûr de vouloir supprimer cette fiche question ?',
+        extra: '<strong>⚠️ Attention:</strong> Les réponses des entreprises seront perdues. Cette action ne peut pas être annulée.',
+        onConfirm: async () => {
+          try {
+            await api(`/question-config/question/${questionId}`, {
+              method: 'DELETE'
+            });
+            
+            showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
+            await loadQuestionsEditor();
+            await refreshQuestions();
+            
+          } catch (err) {
+            showNotify({ title:'Erreur', message: err.message, type:'error' });
+          }
+        }
+      });
+    });
+  });
+}
+
+async function validateAllQuestionsEditor() {
+  if (isVisionneur() || isEntreprise()) {
+    showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas valider les fiches questions.', type:'error' });
+    return;
+  }
+  if (!currentLot || !currentRound) return;
+
+  const selectedCompanyId = qs('#questions-target-company')?.value || '';
+  const selectedCompanyName = selectedCompanyId
+    ? (qs('#questions-target-company')?.selectedOptions?.[0]?.textContent || 'Entreprise ciblée')
+    : null;
+
+  try {
+    const params = new URLSearchParams({ round_id: String(currentRound.id) });
+    if (selectedCompanyId) params.set('company_id', selectedCompanyId);
+    await api(`/question-config/lot/${currentLot.id}/validate?${params.toString()}`, { method: 'PUT' });
+    await loadQuestionsEditor();
+    await refreshQuestions();
+  } catch (err) {
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
+  }
+}
+
+let hasUnsavedQuestionChanges = false;
+let isQuestionSaving = false;
+const pendingQuestionSaves = new Map();
+
+function markQuestionAsChanged(change) {
+  hasUnsavedQuestionChanges = true;
+  pendingQuestionSaves.set(String(change.itemId), change);
+  debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 800);
+}
+
+async function autoSaveQuestionsEditor() {
+  if (isQuestionSaving || pendingQuestionSaves.size === 0) return;
+  if (!currentLot || !currentRound) return;
+
+  isQuestionSaving = true;
+  let hasSavedAtLeastOne = false;
+
+  try {
+    const changes = Array.from(pendingQuestionSaves.values());
+    for (const change of changes) {
+      const textarea = qs(`.question-text-editor[data-item-id="${change.itemId}"]`);
+      const statusIndicator = qs(`.save-status[data-item-id="${change.itemId}"]`);
+      if (!textarea || !statusIndicator) {
+        if (pendingQuestionSaves.get(String(change.itemId)) === change) {
+          pendingQuestionSaves.delete(String(change.itemId));
+        }
+        continue;
+      }
+
+      const currentQuestionText = textarea.value.trim();
+      if (!currentQuestionText) {
+        if (pendingQuestionSaves.get(String(change.itemId)) === change) {
+          pendingQuestionSaves.delete(String(change.itemId));
+        }
+        statusIndicator.style.display = 'none';
+        continue;
+      }
+
+      const questionId = textarea.dataset.questionId ? Number(textarea.dataset.questionId) : null;
+      const companyId = qs('#questions-target-company')?.value || String(change.companyId || '');
+      if (!companyId) {
+        statusIndicator.style.display = 'block';
+        statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+        statusIndicator.style.color = 'var(--copper)';
+        continue;
+      }
+
+      await saveQuestionWithCompany(
+        change.itemId,
+        questionId,
+        Number(companyId),
+        currentQuestionText,
+        { refreshList: false, silentError: true, showLoader: false }
+      );
+
+      if (pendingQuestionSaves.get(String(change.itemId)) === change) {
+        pendingQuestionSaves.delete(String(change.itemId));
+      }
+      hasSavedAtLeastOne = true;
+
+      statusIndicator.style.display = 'block';
+      statusIndicator.innerHTML = icon('check', 'icon-only');
+      statusIndicator.style.color = 'var(--success)';
+      setTimeout(() => {
+        statusIndicator.style.display = 'none';
+      }, 2000);
+    }
+
+    hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
+    if (hasSavedAtLeastOne) {
+      await refreshQuestions({ silent: true });
+    }
+  } catch (err) {
+    console.error('Erreur autosave editeur questions:', err);
+  } finally {
+    isQuestionSaving = false;
+    if (pendingQuestionSaves.size > 0) {
+      debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 100);
+    }
+  }
 }
 
 // Fonction pour afficher le modal de sélection d'entreprise
@@ -3409,6 +5033,57 @@ function showCompanySelectModal(itemId, questionId, questionText) {
 }
 
 // Fonction pour sauvegarder une question avec l'entreprise
+async function saveQuestionWithCompany(itemId, questionId, companyId, questionText, options = {}) {
+  const { refreshList = true, silentError = false, showLoader = true } = options;
+
+  if (!currentLot || !currentRound) return null;
+
+  const safeItemId = Number(itemId);
+  const safeCompanyId = Number(companyId);
+  if (!Number.isFinite(safeItemId) || !Number.isFinite(safeCompanyId)) {
+    throw new Error('Parametres invalides pour la sauvegarde de question');
+  }
+
+  let result;
+  if (questionId) {
+    result = await api(`/question-config/question/${questionId}`, {
+      method: 'PUT',
+      body: {
+        question_text: String(questionText || '').trim(),
+        company_id: safeCompanyId,
+      },
+      showLoader,
+    });
+  } else {
+    result = await api('/question-config/question', {
+      method: 'POST',
+      body: {
+        lot_id: currentLot.id,
+        round_id: currentRound.id,
+        item_id: safeItemId,
+        company_id: safeCompanyId,
+        question_text: String(questionText || '').trim(),
+        question_type: 'manual',
+        status: 'pending',
+      },
+      showLoader,
+    });
+  }
+
+  const row = qs(`#questions-editor-body tr[data-item-id="${safeItemId}"]`);
+  const textarea = qs(`.question-text-editor[data-item-id="${safeItemId}"]`);
+  if (result?.id && row && textarea) {
+    row.dataset.questionId = result.id;
+    row.dataset.questionCompanyId = safeCompanyId;
+    textarea.dataset.questionId = result.id;
+  }
+
+  if (refreshList) {
+    await refreshQuestions();
+  }
+
+  return result;
+}
 
 /* ================= Comparatif (lecture) ================= */
 function fmtPct(p){ if (p==null || isNaN(p)) return ''; const cls = p>0?'delta-neg':(p<0?'delta-pos':''); const s=(p>0?'+':'')+p.toFixed(1)+'%'; return `<span class="${cls}">${s}</span>`; }
@@ -3424,12 +5099,12 @@ function fmtEuro(v){
   return n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-async function refreshCompare(){
+async function refreshCompare({ silent = false } = {}){
   try {
     if (!currentLot) return;
     const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
     
-    const data = await api('/lots/'+currentLot.id+'/table'+roundParam);
+    const data = await api('/lots/'+currentLot.id+'/table'+roundParam, { showLoader: !silent });
     const entrepriseMode = isEntreprise();
     
     // Vérifier si l'utilisateur entreprise a des données
@@ -3495,7 +5170,8 @@ async function refreshCompare(){
     for (const c of r.companies){
       if (entrepriseMode) {
         // Sans les colonnes ΔQté et ΔPU
-        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td>`;
+        const commentBadge = offerCommentBadgeHtml(c.comment, c.color, c.name);
+        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}${commentBadge}</td>`;
       } else {
         // Calculer delta quantité (MOE - Offre)
         const moeQty = parseNum(r.moe.qty);
@@ -3503,7 +5179,8 @@ async function refreshCompare(){
         const deltaQty = (moeQty !== null && offerQty !== null) ? moeQty - offerQty : null;
         const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
         
-        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+        const commentBadge = offerCommentBadgeHtml(c.comment, c.color, c.name);
+        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}${commentBadge}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
       }
       
       // Accumuler le total par entreprise
@@ -3637,8 +5314,12 @@ function recalcCompareHeaderOffsets(){
 window.addEventListener('resize', () => {
   // Recalcule l'offset en cas de changement de taille/zoom
   recalcCompareHeaderOffsets();
+  recalcQuestionsHeaderOffsets();
 });
-window.addEventListener('load', recalcCompareHeaderOffsets);
+window.addEventListener('load', () => {
+  recalcCompareHeaderOffsets();
+  recalcQuestionsHeaderOffsets();
+});
 
 /* ================= Tableur (édition) ================= */
 /** Rendu du comparatif des options sous le tableau principal */
@@ -3727,114 +5408,404 @@ function renderOptionsCompareTable(companies, entrepriseMode){
   body.insertAdjacentHTML('beforeend', totalRow);
 }
 
-  /** Rendu du tableau d'édition des options sous le tableau principal */
+  /** ======= Options Sheet — Model-based (like main table) ======= */
+  let optionsColModel = [];
+  let optionsSheetRows = [];
   let optionsSheetDelegatesAttached = false;
+  let hasUnsavedOptionsChanges = false;
+  let isSavingOptions = false;
+  let _optionsChangeGen = 0;
+
+  function buildOptionsColModel(){
+    const entrepriseMode = isEntreprise();
+    optionsColModel = [
+      { key:'num',        editable:true },
+      { key:'designation',editable:true, wide:true },
+      { key:'unit',       editable:true }
+    ];
+    if (!entrepriseMode){
+      optionsColModel.push(
+        { key:'moe.qty', editable:true,  cls:'moe-col' },
+        { key:'moe.pu',  editable:true,  cls:'moe-col' },
+        { key:'moe.mt',  editable:false, cls:'moe-col' }
+      );
+    }
+    for (const c of lotCompanies){
+      optionsColModel.push({ key:`c.${c.id}.u`,   editable:true  });
+      optionsColModel.push({ key:`c.${c.id}.qty`, editable:true  });
+      optionsColModel.push({ key:`c.${c.id}.pu`,  editable:true  });
+      optionsColModel.push({ key:`c.${c.id}.mt`,  editable:false });
+    }
+  }
+
+  function buildOptionsSheetModel(){
+    optionsSheetRows = [];
+    for (const opt of lotOptions){
+      for (const item of (opt.items || [])){
+        const row = {
+          item_id: Number(item.id),
+          option_id: Number(opt.id),
+          option_designation: opt.designation || '',
+          num: item.num || '',
+          designation: item.designation || '',
+          unit: item.unit || '',
+          moe: {
+            qty: item.moe_qty != null ? String(item.moe_qty) : '',
+            pu: item.moe_unit_price != null ? String(item.moe_unit_price) : ''
+          },
+          offers: {}
+        };
+        for (const c of lotCompanies){
+          const off = (item.offers || []).find(o => Number(o.company_id) === Number(c.id)) || {};
+          row.offers[c.id] = {
+            u: off.unit != null ? String(off.unit) : '',
+            qty: off.qty != null ? String(off.qty) : '',
+            pu: off.unit_price != null ? String(off.unit_price) : ''
+          };
+        }
+        optionsSheetRows.push(row);
+      }
+    }
+  }
+
+  function optionsValueForCell(row, key){
+    if (!row) return '';
+    if (key === 'num') return formatOptionNum(row.num);
+    if (key === 'designation') return `${row.option_designation} — ${row.designation}`;
+    if (key === 'unit') return row.unit ?? '';
+    if (key === 'moe.qty') return row.moe?.qty ?? '';
+    if (key === 'moe.pu')  return row.moe?.pu  ?? '';
+    if (key === 'moe.mt')  return amountOf(row.moe?.qty, row.moe?.pu);
+    if (key.startsWith('c.')){
+      const [, cid, sub] = key.split('.');
+      const o = row.offers?.[cid] || {};
+      if (sub === 'mt') return amountOf(o.qty, o.pu);
+      return o[sub] ?? '';
+    }
+    return '';
+  }
+
+  function getOptionsCell(r, c){
+    const rowEl = qsa('#options-sheet-body tr')[r];
+    return rowEl ? rowEl.children[c] : null;
+  }
+
+  function setOptionsCell(r, c, text, updateDOM = true){
+    const td = getOptionsCell(r, c); if (!td) return;
+    if (updateDOM) td.textContent = text ?? '';
+    const key = optionsColModel[c]?.key;
+    const row = optionsSheetRows[r]; if (!row) return;
+    if (key === 'num') row.num = parseOptionNum(text);
+    else if (key === 'designation'){
+      let d = text || '';
+      const sep = '—';
+      if (d.includes(sep)) d = d.split(sep).slice(1).join(sep).trim();
+      row.designation = d;
+    }
+    else if (key === 'unit') row.unit = text;
+    else if (key === 'moe.qty') row.moe.qty = text;
+    else if (key === 'moe.pu')  row.moe.pu  = text;
+    else if (key.startsWith('c.')){
+      const [, cid, sub] = key.split('.');
+      row.offers[cid] = row.offers[cid] || { u:'', qty:'', pu:'' };
+      if (sub !== 'mt') row.offers[cid][sub] = text;
+    }
+  }
+
+  function recalcOptionsAmountsRow(r){
+    const cQty = optionsColModel.findIndex(c => c.key === 'moe.qty');
+    const cPu  = optionsColModel.findIndex(c => c.key === 'moe.pu');
+    const cMt  = optionsColModel.findIndex(c => c.key === 'moe.mt');
+    if (cQty>=0 && cPu>=0 && cMt>=0){
+      const mt = getOptionsCell(r, cMt);
+      if (mt) mt.textContent = amountOf(getOptionsCell(r,cQty)?.textContent.trim(), getOptionsCell(r,cPu)?.textContent.trim());
+    }
+    for (const c of lotCompanies){
+      const base = `c.${c.id}.`;
+      const ciQty = optionsColModel.findIndex(x => x.key === base+'qty');
+      const ciPu  = optionsColModel.findIndex(x => x.key === base+'pu');
+      const ciMt  = optionsColModel.findIndex(x => x.key === base+'mt');
+      if (ciQty>=0 && ciPu>=0 && ciMt>=0){
+        const mt = getOptionsCell(r, ciMt);
+        if (mt) mt.textContent = amountOf(getOptionsCell(r,ciQty)?.textContent.trim(), getOptionsCell(r,ciPu)?.textContent.trim());
+      }
+    }
+  }
+
+  function appendOptionsRowDOM(rIndex, data){
+    const tr = document.createElement('tr');
+    for (let c=0; c<optionsColModel.length; c++){
+      const col = optionsColModel[c];
+      const td = document.createElement('td');
+      td.dataset.r = String(rIndex);
+      td.dataset.c = String(c);
+      if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
+      if (col.wide) td.style.minWidth = '320px';
+      td.textContent = optionsValueForCell(data, col.key);
+      tr.appendChild(td);
+    }
+    qs('#options-sheet-body').appendChild(tr);
+  }
+
+  function ensureOptionsRows(n){
+    while (qsa('#options-sheet-body tr').length < n){
+      const lastRow = optionsSheetRows[optionsSheetRows.length - 1];
+      const optionId = lastRow?.option_id || lotOptions[0]?.id;
+      if (!optionId) break;
+      const blank = { item_id:null, option_id:optionId, option_designation: lotOptions.find(o=>o.id===optionId)?.designation||'', num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+      for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+      optionsSheetRows.push(blank);
+      const rIndex = optionsSheetRows.length - 1;
+      appendOptionsRowDOM(rIndex, blank);
+    }
+  }
+
+  function focusOptionsCell(r, c){
+    if (r < 0) r = 0;
+    if (c < 0) c = 0;
+    ensureOptionsRows(r+1);
+    if (c >= optionsColModel.length) c = optionsColModel.length - 1;
+    let guard = 0;
+    while (!optionsColModel[c]?.editable && guard++ < 100) c++;
+    if (c >= optionsColModel.length) c = optionsColModel.findIndex(x => x.editable);
+    const td = getOptionsCell(r, c);
+    if (td){
+      td.focus();
+      const range = document.createRange(); range.selectNodeContents(td); range.collapse(false);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    }
+  }
+
+  function markOptionsChanged(){
+    hasUnsavedOptionsChanges = true;
+    _optionsChangeGen++;
+    debounceAutoSave('options-grid', autoSaveOptionsGrid, 800);
+  }
+
+  async function autoSaveOptionsGrid(){
+    if (!currentLot || isSavingOptions || !hasUnsavedOptionsChanges) return;
+    isSavingOptions = true;
+    let genAtSaveStart = _optionsChangeGen;
+    try {
+      const rows = [];
+      for (let r=0; r<optionsSheetRows.length; r++){
+        const data = optionsSheetRows[r];
+        // Read current DOM values to ensure freshness
+        const getByKey = (key) => {
+          const c = optionsColModel.findIndex(x => x.key === key);
+          return c >= 0 ? (getOptionsCell(r, c)?.textContent.trim() ?? '') : '';
+        };
+        const num = parseOptionNum(getByKey('num'));
+        let designation = getByKey('designation');
+        const sep = '—';
+        if (designation.includes(sep)) designation = designation.split(sep).slice(1).join(sep).trim();
+        const unit = getByKey('unit');
+
+        const row = {
+          item_id: data.item_id || null,
+          option_id: data.option_id,
+          num, designation, unit,
+          moe: { qty: getByKey('moe.qty'), pu: getByKey('moe.pu') },
+          offers: {}
+        };
+        for (const c of lotCompanies){
+          const base = `c.${c.id}.`;
+          row.offers[c.id] = {
+            qty: getByKey(base+'qty'),
+            pu:  getByKey(base+'pu')
+          };
+        }
+        rows.push(row);
+      }
+
+      const result = await api(`/options/lot/${currentLot.id}/save-grid`, {
+        method:'POST',
+        body:{ rows, round_id: currentRound?.id },
+        showLoader: false
+      });
+
+      // Sync item IDs for newly created rows
+      if (result?.items) {
+        for (let i=0; i<Math.min(result.items.length, optionsSheetRows.length); i++){
+          if (result.items[i]?.id) optionsSheetRows[i].item_id = result.items[i].id;
+        }
+      }
+
+      if (_optionsChangeGen === genAtSaveStart) {
+        hasUnsavedOptionsChanges = false;
+      }
+      await refreshCompare({ silent: true });
+      console.log('Autosave options réussi');
+    } catch (err) {
+      console.error('Erreur autosave options:', err);
+    } finally {
+      isSavingOptions = false;
+      if (_optionsChangeGen !== genAtSaveStart) {
+        debounceAutoSave('options-grid', autoSaveOptionsGrid, 100);
+      }
+    }
+  }
+
+  function attachOptionsSheetDelegates(){
+    if (optionsSheetDelegatesAttached) return;
+    const body = qs('#options-sheet-body');
+    if (!body) return;
+
+    body.addEventListener('focusin', (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      td.dataset.prev = td.textContent;
+    });
+
+    body.addEventListener('input', (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      const r = Number(td.dataset.r), c = Number(td.dataset.c);
+      setOptionsCell(r, c, td.textContent.trim(), false);
+      recalcOptionsAmountsRow(r);
+      markOptionsChanged();
+    });
+
+    body.addEventListener('blur', (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      const prev = td.dataset.prev ?? '';
+      const now = td.textContent;
+      if (prev !== now) markOptionsChanged();
+    }, true);
+
+    body.addEventListener('keydown', async (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      const r = Number(td.dataset.r), c = Number(td.dataset.c);
+
+      const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
+      if (!navKeys.includes(e.key)) return;
+
+      let nr = r, nc = c;
+      if (e.key === 'ArrowLeft')  nc = Math.max(0, c - 1);
+      if (e.key === 'ArrowRight') nc = c + 1;
+      if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
+      if (e.key === 'ArrowDown')  nr = r + 1;
+      if (e.key === 'Tab')        nc = c + (e.shiftKey ? -1 : 1);
+
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        nr = r + 1;
+        // If last row, create a new option item
+        if (nr >= optionsSheetRows.length){
+          if (isVisionneur()) return;
+          const optionId = optionsSheetRows[r]?.option_id;
+          if (!optionId) return;
+          try {
+            const res = await api(`/options/${optionId}/items`, {
+              method:'POST',
+              body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null }
+            });
+            const newItem = { item_id: res.id, option_id: optionId, option_designation: optionsSheetRows[r]?.option_designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
+            for (const co of lotCompanies) newItem.offers[co.id] = { u:'', qty:'', pu:'' };
+            optionsSheetRows.push(newItem);
+            appendOptionsRowDOM(optionsSheetRows.length - 1, newItem);
+            // Update lotOptions model
+            const opt = lotOptions.find(o => Number(o.id) === Number(optionId));
+            if (opt) opt.items = [...(opt.items||[]), { id: res.id, num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null, offers:[] }];
+            setupOptionsSheetControls();
+          } catch (err) {
+            showNotify({ title:'Erreur', message: err.message, type:'error' });
+            return;
+          }
+        }
+        focusOptionsCell(nr, c);
+        return;
+      }
+
+      if (navKeys.includes(e.key)){
+        e.preventDefault();
+        focusOptionsCell(nr, nc);
+      }
+    }, true);
+
+    // Paste support
+    body.addEventListener('paste', (e) => {
+      const td = e.target.closest('td'); if (!td) return;
+      e.preventDefault();
+      const startR = Number(td.dataset.r), startC = Number(td.dataset.c);
+      const text = e.clipboardData.getData('text/plain') || '';
+      const delim = detectDelimiter(text);
+      const lines = text.replace(/\r/g,'').split('\n');
+      const grid = lines.map(l => l.split(delim));
+      ensureOptionsRows(startR + grid.length);
+      for (let i=0; i<grid.length; i++){
+        let col = startC;
+        for (let j=0; j<grid[i].length; j++){
+          let guard = 0;
+          while (col < optionsColModel.length && !optionsColModel[col].editable && guard++ < 100) col++;
+          if (col >= optionsColModel.length) break;
+          let val = String(grid[i][j]).trim();
+          const colKey = optionsColModel[col]?.key || '';
+          const isNum = colKey.includes('qty') || colKey.includes('pu');
+          if (isNum && val !== ''){ const p = parseNum(val); if (Number.isFinite(p)) val = String(p); }
+          setOptionsCell(startR+i, col, val, true);
+          col++;
+        }
+        recalcOptionsAmountsRow(startR + i);
+      }
+      markOptionsChanged();
+    }, true);
+
+    optionsSheetDelegatesAttached = true;
+  }
+
   function renderOptionsSheetTable(){
     const head = qs('#options-sheet-head');
     const body = qs('#options-sheet-body');
     if (!head || !body) return;
+
+    buildOptionsColModel();
+    buildOptionsSheetModel();
+
     head.innerHTML = '';
     body.innerHTML = '';
 
-    const entrepriseMode = isEntreprise();
-    const companies = lotCompanies || [];
-    // En édition: afficher toutes les options (pas uniquement cochées)
-    const items = [];
-    for (const opt of lotOptions){
-      for (const item of (opt.items || [])) items.push({ option: opt, item });
-    }
-    if (items.length === 0){
-      head.innerHTML = '';
+    if (optionsSheetRows.length === 0){
       body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Aucune option disponible</td></tr>';
       return;
     }
 
-    // En-tête similaire au tableur
+    // Header row 1: base cols (rowSpan=2) + company groups
     const tr1 = document.createElement('tr');
-    const baseHeaders = ['Num', 'Désignation', 'Unité'];
-    for (const h of baseHeaders){ const th = document.createElement('th'); th.textContent = h; th.rowSpan = 2; tr1.appendChild(th); }
-    if (!entrepriseMode){ const th = document.createElement('th'); th.textContent = 'MOE'; th.colSpan = 3; th.classList.add('moe-col'); tr1.appendChild(th); }
-    for (const c of companies){ const th = document.createElement('th'); th.textContent = c.name; th.colSpan = 4; th.classList.add('company-col'); tr1.appendChild(th); }
+    const baseCount = optionsColModel.findIndex(col => col.key.startsWith('c.'));
+    const actualBaseCount = baseCount === -1 ? optionsColModel.length : baseCount;
+    for (let i=0; i<actualBaseCount; i++){
+      const col = optionsColModel[i];
+      const th = document.createElement('th');
+      th.textContent = headerLabelFor(col.key);
+      th.rowSpan = 2;
+      if (col.cls) th.classList.add(col.cls);
+      tr1.appendChild(th);
+    }
+    for (let i=actualBaseCount; i<optionsColModel.length; i+=4){
+      const [, cid] = optionsColModel[i].key.split('.');
+      const th = document.createElement('th');
+      th.textContent = companyNameFor(cid);
+      th.colSpan = 4;
+      th.classList.add('company-col');
+      tr1.appendChild(th);
+    }
     head.appendChild(tr1);
+
+    // Header row 2: sub-columns per company
     const tr2 = document.createElement('tr');
-    if (!entrepriseMode){ ['Qté','PU','Mt'].forEach(t => { const th = document.createElement('th'); th.textContent = t; tr2.appendChild(th); }); }
-    for (let i=0;i<companies.length;i++){
-      ['Unité','Qté','PU','Mt'].forEach(t => { const th = document.createElement('th'); th.textContent = t; tr2.appendChild(th); });
+    for (let i=actualBaseCount; i<optionsColModel.length; i++){
+      const th = document.createElement('th');
+      th.textContent = headerLabelFor(optionsColModel[i].key);
+      tr2.appendChild(th);
     }
     head.appendChild(tr2);
 
-    // Corps: cellules éditables basiques
-    for (const { option: opt, item } of items){
-      const tr = document.createElement('tr');
-      tr.dataset.itemId = item.id;
-      // Num, Désignation (afficher option), Unité
-      const tdNum = document.createElement('td'); tdNum.contentEditable = true; tdNum.textContent = formatOptionNum(item.num); tr.appendChild(tdNum);
-      const tdDes = document.createElement('td'); tdDes.contentEditable = true; tdDes.textContent = `${opt.designation} — ${item.designation||''}`; tdDes.dataset.isOptionDesignation = 'true'; tr.appendChild(tdDes);
-      const tdUnit = document.createElement('td'); tdUnit.contentEditable = true; tdUnit.textContent = item.unit || ''; tr.appendChild(tdUnit);
-
-      // MOE
-      if (!entrepriseMode){
-        const tdMoeQty = document.createElement('td'); tdMoeQty.contentEditable = true; tdMoeQty.textContent = item.moe_qty ?? ''; tr.appendChild(tdMoeQty);
-        const tdMoePu  = document.createElement('td'); tdMoePu.contentEditable  = true; tdMoePu.textContent  = item.moe_unit_price ?? ''; tr.appendChild(tdMoePu);
-        const tdMoeMt  = document.createElement('td'); tdMoeMt.classList.add('cell-readonly'); tdMoeMt.textContent  = amountOf(item.moe_qty, item.moe_unit_price); tr.appendChild(tdMoeMt);
-      }
-
-      // Entreprises
-      for (const c of companies){
-        const off = (item.offers||[]).find(o => Number(o.company_id) === Number(c.id)) || {};
-        const tdCompanyUnit = document.createElement('td'); tdCompanyUnit.classList.add('cell-readonly'); tdCompanyUnit.textContent = ''; tr.appendChild(tdCompanyUnit);
-        const tdQty = document.createElement('td'); tdQty.contentEditable = true; tdQty.textContent = off.qty ?? ''; tdQty.dataset.companyId = String(c.id); tdQty.dataset.sub = 'qty'; tr.appendChild(tdQty);
-        const tdPu  = document.createElement('td'); tdPu.contentEditable  = true; tdPu.textContent  = off.unit_price ?? ''; tdPu.dataset.companyId = String(c.id); tdPu.dataset.sub = 'pu'; tr.appendChild(tdPu);
-        const tdMt  = document.createElement('td'); tdMt.classList.add('cell-readonly'); tdMt.textContent  = amountOf(off.qty, off.unit_price); tr.appendChild(tdMt);
-      }
-      body.appendChild(tr);
+    // Body rows
+    for (let r=0; r<optionsSheetRows.length; r++){
+      appendOptionsRowDOM(r, optionsSheetRows[r]);
     }
 
-    // Délégation simple pour sauvegarder sur blur
-    if (!optionsSheetDelegatesAttached){
-      optionsSheetDelegatesAttached = true;
-      body.addEventListener('blur', async (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      const tr = td.closest('tr'); const itemId = tr?.dataset.itemId; if (!itemId) return;
-      const cols = Array.from(tr.children);
-      const num = parseOptionNum(cols[0].textContent.trim());
-      const fullDes = cols[1].textContent.trim();
-      const unit = cols[2].textContent.trim();
-      let designation = fullDes;
-      // retirer préfixe option "Option — ..."
-      const sep = '—'; if (designation.includes(sep)) designation = designation.split(sep).slice(1).join(sep).trim();
-
-      // MOE
-      let moe_qty = null, moe_unit_price = null;
-      let shift = 3;
-      if (!entrepriseMode){
-        moe_qty = cols[3].textContent.trim() || null;
-        moe_unit_price = cols[4].textContent.trim() || null;
-        shift = 6; // after MOE mt
-        // Sauvegarder item + MOE
-        await api(`/options/items/${itemId}`, { method:'PUT', body:{ num, designation, unit, moe_qty: moe_qty ? parseFloat(moe_qty) : null, moe_unit_price: moe_unit_price ? parseFloat(moe_unit_price) : null } });
-      } else {
-        // Sauvegarder item sans MOE
-        await api(`/options/items/${itemId}`, { method:'PUT', body:{ num, designation, unit } });
-      }
-
-      // Entreprises offers
-      const companyColCount = 4;
-      for (let i=shift;i<cols.length;i++){
-        const cell = cols[i]; if (!cell.dataset.companyId) continue;
-        const company_id = Number(cell.dataset.companyId);
-        const offRow = Math.floor((i - shift) / companyColCount);
-        const baseIndex = shift + offRow * companyColCount;
-        const qty = cols[baseIndex + 1].textContent.trim() || null;
-        const pu  = cols[baseIndex + 2].textContent.trim() || null;
-        await api(`/options/items/${itemId}/offers`, { method:'POST', body:{ company_id, qty: qty ? parseFloat(qty) : null, unit_price: pu ? parseFloat(pu) : null, round_id: currentRound?.id } });
-      }
-
-        // Recalcul local
-        renderOptionsSheetTable();
-        await refreshCompare();
-      }, true);
-    }
+    attachOptionsSheetDelegates();
+    for (let r=0; r<optionsSheetRows.length; r++) recalcOptionsAmountsRow(r);
   }
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
@@ -3881,6 +5852,7 @@ function buildSheetModel(raw){
 
   buildColModel();
   renderSheetInitial();
+  updateSheetLegend();
 }
 
 function buildColModel(){
@@ -4003,16 +5975,30 @@ function appendRowDOM(rIndex, data){
       const o = data.offers?.[cid] || {};
       const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
       const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      const isUnexpected = isOfferUnexpected(moeHasTotal, o.qty, o.pu);
       const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : (o.comment || '');
       td.innerHTML = amountCellHtml(o.qty, o.pu, cellComment);
-      if (isUnanswered) applyUnansweredStyle(td, unansweredConfig.color);
+      if (isUnanswered) {
+        applyUnansweredStyle(td, unansweredConfig.color);
+        if (unansweredConfig.comment) td.title = unansweredConfig.comment;
+      } else if (isUnexpected) {
+        applyUnansweredStyle(td, unexpectedAnswerMarker.color);
+        td.title = unexpectedAnswerMarker.label;
+      }
     } else if (col.key.startsWith('c.')) {
       const [, cid] = col.key.split('.');
       const o = data.offers?.[cid] || {};
       const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
       const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      const isUnexpected = isOfferUnexpected(moeHasTotal, o.qty, o.pu);
       td.textContent = valueForCell(data, col.key);
-      if (isUnanswered) applyUnansweredStyle(td, unansweredConfig.color);
+      if (isUnanswered) {
+        applyUnansweredStyle(td, unansweredConfig.color);
+        if (unansweredConfig.comment) td.title = unansweredConfig.comment;
+      } else if (isUnexpected) {
+        applyUnansweredStyle(td, unexpectedAnswerMarker.color);
+        td.title = unexpectedAnswerMarker.label;
+      }
     } else {
       td.textContent = valueForCell(data, col.key);
     }
@@ -4108,18 +6094,39 @@ function recalcRowAmountsRow(r){
       if (mt) {
         const existingComment = sheetRows[r]?.offers?.[c.id]?.comment || '';
         const isUnanswered = moeHasTotal && isOfferUnanswered(qty, pu);
+        const isUnexpected = isOfferUnexpected(moeHasTotal, qty, pu);
         const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : existingComment;
         mt.innerHTML = amountCellHtml(qty, pu, cellComment);
         if (isUnanswered) {
           applyUnansweredStyle(mt, unansweredConfig.color);
+          mt.title = unansweredConfig.comment || '';
+        } else if (isUnexpected) {
+          applyUnansweredStyle(mt, unexpectedAnswerMarker.color);
+          mt.title = unexpectedAnswerMarker.label;
         } else {
           removeUnansweredStyle(mt);
+          mt.title = '';
         }
         const qtyCell = getCell(r, ciQty);
         const puCell  = getCell(r, ciPu);
-        if (qtyCell) { if (isUnanswered) applyUnansweredStyle(qtyCell, unansweredConfig.color); else removeUnansweredStyle(qtyCell); }
-        if (puCell)  { if (isUnanswered) applyUnansweredStyle(puCell, unansweredConfig.color);  else removeUnansweredStyle(puCell); }
-        if (ciU >= 0) { const uCell = getCell(r, ciU); if (uCell) { if (isUnanswered) applyUnansweredStyle(uCell, unansweredConfig.color); else removeUnansweredStyle(uCell); } }
+        if (qtyCell) {
+          if (isUnanswered) { applyUnansweredStyle(qtyCell, unansweredConfig.color); qtyCell.title = unansweredConfig.comment || ''; }
+          else if (isUnexpected) { applyUnansweredStyle(qtyCell, unexpectedAnswerMarker.color); qtyCell.title = unexpectedAnswerMarker.label; }
+          else { removeUnansweredStyle(qtyCell); qtyCell.title = ''; }
+        }
+        if (puCell)  {
+          if (isUnanswered) { applyUnansweredStyle(puCell, unansweredConfig.color); puCell.title = unansweredConfig.comment || ''; }
+          else if (isUnexpected) { applyUnansweredStyle(puCell, unexpectedAnswerMarker.color); puCell.title = unexpectedAnswerMarker.label; }
+          else { removeUnansweredStyle(puCell); puCell.title = ''; }
+        }
+        if (ciU >= 0) {
+          const uCell = getCell(r, ciU);
+          if (uCell) {
+            if (isUnanswered) { applyUnansweredStyle(uCell, unansweredConfig.color); uCell.title = unansweredConfig.comment || ''; }
+            else if (isUnexpected) { applyUnansweredStyle(uCell, unexpectedAnswerMarker.color); uCell.title = unexpectedAnswerMarker.label; }
+            else { removeUnansweredStyle(uCell); uCell.title = ''; }
+          }
+        }
       }
     }
   }
@@ -4268,9 +6275,11 @@ function detectDelimiter(sample){
 /* ====== Indicateur changements non sauvegardés ====== */
 let hasUnsavedChanges = false;
 let isSaving = false;
+let _gridChangeGen = 0;
 
 function markAsChanged() {
   hasUnsavedChanges = true;
+  _gridChangeGen++;
   updateSaveButton();
   // Déclencher autosave avec debounce
   debounceAutoSave('grid', autoSaveGrid, 800);
@@ -4337,20 +6346,36 @@ function renderLotCompanies(){
         }
       });
       chip.querySelector('button').addEventListener('click', async () => {
-        if (!confirm(`Supprimer l'entreprise "${c.name}" ?\n\nToutes les offres et postes ajoutés par cette entreprise seront également supprimés.`)) {
-          return;
-        }
-        try {
-          await api(`/lots/${currentLot.id}/companies/${c.id}`, { method:'DELETE' });
-          lotCompanies = lotCompanies.filter(x => x.id !== c.id);
-          for (const r of sheetRows) delete r.offers[c.id];
-          renderLotCompanies();
-          buildColModel();
-          renderSheetInitial();
-          refreshCompare();
-        } catch (err) {
-          showNotify({ title:'Erreur', message:'Suppression entreprise: ' + err.message, type:'error' });
-        }
+        const companyName = c.name;
+        const companyId = c.id;
+        
+        showDeleteConfirmation({
+          title: 'Supprimer une entreprise',
+          message: `Êtes-vous sûr de vouloir supprimer l'entreprise "${companyName}" ?`,
+          extra: '<strong>⚠️ Attention:</strong> Toutes les offres et postes ajoutés par cette entreprise seront également supprimés. Cette action ne peut pas être annulée.',
+          onConfirm: async () => {
+            try {
+              await api(`/lots/${currentLot.id}/companies/${companyId}`, { method:'DELETE' });
+              lotCompanies = lotCompanies.filter(x => x.id !== companyId);
+              const removedRowsCount = sheetRows.filter(r => Number(r?.source_company_id) === Number(companyId)).length;
+              sheetRows = sheetRows.filter(r => Number(r?.source_company_id) !== Number(companyId));
+              for (const r of sheetRows) delete r.offers[companyId];
+              if (sheetRows.length === 0) {
+                const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+                for (const lc of lotCompanies) blank.offers[lc.id] = { u:'', qty:'', pu:'' };
+                sheetRows.push(blank);
+              }
+              renderLotCompanies();
+              buildColModel();
+              renderSheetInitial();
+              refreshCompare();
+              const suffix = removedRowsCount > 0 ? ` (${removedRowsCount} article${removedRowsCount > 1 ? 's' : ''} supprimé${removedRowsCount > 1 ? 's' : ''})` : '';
+              showNotify({ title: 'Succès', message: `Entreprise supprimée avec succès${suffix}`, type: 'success' });
+            } catch (err) {
+              showNotify({ title:'Erreur', message:'Suppression entreprise: ' + err.message, type:'error' });
+            }
+          }
+        });
       });
     } else {
       chip.textContent = c.name;
@@ -4370,6 +6395,7 @@ function addRow(){
 async function autoSaveGrid(){
   // Version silencieuse et automatique de saveGrid()
   if (!currentLot || isSaving) return;
+  let genAtSaveStart = _gridChangeGen;
   
   try {
     const rows = [];
@@ -4430,6 +6456,7 @@ async function autoSaveGrid(){
     if (isSaving) return;
 
     isSaving = true;
+    genAtSaveStart = _gridChangeGen;
     
     // Sauvegarde silencieuse en arrière-plan
     const result = await api(`/lots/${currentLot.id}/save-grid`, { 
@@ -4448,9 +6475,11 @@ async function autoSaveGrid(){
     }
     
     // Rafraîchir sans bruit
-    await refreshCompare();
+    await refreshCompare({ silent: true });
     
-    hasUnsavedChanges = false;
+    if (_gridChangeGen === genAtSaveStart) {
+      hasUnsavedChanges = false;
+    }
     updateSaveButton();
     
     console.log('Autosave grille réussi');
@@ -4459,6 +6488,9 @@ async function autoSaveGrid(){
     // Garder les changements non sauvegardés visibles
   } finally {
     isSaving = false;
+    if (_gridChangeGen !== genAtSaveStart) {
+      debounceAutoSave('grid', autoSaveGrid, 100);
+    }
   }
 }
 
@@ -4533,6 +6565,7 @@ async function saveGrid(){
 
   try {
     isSaving = true;
+    const genAtSaveStart = _gridChangeGen;
     
     // Sauvegarde en arrière-plan sans loader
     const result = await api(`/lots/${currentLot.id}/save-grid`, { 
@@ -4552,7 +6585,7 @@ async function saveGrid(){
     }
     
     // Rafraîchir uniquement le comparatif (vue lecture seule)
-    await refreshCompare();
+    await refreshCompare({ silent: true });
     
     // Le récapitulatif par tour a été supprimé; plus de rafraîchissement dédié
     
@@ -4562,7 +6595,9 @@ async function saveGrid(){
       await loadRoundsComparison();
     }
     
-    hasUnsavedChanges = false;
+    if (_gridChangeGen === genAtSaveStart) {
+      hasUnsavedChanges = false;
+    }
     updateSaveButton();
     
     console.log('Sauvegarde réussie');
@@ -4571,6 +6606,10 @@ async function saveGrid(){
     showNotify({ title:'Erreur', message:'Sauvegarde grille: ' + err.message, type:'error' });
   } finally {
     isSaving = false;
+    // Si de nouveaux changements sont arrivés pendant la sauvegarde, replanifier
+    if (_gridChangeGen !== genAtSaveStart) {
+      debounceAutoSave('grid', autoSaveGrid, 100);
+    }
   }
 }
 
@@ -4647,14 +6686,22 @@ function renderSheetBindings(){
 
   // ======== Smart Import (DPGF / Offre) ========
   bindSmartImport();
+  // ======== Import DPGF → Création automatique de lots ========
+  bindImportDpgfLots();
 }
 
 /* ================== SMART IMPORT (DPGF / Offre) ================== */
 let importState = {
   mode: 'dpgf',   // 'dpgf' | 'offer'
   file: null,
+  files: [],
+  fileConfigs: [],
+  globalMapping: null,
+  activeFileIndex: 0,
   preview: null,
   mapping: {},
+  excludedRows: new Set(),
+  autoExcludedRows: new Set(),
   fileId: null,
 };
 
@@ -4672,20 +6719,351 @@ function bindSmartImport() {
   const confirmBtn  = qs('#import-confirm');
   const cancelBtn   = qs('#import-cancel');
   const doneBtn     = qs('#import-done');
+  const goStep2Btn  = qs('#import-go-step2');
   const sheetSelect = qs('#import-sheet-select');
   const headerRowInput = qs('#import-header-row');
+  const fileNavWrap = qs('#import-file-nav');
+  const prevFileBtn = qs('#import-prev-file');
+  const nextFileBtn = qs('#import-next-file');
+  const currentFileLabel = qs('#import-current-file');
 
   if (!modal || !openBtn) return;
 
+  function getSelectedImportFiles() {
+    if (Array.isArray(importState.files) && importState.files.length > 0) return importState.files;
+    return importState.file ? [importState.file] : [];
+  }
+
+  function getActiveImportFile() {
+    const files = getSelectedImportFiles();
+    if (!files.length) return null;
+    const idx = Math.max(0, Math.min(importState.activeFileIndex || 0, files.length - 1));
+    return files[idx] || null;
+  }
+
+  function isBatchOfferImport() {
+    return importState.mode === 'offer' && getSelectedImportFiles().length > 1;
+  }
+
+  function deriveCompanyNameFromFile(fileName) {
+    return (fileName || '')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[_.-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Entreprise';
+  }
+
+  function cloneMapping(mapping) {
+    const m = { ...(mapping || {}) };
+    if (Array.isArray(m.num)) m.num = [...m.num];
+    if (Array.isArray(m.designation)) m.designation = [...m.designation];
+    return m;
+  }
+
+  function normalizeMappingShape(mapping) {
+    const m = cloneMapping(mapping);
+    if (m.num != null && !Array.isArray(m.num)) m.num = [m.num];
+    if (m.designation != null && !Array.isArray(m.designation)) m.designation = [m.designation];
+    return m;
+  }
+
+  function applyAutoExcludeRowsBeforeFirstArticle() {
+    const previewRows = importState.preview?.previewRows;
+    const excluded = importState.excludedRows instanceof Set ? importState.excludedRows : new Set();
+    const previousAuto = importState.autoExcludedRows instanceof Set ? importState.autoExcludedRows : new Set();
+
+    for (const rowNum of previousAuto) {
+      excluded.delete(rowNum);
+    }
+
+    const rawNumMapping = importState.mapping?.num;
+    const numCols = (Array.isArray(rawNumMapping) ? rawNumMapping : [rawNumMapping])
+      .map(Number)
+      .filter(Number.isFinite);
+
+    if (!Array.isArray(previewRows) || previewRows.length === 0 || numCols.length === 0) {
+      importState.autoExcludedRows = new Set();
+      importState.excludedRows = excluded;
+      return;
+    }
+
+    const firstArticle = previewRows.find((row) =>
+      numCols.some((colIdx) => {
+        const val = row?.[colIdx];
+        return val != null && String(val).trim() !== '';
+      })
+    );
+
+    const firstArticleRowNum = Number(firstArticle?._rowNum);
+    if (!Number.isFinite(firstArticleRowNum)) {
+      importState.autoExcludedRows = new Set();
+      importState.excludedRows = excluded;
+      return;
+    }
+
+    const nextAuto = new Set();
+    for (const row of previewRows) {
+      const rowNum = Number(row?._rowNum);
+      if (!Number.isFinite(rowNum)) continue;
+      if (rowNum < firstArticleRowNum) {
+        excluded.add(rowNum);
+        nextAuto.add(rowNum);
+      }
+    }
+
+    importState.autoExcludedRows = nextAuto;
+    importState.excludedRows = excluded;
+  }
+
+  function ensureFileConfigs() {
+    const files = getSelectedImportFiles();
+    while (importState.fileConfigs.length < files.length) {
+      importState.fileConfigs.push({
+        mapping: null,
+        excludedRows: [],
+        headerRow: null,
+        sheetName: null,
+        fileId: null,
+        companyId: null,
+        companyName: '',
+      });
+    }
+    if (importState.fileConfigs.length > files.length) {
+      importState.fileConfigs = importState.fileConfigs.slice(0, files.length);
+    }
+  }
+
+  function getFileConfig(index = importState.activeFileIndex || 0) {
+    ensureFileConfigs();
+    return importState.fileConfigs[index] || null;
+  }
+
+  function persistActiveFileConfig(setGlobalIfMissing = true) {
+    const idx = Math.max(0, importState.activeFileIndex || 0);
+    const cfg = getFileConfig(idx);
+    if (!cfg) return;
+
+    cfg.mapping = normalizeMappingShape(importState.mapping || {});
+    cfg.excludedRows = [...(importState.excludedRows || new Set())].filter(v => typeof v === 'number');
+    cfg.headerRow = importState.preview?.headerRow || cfg.headerRow || null;
+    cfg.sheetName = importState.preview?.selectedSheet || cfg.sheetName || null;
+    cfg.fileId = importState.fileId || null;
+
+    if (setGlobalIfMissing && !importState.globalMapping && Object.keys(cfg.mapping || {}).length > 0) {
+      importState.globalMapping = cloneMapping(cfg.mapping);
+      for (let i = 0; i < importState.fileConfigs.length; i += 1) {
+        if (!importState.fileConfigs[i].mapping) {
+          importState.fileConfigs[i].mapping = cloneMapping(importState.globalMapping);
+        }
+      }
+    }
+  }
+
+  function removeFileFromImport(fileIndex) {
+    if (importState.files.length > fileIndex) {
+      persistActiveFileConfig(false);
+      importState.files.splice(fileIndex, 1);
+      if (importState.fileConfigs.length > fileIndex) {
+        importState.fileConfigs.splice(fileIndex, 1);
+      }
+      if (importState.activeFileIndex >= importState.files.length) {
+        importState.activeFileIndex = Math.max(0, importState.files.length - 1);
+      }
+      importState.file = importState.files[0] || null;
+      importState.fileId = null;
+      importState.preview = null;
+      importState.mapping = {};
+      importState.excludedRows = new Set();
+      importState.autoExcludedRows = new Set();
+      if (importState.files.length === 0) {
+        importState.globalMapping = null;
+      }
+      updateImportFileSelectionUI();
+      updateOfferImportUI();
+      updateFileNavigatorUI();
+    }
+  }
+
+  function updateImportFileSelectionUI() {
+    const files = getSelectedImportFiles();
+    const label = qs('#import-file-label');
+    const info = qs('#import-file-info');
+    const list = qs('#import-selected-files');
+
+    if (!label || !info) return;
+
+    if (goStep2Btn) {
+      goStep2Btn.disabled = files.length === 0;
+    }
+
+    if (files.length === 0) {
+      label.textContent = importState.mode === 'offer'
+        ? 'Cliquez pour sélectionner un ou plusieurs fichiers Excel (.xlsx, .xls)'
+        : 'Cliquez pour sélectionner un fichier Excel (.xlsx, .xls)';
+      info.classList.add('hidden');
+      if (list) {
+        list.classList.add('hidden');
+        list.innerHTML = '';
+      }
+      return;
+    }
+
+    const totalSizeKb = files.reduce((sum, f) => sum + (f.size || 0), 0) / 1024;
+    label.textContent = files.length === 1 ? files[0].name : `${files.length} fichiers sélectionnés`;
+    info.textContent = files.length === 1
+      ? `Taille : ${(files[0].size / 1024).toFixed(1)} Ko`
+      : `Taille totale : ${totalSizeKb.toFixed(1)} Ko`;
+    info.classList.remove('hidden');
+
+    if (list) {
+      let listHTML = '<div class="muted" style="font-size:0.82em;margin-bottom:8px">Entreprises / fichiers sélectionnés :</div><ul style="margin:0;padding:0;list-style:none;max-height:220px;overflow:auto;font-size:0.82em">';
+      
+      files.slice(0, 20).forEach((f, idx) => {
+        const companyName = deriveCompanyNameFromFile(f.name);
+        const sizeKb = (f.size / 1024).toFixed(1);
+        const cfg = importState.fileConfigs[idx] || {};
+        const companyValue = (cfg.companyName || '').replace(/"/g, '&quot;');
+        const active = idx === (importState.activeFileIndex || 0);
+        listHTML += `
+          <li style="display:flex;align-items:flex-start;justify-content:space-between;padding:8px;border-bottom:1px solid var(--border);gap:8px;${active ? 'background:var(--card);border-radius:6px' : ''}">
+            <span style="flex:1;min-width:0">
+              <strong>${f.name}</strong>
+              <span class="muted" style="display:block;font-size:0.85em;margin-top:2px">Fichier: ${sizeKb} Ko</span>
+              <label style="display:block;font-size:0.76em;margin-top:6px;margin-bottom:2px;color:var(--muted)">Entreprise (obligatoire)</label>
+              <input type="text" class="import-company-name-input" data-file-index="${idx}" value="${companyValue}" placeholder="Ex: ${companyName}" style="width:100%;max-width:320px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.82em" />
+            </span>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <button type="button" class="btn-open-config btn ghost" data-file-index="${idx}" title="Configurer ce fichier" style="padding:4px 8px;font-size:0.8em">Configurer</button>
+              <button type="button" class="btn-remove-file ghost" data-file-index="${idx}" 
+                style="background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.2em;font-weight:700;padding:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:background 0.2s"
+                title="Supprimer ce fichier">×</button>
+            </div>
+          </li>
+        `;
+      });
+      
+      if (files.length > 20) {
+        listHTML += `<li style="padding:8px;color:var(--muted)">… et ${files.length - 20} autre(s)</li>`;
+      }
+      
+      listHTML += '</ul>';
+      list.innerHTML = listHTML;
+      list.classList.remove('hidden');
+
+      // Attacher les event listeners sur les boutons de suppression
+      list.querySelectorAll('.btn-remove-file').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const fileIndex = Number(btn.dataset.fileIndex);
+          removeFileFromImport(fileIndex);
+        });
+      });
+
+      // Ouverture de la configuration uniquement au clic utilisateur
+      list.querySelectorAll('.btn-open-config').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const fileIndex = Number(btn.dataset.fileIndex);
+          if (Number.isNaN(fileIndex)) return;
+          persistActiveFileConfig(true);
+          importState.activeFileIndex = fileIndex;
+          updateImportFileSelectionUI();
+          updateFileNavigatorUI();
+          await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: true });
+        });
+      });
+
+      // Mise à jour du nom d'entreprise par fichier
+      list.querySelectorAll('.import-company-name-input').forEach(input => {
+        input.addEventListener('input', () => {
+          const fileIndex = Number(input.dataset.fileIndex);
+          if (Number.isNaN(fileIndex)) return;
+          ensureFileConfigs();
+          importState.fileConfigs[fileIndex].companyName = input.value || '';
+          importState.fileConfigs[fileIndex].companyId = null;
+        });
+      });
+    }
+  }
+
+  function updateOfferImportUI() {
+    const offerFields = qs('#import-offer-fields');
+    const batchHint = qs('#import-batch-hint');
+    const batchFilesList = qs('#import-batch-files-list');
+    const confirmBtn = qs('#import-confirm');
+    const confirmText = qs('#import-confirm-text');
+    
+    if (importState.mode !== 'offer') {
+      offerFields?.classList.add('hidden');
+      batchHint?.classList.add('hidden');
+      return;
+    }
+
+    if (isBatchOfferImport()) {
+      offerFields?.classList.add('hidden');
+      batchHint?.classList.remove('hidden');
+      
+      // Afficher la liste des fichiers dans le batch hint
+      if (batchFilesList) {
+        const files = getSelectedImportFiles();
+        let filesHTML = '';
+        files.slice(0, 15).forEach((f, idx) => {
+          const companyName = deriveCompanyNameFromFile(f.name);
+          filesHTML += `
+            <li>
+              <strong>${f.name}</strong>
+              <span class="company-name">→ ${companyName}</span>
+            </li>
+          `;
+        });
+        if (files.length > 15) {
+          filesHTML += `<li style="opacity:0.6">… et ${files.length - 15} autre(s)</li>`;
+        }
+        batchFilesList.innerHTML = filesHTML;
+      }
+      
+      // Adapter le texte du bouton
+      if (confirmText) {
+        const count = getSelectedImportFiles().length;
+        confirmText.textContent = `Importer ${count} fichier${count > 1 ? 's' : ''}`;
+      }
+    } else {
+      offerFields?.classList.remove('hidden');
+      batchHint?.classList.add('hidden');
+      
+      // Reset du bouton
+      if (confirmText) {
+        confirmText.textContent = 'Lancer l\'import';
+      }
+    }
+  }
+
+  function updateFileNavigatorUI() {
+    const files = getSelectedImportFiles();
+    const isBatch = importState.mode === 'offer' && files.length > 1;
+    if (!fileNavWrap || !prevFileBtn || !nextFileBtn || !currentFileLabel) return;
+
+    if (!isBatch) {
+      fileNavWrap.classList.add('hidden');
+      return;
+    }
+
+    const idx = Math.max(0, Math.min(importState.activeFileIndex || 0, files.length - 1));
+    importState.activeFileIndex = idx;
+    prevFileBtn.disabled = idx === 0;
+    nextFileBtn.disabled = idx >= files.length - 1;
+    currentFileLabel.textContent = `Fichier ${idx + 1}/${files.length}: ${files[idx].name}`;
+    fileNavWrap.classList.remove('hidden');
+  }
+
   function openModal() {
-    importState = { mode: 'dpgf', file: null, preview: null, mapping: {}, excludedRows: new Set(), fileId: null };
+    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null };
     setImportMode('dpgf');
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
     fileInput.value = '';
-    qs('#import-file-label').textContent = 'Cliquez pour sélectionner un fichier Excel (.xlsx, .xls)';
-    qs('#import-file-info')?.classList.add('hidden');
+    updateImportFileSelectionUI();
     qs('#import-company-new').value = '';
     qs('#import-company-select').value = '';
     // Remplir le select companies
@@ -4697,7 +7075,7 @@ function bindSmartImport() {
   function closeModal() {
     modal.classList.add('hidden');
     modal.style.display = 'none';
-    importState = { mode: 'dpgf', file: null, preview: null, mapping: {}, excludedRows: new Set(), fileId: null };
+    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null };
   }
 
   openBtn.addEventListener('click', openModal);
@@ -4710,17 +7088,33 @@ function bindSmartImport() {
 
   function setImportMode(mode) {
     importState.mode = mode;
+    if (fileInput) fileInput.multiple = mode === 'offer';
+
+    // En mode DPGF, garder seulement le premier fichier si plusieurs sont déjà sélectionnés
+    if (mode === 'dpgf' && getSelectedImportFiles().length > 1) {
+      importState.files = [getSelectedImportFiles()[0]];
+      importState.fileConfigs = [importState.fileConfigs[0] || { mapping: null, excludedRows: [], headerRow: null, sheetName: null, fileId: null, companyId: null, companyName: '' }];
+      importState.file = importState.files[0] || null;
+      importState.activeFileIndex = 0;
+      importState.fileId = null;
+      updateImportFileSelectionUI();
+    } else if (mode === 'offer') {
+      ensureFileConfigs();
+    }
+
     if (mode === 'dpgf') {
       modeDpgf.classList.add('active'); modeDpgf.classList.remove('ghost');
       modeOffer.classList.remove('active'); modeOffer.classList.add('ghost');
-      qs('#import-offer-fields')?.classList.add('hidden');
       qs('#import-mode-description').innerHTML = '<strong>DPGF (MOE) :</strong> Importe la structure du lot (articles, quantités, prix unitaires MOE). Crée ou met à jour les lignes du tableur.';
     } else {
       modeOffer.classList.add('active'); modeOffer.classList.remove('ghost');
       modeDpgf.classList.remove('active'); modeDpgf.classList.add('ghost');
-      qs('#import-offer-fields')?.classList.remove('hidden');
       qs('#import-mode-description').innerHTML = '<strong>Offre Entreprise :</strong> Importe les données d\'une offre (quantités, prix unitaires) et les associe à une entreprise. Les articles sont matchés par numéro avec la DPGF existante.';
     }
+
+    updateImportFileSelectionUI();
+    updateOfferImportUI();
+    updateFileNavigatorUI();
   }
 
   function populateImportCompanies() {
@@ -4747,25 +7141,67 @@ function bindSmartImport() {
 
   // File selection
   fileInput?.addEventListener('change', async () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-    importState.file = file;
-    qs('#import-file-label').textContent = file.name;
-    qs('#import-file-info').textContent = `Taille : ${(file.size / 1024).toFixed(1)} Ko`;
-    qs('#import-file-info')?.classList.remove('hidden');
+    const selectedFiles = Array.from(fileInput.files || []);
+    if (selectedFiles.length === 0) return;
 
-    // Lancer le preview automatiquement
-    await doPreview();
+    if (importState.mode === 'dpgf' && selectedFiles.length > 1) {
+      showNotify({ title: 'Un seul fichier pour DPGF', message: 'Le mode DPGF utilise un seul fichier. Le premier fichier sélectionné sera utilisé.', type: 'info' });
+    }
+
+    if (importState.mode === 'dpgf') {
+      importState.files = [selectedFiles[0]];
+      importState.fileConfigs = [{ mapping: null, excludedRows: [], headerRow: null, sheetName: null, fileId: null, companyId: null, companyName: '' }];
+      importState.activeFileIndex = 0;
+      importState.globalMapping = null;
+    } else {
+      const existing = getSelectedImportFiles();
+      const allFiles = [...existing];
+      selectedFiles.forEach((f) => {
+        const exists = allFiles.some((e) => e.name === f.name && e.size === f.size && e.lastModified === f.lastModified);
+        if (!exists) allFiles.push(f);
+      });
+      importState.files = allFiles;
+      ensureFileConfigs();
+      if (importState.activeFileIndex >= importState.files.length) {
+        importState.activeFileIndex = Math.max(0, importState.files.length - 1);
+      }
+    }
+    importState.file = importState.files[importState.activeFileIndex] || null;
+    importState.fileId = null;
+    importState.preview = null;
+    const cfg = getFileConfig(importState.activeFileIndex);
+    importState.mapping = normalizeMappingShape(cfg?.mapping || {});
+    importState.excludedRows = new Set();
+    importState.autoExcludedRows = new Set();
+    fileInput.value = '';
+    updateImportFileSelectionUI();
+    updateOfferImportUI();
+    updateFileNavigatorUI();
   });
 
-  async function doPreview(sheetName) {
-    if (!importState.file || !currentLot) return;
+  goStep2Btn?.addEventListener('click', async () => {
+    const file = getActiveImportFile();
+    if (!file) return;
+    persistActiveFileConfig(false);
+    await doPreview(undefined, file, { keepExistingMapping: false, switchToStep2: true });
+  });
+
+  async function doPreview(sheetName, sourceFile = importState.file, options = {}) {
+    const { keepExistingMapping = false, switchToStep2 = true } = options;
+    if (!sourceFile || !currentLot) return;
+    const files = getSelectedImportFiles();
+    const fileIdx = Math.max(0, files.indexOf(sourceFile));
+    importState.activeFileIndex = fileIdx;
+    const cfg = getFileConfig(fileIdx);
+    const requestedSheet = sheetName || cfg?.sheetName || null;
+    const requestedHeader = headerRowInput ? Number(headerRowInput.value) : 0;
+    const effectiveHeader = requestedHeader >= 1 ? requestedHeader : (cfg?.headerRow || 0);
+
     const formData = new FormData();
-    formData.append('file', importState.file);
-    if (sheetName) formData.append('sheetName', sheetName);
+    formData.append('file', sourceFile);
+    if (requestedSheet) formData.append('sheetName', requestedSheet);
     // Envoyer la ligne d'en-tête si l'utilisateur l'a modifiée
-    const hrVal = headerRowInput ? Number(headerRowInput.value) : 0;
-    if (hrVal >= 1) formData.append('headerRow', String(hrVal));
+    if (effectiveHeader >= 1) formData.append('headerRow', String(effectiveHeader));
 
     try {
       showLoader();
@@ -4779,20 +7215,34 @@ function bindSmartImport() {
       if (!resp.ok) throw new Error(data.error || 'Erreur preview');
 
       importState.preview = data;
+      importState.file = sourceFile;
       importState.fileId = data.fileId || null;
-      importState.mapping = { ...(data.suggestedMapping || {}) };
-      // S'assurer que designation est toujours un tableau
-      if (importState.mapping.designation != null && !Array.isArray(importState.mapping.designation)) {
-        importState.mapping.designation = [importState.mapping.designation];
+      if (keepExistingMapping && importState.mapping && Object.keys(importState.mapping).length > 0) {
+        importState.mapping = normalizeMappingShape(importState.mapping);
+      } else if (cfg?.mapping && Object.keys(cfg.mapping).length > 0) {
+        importState.mapping = normalizeMappingShape(cfg.mapping);
+      } else if (importState.globalMapping && Object.keys(importState.globalMapping).length > 0) {
+        importState.mapping = normalizeMappingShape(importState.globalMapping);
+        cfg.mapping = cloneMapping(importState.mapping);
+      } else {
+        importState.mapping = normalizeMappingShape(data.suggestedMapping || {});
       }
-      // Reset des lignes exclues à chaque nouveau preview
-      importState.excludedRows = new Set();
+      importState.excludedRows = new Set((cfg?.excludedRows || []).filter(v => typeof v === 'number'));
+      importState.autoExcludedRows = new Set();
+      applyAutoExcludeRowsBeforeFirstArticle();
+      cfg.sheetName = data.selectedSheet || cfg.sheetName || null;
+      cfg.headerRow = data.headerRow || cfg.headerRow || null;
+      cfg.fileId = data.fileId || null;
       // Mettre à jour l’input ligne d’en-tête
       if (headerRowInput) headerRowInput.value = data.headerRow || 1;
       renderStep2();
-      step1.classList.add('hidden');
-      step2.classList.remove('hidden');
-      step3.classList.add('hidden');
+      updateOfferImportUI();
+      updateFileNavigatorUI();
+      if (switchToStep2) {
+        step1.classList.add('hidden');
+        step2.classList.remove('hidden');
+        step3.classList.add('hidden');
+      }
     } catch (err) {
       showNotify({ title: 'Erreur', message: err.message, type: 'error' });
     } finally {
@@ -4802,7 +7252,8 @@ function bindSmartImport() {
 
   // Sheet selector change
   sheetSelect?.addEventListener('change', () => {
-    doPreview(sheetSelect.value);
+    persistActiveFileConfig(false);
+    doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: true, switchToStep2: false });
   });
 
   // Header row manual override
@@ -4812,15 +7263,36 @@ function bindSmartImport() {
     headerRowDebounce = setTimeout(() => {
       const val = Number(headerRowInput.value);
       if (val >= 1 && val <= 100 && importState.preview) {
+        persistActiveFileConfig(false);
         importState.preview.headerRow = val;
-        doPreview(sheetSelect.value);
+        doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: true, switchToStep2: false });
       }
     }, 400);
+  });
+
+  prevFileBtn?.addEventListener('click', async () => {
+    const files = getSelectedImportFiles();
+    if (importState.activeFileIndex <= 0 || files.length < 2) return;
+    persistActiveFileConfig(true);
+    importState.activeFileIndex -= 1;
+    updateFileNavigatorUI();
+    await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: false });
+  });
+
+  nextFileBtn?.addEventListener('click', async () => {
+    const files = getSelectedImportFiles();
+    if (importState.activeFileIndex >= files.length - 1 || files.length < 2) return;
+    persistActiveFileConfig(true);
+    importState.activeFileIndex += 1;
+    updateFileNavigatorUI();
+    await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: false });
   });
 
   function renderStep2() {
     const data = importState.preview;
     if (!data) return;
+
+    updateOfferImportUI();
 
     // Remplir le sélecteur d'onglets
     sheetSelect.innerHTML = '';
@@ -4871,12 +7343,13 @@ function bindSmartImport() {
         ];
 
     const colors = { num: '#6b8afd', designation: '#c4b5fd', unit: '#86efac', qty: '#fbbf24', unit_price: '#f87171', amount: '#38bdf8' };
+    const multiMapFields = new Set(['num', 'designation']);
 
     // Construire un index inversé colIndex → field
     const colFieldMap = {};
     for (const [field, val] of Object.entries(mapping)) {
       if (val == null) continue;
-      if (field === 'designation') {
+      if (multiMapFields.has(field)) {
         const arr = Array.isArray(val) ? val : [val];
         arr.forEach(ci => { colFieldMap[ci] = field; });
       } else {
@@ -4893,14 +7366,14 @@ function bindSmartImport() {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '×'; btn.title = 'Supprimer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.add(rowNum); renderPreviewTable(); });
+      btn.addEventListener('click', () => { excluded.add(rowNum); persistActiveFileConfig(false); renderPreviewTable(); });
       return btn;
     }
     function makeRestoreBtn(rowNum) {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '↩'; btn.title = 'Restaurer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.delete(rowNum); renderPreviewTable(); });
+      btn.addEventListener('click', () => { excluded.delete(rowNum); persistActiveFileConfig(false); renderPreviewTable(); });
       return btn;
     }
 
@@ -4924,11 +7397,6 @@ function bindSmartImport() {
         const opt = document.createElement('option');
         opt.value = fo.key;
         opt.textContent = fo.label;
-        // Un champ non-designation déjà assigné à une autre colonne → on le désactive
-        if (fo.key && fo.key !== 'designation' && mapping[fo.key] != null && mapping[fo.key] !== h.index) {
-          opt.disabled = true;
-          opt.textContent += ' ✓';
-        }
         if (fo.key === currentField) opt.selected = true;
         sel.appendChild(opt);
       }
@@ -4940,10 +7408,10 @@ function bindSmartImport() {
 
         // Retirer l'ancien mapping de cette colonne
         if (oldField) {
-          if (oldField === 'designation') {
-            const arr = Array.isArray(mapping.designation) ? mapping.designation : [];
-            mapping.designation = arr.filter(c => c !== colIdx);
-            if (mapping.designation.length === 0) delete mapping.designation;
+          if (multiMapFields.has(oldField)) {
+            const arr = Array.isArray(mapping[oldField]) ? mapping[oldField] : [];
+            mapping[oldField] = arr.filter(c => c !== colIdx);
+            if (mapping[oldField].length === 0) delete mapping[oldField];
           } else {
             delete mapping[oldField];
           }
@@ -4951,11 +7419,11 @@ function bindSmartImport() {
 
         // Ajouter le nouveau mapping
         if (newField) {
-          if (newField === 'designation') {
-            const arr = Array.isArray(mapping.designation) ? mapping.designation : [];
+          if (multiMapFields.has(newField)) {
+            const arr = Array.isArray(mapping[newField]) ? mapping[newField] : [];
             if (!arr.includes(colIdx)) arr.push(colIdx);
             arr.sort((a, b) => a - b);
-            mapping.designation = arr;
+            mapping[newField] = arr;
           } else {
             // Retirer toute ancienne colonne assignée à ce champ
             for (const [ci, fld] of Object.entries(colFieldMap)) {
@@ -4967,6 +7435,8 @@ function bindSmartImport() {
           }
         }
 
+        applyAutoExcludeRowsBeforeFirstArticle();
+        persistActiveFileConfig(false);
         renderPreviewTable();
       });
 
@@ -5004,17 +7474,21 @@ function bindSmartImport() {
 
   // Back to step 1
   backBtn?.addEventListener('click', () => {
+    persistActiveFileConfig(true);
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
+    updateImportFileSelectionUI();
   });
 
   cancelBtn?.addEventListener('click', closeModal);
 
   // Lancer l'import
   confirmBtn?.addEventListener('click', async () => {
-    if (!importState.file || !currentLot || !importState.preview) return;
+    const selectedFiles = getSelectedImportFiles();
+    if (!selectedFiles.length || !currentLot || !importState.preview) return;
     if (confirmBtn.disabled) return;
+    persistActiveFileConfig(true);
 
     // Validation
     if (importState.mode === 'dpgf') {
@@ -5025,9 +7499,29 @@ function bindSmartImport() {
       }
     }
     if (importState.mode === 'offer') {
+      const batchMode = selectedFiles.length > 1;
       const compId = qs('#import-company-select')?.value;
       const compName = qs('#import-company-new')?.value?.trim();
-      if (!compId && !compName) {
+      if (batchMode) {
+        ensureFileConfigs();
+        const missing = importState.fileConfigs
+          .map((cfg, idx) => ({ idx, name: (cfg?.companyName || '').trim() }))
+          .filter(x => !x.name);
+        if (missing.length > 0) {
+          const firstMissing = selectedFiles[missing[0].idx];
+          showNotify({
+            title: 'Entreprise manquante',
+            message: `Renseignez une entreprise pour chaque fichier avant d'importer. Exemple manquant: ${firstMissing?.name || 'fichier #' + (missing[0].idx + 1)}.`,
+            type: 'error'
+          });
+          step1.classList.remove('hidden');
+          step2.classList.add('hidden');
+          step3.classList.add('hidden');
+          updateImportFileSelectionUI();
+          return;
+        }
+      }
+      if (!batchMode && !compId && !compName) {
         showNotify({ title: 'Entreprise requise', message: 'Sélectionnez une entreprise existante ou saisissez un nouveau nom.', type: 'error' });
         return;
       }
@@ -5058,24 +7552,86 @@ function bindSmartImport() {
       fileId: importState.fileId || null,
     };
 
-    const formData = new FormData();
-    // Envoyer le fichier uniquement si pas de fileId (fallback)
-    if (!importState.fileId) formData.append('file', importState.file);
-    formData.append('params', JSON.stringify(params));
-
     try {
       showLoader();
-      const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-        credentials: 'include',
-      });
-      const result = await resp.json();
-      if (!resp.ok) throw new Error(result.error || 'Erreur import');
+      let finalResult;
+
+      if (importState.mode === 'offer' && selectedFiles.length > 1) {
+        const aggregated = {
+          mode: 'offer-batch',
+          filesImported: 0,
+          companiesCreated: 0,
+          matched: 0,
+          addedPostsCount: 0,
+          skipped: 0,
+          totalItems: 0,
+          warnings: [],
+        };
+
+        for (let i = 0; i < selectedFiles.length; i += 1) {
+          const file = selectedFiles[i];
+          const cfg = importState.fileConfigs[i] || {};
+          const mappingForFile = normalizeMappingShape(cfg.mapping || importState.globalMapping || importState.mapping || {});
+          const excludedForFile = Array.isArray(cfg.excludedRows) ? cfg.excludedRows.filter(v => typeof v === 'number') : [];
+          const perFileParams = {
+            ...params,
+            sheetName: cfg.sheetName || params.sheetName,
+            headerRow: cfg.headerRow || params.headerRow,
+            mapping: mappingForFile,
+            excludedRows: excludedForFile,
+            companyId: cfg.companyId || null,
+            companyName: (cfg.companyName || '').trim(),
+            fileId: null,
+          };
+
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('params', JSON.stringify(perFileParams));
+
+          confirmBtn.innerHTML = `<span class="spinner-small"></span> Import ${i + 1}/${selectedFiles.length}…`;
+
+          const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+            credentials: 'include',
+          });
+          const result = await resp.json();
+          if (!resp.ok) {
+            throw new Error(`${file.name} : ${result.error || 'Erreur import'}`);
+          }
+
+          aggregated.filesImported += 1;
+          aggregated.matched += Number(result.matched || 0);
+          aggregated.addedPostsCount += Number(result.addedPostsCount || 0);
+          aggregated.skipped += Number(result.skipped || 0);
+          aggregated.totalItems = Math.max(aggregated.totalItems, Number(result.totalItems || 0));
+          if (result.companyCreated) aggregated.companiesCreated += 1;
+          if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+            aggregated.warnings.push(...result.warnings.map((w) => `${file.name}: ${w}`));
+          }
+        }
+
+        finalResult = aggregated;
+      } else {
+        const formData = new FormData();
+        // Envoyer le fichier uniquement si pas de fileId (fallback)
+        if (!importState.fileId) formData.append('file', importState.file);
+        formData.append('params', JSON.stringify(params));
+
+        const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+          credentials: 'include',
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Erreur import');
+        finalResult = result;
+      }
 
       // Afficher résultat
-      renderStep3(result);
+      renderStep3(finalResult);
       step1.classList.add('hidden');
       step2.classList.add('hidden');
       step3.classList.remove('hidden');
@@ -5107,6 +7663,35 @@ function bindSmartImport() {
           </div>
         </div>
       `;
+    } else if (result.mode === 'offer-batch') {
+      div.innerHTML = `
+        <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
+        <h3 style="color:var(--success, #10b981);margin:0 0 12px 0">Import multi-offres réussi</h3>
+        <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap">
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.filesImported || 0}</div>
+            <div class="muted" style="font-size:0.85em">fichiers importés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.matched || 0}</div>
+            <div class="muted" style="font-size:0.85em">lignes importées</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.addedPostsCount || 0}</div>
+            <div class="muted" style="font-size:0.85em">postes ajoutés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.companiesCreated || 0}</div>
+            <div class="muted" style="font-size:0.85em">entreprises créées</div>
+          </div>
+        </div>
+        ${(result.warnings || []).length ? `
+          <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em;color:var(--warning-fg, #3f2a00)">
+            <strong style="color:var(--warning-strong, #7a4a00)">⚠ Attention :</strong>
+            <ul style="margin:4px 0 0 16px;padding:0;max-height:180px;overflow:auto;color:var(--warning-fg, #3f2a00)">${(result.warnings || []).slice(0, 30).map(w => `<li>${w}</li>`).join('')}</ul>
+          </div>
+        ` : ''}
+      `;
     } else {
       div.innerHTML = `
         <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
@@ -5130,9 +7715,9 @@ function bindSmartImport() {
           </div>
         </div>
         ${(result.warnings || []).length ? `
-          <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em">
-            <strong style="color:var(--warning, #f59e0b)">⚠ Attention :</strong>
-            <ul style="margin:4px 0 0 16px;padding:0">${(result.warnings || []).map(w => `<li>${w}</li>`).join('')}</ul>
+          <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em;color:var(--warning-fg, #3f2a00)">
+            <strong style="color:var(--warning-strong, #7a4a00)">⚠ Attention :</strong>
+            <ul style="margin:4px 0 0 16px;padding:0;color:var(--warning-fg, #3f2a00)">${(result.warnings || []).map(w => `<li>${w}</li>`).join('')}</ul>
           </div>
         ` : ''}
         ${result.addedPostsCount > 0 ? `
@@ -5227,6 +7812,819 @@ function bindSmartImport() {
   });
 }
 
+/* ================== IMPORT DPGF → CRÉATION DE LOTS ================== */
+function bindImportDpgfLots() {
+  const modal       = qs('#import-dpgf-lots-modal');
+  if (!modal) return;
+  const closeBtn    = qs('#idl-modal-close');
+  const fileInput   = qs('#idl-file-input');
+  const filesList   = qs('#idl-files-list');
+  const cancelBtn   = qs('#idl-cancel');
+  const goStep2Btn  = qs('#idl-go-step2');
+  const step1       = qs('#idl-step-1');
+  const step2       = qs('#idl-step-2');
+  const step3       = qs('#idl-step-3');
+  const backBtn     = qs('#idl-back-step1');
+  const headerRowInput = qs('#idl-header-row');
+  const sheetSelect = qs('#idl-sheet-select');
+  const multiSheetsWrap = qs('#idl-multi-sheets');
+  const multiSheetsAll = qs('#idl-sheets-all');
+  const multiSheetsList = qs('#idl-sheets-list');
+  const confirmBtn  = qs('#idl-confirm');
+  const cancelBtn2  = qs('#idl-cancel2');
+  const doneBtn     = qs('#idl-done');
+  const totalRowsSpan = qs('#idl-total-rows');
+
+  let idlState = {
+    files: [],
+    lotNames: [],
+    preview: null,
+    mapping: {},
+    sheetName: null,
+    headerRow: 1,
+    excludedRows: new Set(),
+    selectedSheets: [],
+    sheetConfigs: {},
+    baseMapping: null,
+    primarySheet: null,
+  };
+
+  function openModal() {
+    idlState = {
+      files: [],
+      lotNames: [],
+      preview: null,
+      mapping: {},
+      sheetName: null,
+      headerRow: 1,
+      excludedRows: new Set(),
+      selectedSheets: [],
+      sheetConfigs: {},
+      baseMapping: null,
+      primarySheet: null,
+    };
+    step1.classList.remove('hidden');
+    step2.classList.add('hidden');
+    step3.classList.add('hidden');
+    fileInput.value = '';
+    filesList.innerHTML = '';
+    if (multiSheetsList) multiSheetsList.innerHTML = '';
+    if (multiSheetsWrap) multiSheetsWrap.classList.add('hidden');
+    if (multiSheetsAll) multiSheetsAll.checked = true;
+    goStep2Btn.disabled = true;
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+  }
+
+  function closeModal() {
+    const wasImported = !step3.classList.contains('hidden');
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+    if (wasImported) loadLotsForRound().catch(() => {});
+  }
+
+  function deriveLotName(filename) {
+    return filename.replace(/\.(xlsx?|xls|pdf)$/i, '').replace(/[_-]+/g, ' ').trim();
+  }
+
+  function isExcelFile(file) {
+    return !!file?.name && /\.(xlsx?|xls)$/i.test(file.name);
+  }
+
+  function canUseMultiSheets() {
+    return idlState.files.length === 1
+      && isExcelFile(idlState.files[0])
+      && Array.isArray(idlState.preview?.sheets)
+      && idlState.preview.sheets.length > 1;
+  }
+
+  function cloneSheetConfig(cfg) {
+    return {
+      mapping: normIdlMapping(cfg?.mapping || {}),
+      excludedRows: Array.isArray(cfg?.excludedRows) ? [...cfg.excludedRows].filter(v => typeof v === 'number') : [],
+      mappingCustomized: !!cfg?.mappingCustomized,
+    };
+  }
+
+  function ensureSheetConfigsFromPreview(data) {
+    const sheets = Array.isArray(data?.sheets) ? data.sheets : [];
+    if (!sheets.length) return;
+
+    if (!idlState.baseMapping) {
+      idlState.baseMapping = normIdlMapping(idlState.mapping && Object.keys(idlState.mapping).length ? idlState.mapping : (data.suggestedMapping || {}));
+    }
+
+    if (!idlState.sheetConfigs || typeof idlState.sheetConfigs !== 'object') {
+      idlState.sheetConfigs = {};
+    }
+
+    for (const sheet of sheets) {
+      if (!idlState.sheetConfigs[sheet]) {
+        idlState.sheetConfigs[sheet] = cloneSheetConfig({ mapping: idlState.baseMapping, excludedRows: [], mappingCustomized: false });
+      }
+    }
+  }
+
+  function propagatePrimaryMapping() {
+    if (!idlState.primarySheet || !idlState.sheetConfigs?.[idlState.primarySheet]) return;
+    const primaryMapping = normIdlMapping(idlState.sheetConfigs[idlState.primarySheet].mapping);
+    idlState.baseMapping = normIdlMapping(primaryMapping);
+    Object.entries(idlState.sheetConfigs || {}).forEach(([sheet, cfg]) => {
+      if (sheet === idlState.primarySheet) return;
+      if (cfg?.mappingCustomized) return;
+      idlState.sheetConfigs[sheet] = cloneSheetConfig({
+        ...cfg,
+        mapping: primaryMapping,
+      });
+    });
+  }
+
+  function saveActiveSheetConfig() {
+    if (!idlState.sheetName) return;
+    if (!idlState.sheetConfigs || typeof idlState.sheetConfigs !== 'object') idlState.sheetConfigs = {};
+    idlState.sheetConfigs[idlState.sheetName] = cloneSheetConfig({
+      mapping: normIdlMapping(idlState.mapping),
+      excludedRows: [...idlState.excludedRows].filter(v => typeof v === 'number'),
+      mappingCustomized: idlState.sheetConfigs?.[idlState.sheetName]?.mappingCustomized || false,
+    });
+    if (idlState.primarySheet && idlState.sheetName === idlState.primarySheet) {
+      propagatePrimaryMapping();
+    }
+  }
+
+  function loadSheetConfig(sheetName, data) {
+    const cfg = idlState.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: data?.suggestedMapping || {}, excludedRows: [] });
+    idlState.mapping = normIdlMapping(cfg.mapping);
+    idlState.excludedRows = new Set((cfg.excludedRows || []).filter(v => typeof v === 'number'));
+  }
+
+  function isSheetMappingCustomized(sheetName) {
+    return !!idlState.sheetConfigs?.[sheetName]?.mappingCustomized;
+  }
+
+  function sheetLabelWithIndicator(sheetName) {
+    return isSheetMappingCustomized(sheetName) ? `${sheetName} ✎` : sheetName;
+  }
+
+  function refreshSheetIndicators() {
+    if (sheetSelect) {
+      Array.from(sheetSelect.options || []).forEach((opt) => {
+        const s = opt.value;
+        opt.textContent = sheetLabelWithIndicator(s);
+      });
+    }
+
+    if (multiSheetsList) {
+      const chips = multiSheetsList.querySelectorAll('label[data-sheet-name]');
+      chips.forEach((chip) => {
+        const s = chip.dataset.sheetName;
+        const txt = chip.querySelector('span');
+        if (txt) txt.textContent = sheetLabelWithIndicator(s);
+        chip.style.borderColor = isSheetMappingCustomized(s) ? 'var(--warning,#f59e0b)' : 'var(--border)';
+      });
+    }
+  }
+
+  // Normalize mapping: num & designation must be arrays
+  function normIdlMapping(m) {
+    const r = { ...(m || {}) };
+    if (Array.isArray(r.num)) r.num = [...r.num];
+    if (Array.isArray(r.designation)) r.designation = [...r.designation];
+    if (r.num != null && !Array.isArray(r.num)) r.num = [r.num];
+    if (r.designation != null && !Array.isArray(r.designation)) r.designation = [r.designation];
+    return r;
+  }
+
+  function updateFilesList() {
+    filesList.innerHTML = '';
+    if (idlState.files.length === 0) return;
+    const container = document.createElement('div');
+    container.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+    idlState.files.forEach((file, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--primary,#6b8afd)';
+
+      const nameLabel = document.createElement('span');
+      nameLabel.style.cssText = 'flex:0 0 auto;font-size:0.8em;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      nameLabel.textContent = file.name;
+      nameLabel.title = file.name;
+
+      const codeInput = document.createElement('input');
+      codeInput.type = 'text';
+      codeInput.placeholder = 'Code (opt.)';
+      codeInput.value = idlState.lotNames[idx]?.code || '';
+      codeInput.style.cssText = 'width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg);font-size:0.82em';
+      codeInput.addEventListener('input', () => {
+        if (!idlState.lotNames[idx]) idlState.lotNames[idx] = { name: '', code: '' };
+        idlState.lotNames[idx].code = codeInput.value;
+      });
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.placeholder = 'Nom du lot *';
+      nameInput.value = idlState.lotNames[idx]?.name || deriveLotName(file.name);
+      nameInput.style.cssText = 'flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg);font-size:0.82em';
+      nameInput.addEventListener('input', () => {
+        if (!idlState.lotNames[idx]) idlState.lotNames[idx] = { name: '', code: '' };
+        idlState.lotNames[idx].name = nameInput.value;
+        validateStep1();
+      });
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.innerHTML = '×';
+      removeBtn.title = 'Retirer ce fichier';
+      removeBtn.style.cssText = 'flex:0 0 auto;background:none;border:none;color:var(--danger,#f87171);cursor:pointer;font-size:1.3em;font-weight:700;padding:0 4px;line-height:1';
+      removeBtn.addEventListener('click', () => {
+        idlState.files.splice(idx, 1);
+        idlState.lotNames.splice(idx, 1);
+        updateFilesList();
+        validateStep1();
+      });
+
+      row.appendChild(nameLabel);
+      row.appendChild(codeInput);
+      row.appendChild(nameInput);
+      row.appendChild(removeBtn);
+      container.appendChild(row);
+    });
+    filesList.appendChild(container);
+  }
+
+  function validateStep1() {
+    const ok = idlState.files.length > 0 && idlState.files.every((f, i) => {
+      const name = (idlState.lotNames[i]?.name || deriveLotName(f.name)).trim();
+      return name.length > 0;
+    });
+    goStep2Btn.disabled = !ok;
+  }
+
+  function syncNamesFromDOM() {
+    const nameInputs = filesList.querySelectorAll('input[placeholder="Nom du lot *"]');
+    const codeInputs = filesList.querySelectorAll('input[placeholder="Code (opt.)"]');
+    idlState.files.forEach((f, i) => {
+      if (!idlState.lotNames[i]) idlState.lotNames[i] = { name: '', code: '' };
+      idlState.lotNames[i].name = (nameInputs[i]?.value || deriveLotName(f.name)).trim();
+      idlState.lotNames[i].code = (codeInputs[i]?.value || '').trim();
+    });
+  }
+
+  fileInput.addEventListener('change', () => {
+    Array.from(fileInput.files || []).forEach(f => {
+      const exists = idlState.files.some(e => e.name === f.name && e.size === f.size);
+      if (!exists) {
+        idlState.files.push(f);
+        idlState.lotNames.push({ name: deriveLotName(f.name), code: '' });
+      }
+    });
+    fileInput.value = '';
+    updateFilesList();
+    validateStep1();
+  });
+
+  closeBtn?.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  cancelBtn?.addEventListener('click', closeModal);
+  cancelBtn2?.addEventListener('click', closeModal);
+
+  goStep2Btn?.addEventListener('click', async () => {
+    if (!idlState.files.length || !currentProject) return;
+    syncNamesFromDOM();
+    await doIdlPreview(idlState.files[0]);
+  });
+
+  backBtn?.addEventListener('click', () => {
+    step1.classList.remove('hidden');
+    step2.classList.add('hidden');
+    step3.classList.add('hidden');
+  });
+
+  sheetSelect?.addEventListener('change', () => {
+    // En mode multi-feuilles, on sauvegarde le mapping et exclusions de l'onglet actuel
+    // puis on charge ceux du nouvel onglet (qui peut être différent si les colonnes varient)
+    if (canUseMultiSheets()) {
+      saveActiveSheetConfig();
+      doIdlPreviewDataOnly(sheetSelect.value);
+    } else {
+      saveActiveSheetConfig();
+      doIdlPreview(idlState.files[0], sheetSelect.value);
+    }
+  });
+
+  let headerDebounce = null;
+  headerRowInput?.addEventListener('change', () => {
+    clearTimeout(headerDebounce);
+    headerDebounce = setTimeout(() => {
+      const val = Number(headerRowInput.value);
+      if (val >= 1 && val <= 100 && idlState.preview) {
+        idlState.headerRow = val;
+        doIdlPreview(idlState.files[0], sheetSelect?.value || null);
+      }
+    }, 400);
+  });
+
+  async function doIdlPreview(file, sheetName = null) {
+    if (!file || !currentProject) return;
+    if (idlState.preview && idlState.sheetName) saveActiveSheetConfig();
+    const headerRow = Number(headerRowInput?.value) || 1;
+    const formData = new FormData();
+    formData.append('file', file);
+    if (sheetName) formData.append('sheetName', sheetName);
+    if (headerRow >= 1) formData.append('headerRow', String(headerRow));
+    try {
+      showLoader();
+      const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Erreur preview');
+      idlState.preview = data;
+      if (headerRowInput) headerRowInput.value = data.headerRow || 1;
+      idlState.headerRow = data.headerRow || 1;
+      idlState.sheetName = data.selectedSheet || null;
+
+      ensureSheetConfigsFromPreview(data);
+      loadSheetConfig(idlState.sheetName, data);
+
+      const availableSheets = Array.isArray(data.sheets) ? data.sheets : [];
+      if (!Array.isArray(idlState.selectedSheets) || idlState.selectedSheets.length === 0) {
+        idlState.selectedSheets = [...availableSheets];
+      } else {
+        idlState.selectedSheets = idlState.selectedSheets.filter(s => availableSheets.includes(s));
+        if (idlState.selectedSheets.length === 0) idlState.selectedSheets = [...availableSheets];
+      }
+
+      renderIdlStep2();
+      step1.classList.add('hidden');
+      step2.classList.remove('hidden');
+      step3.classList.add('hidden');
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    } finally {
+      hideLoader();
+    }
+  }
+
+  async function doIdlPreviewDataOnly(sheetName = null) {
+    // En mode multi-feuilles : recharge les données du nouvel onglet
+    // Le mapping du premier onglet s'applique par défaut à tous
+    // Mais on peut le modifier au cas par cas si les colonnes sont différentes
+    if (!idlState.files.length || !currentProject) return;
+    const file = idlState.files[0];
+    const headerRow = Number(headerRowInput?.value) || 1;
+    const formData = new FormData();
+    formData.append('file', file);
+    if (sheetName) formData.append('sheetName', sheetName);
+    if (headerRow >= 1) formData.append('headerRow', String(headerRow));
+    try {
+      showLoader();
+      const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Erreur preview');
+      
+      // Mettre à jour les données et le nom de l'onglet actuel
+      idlState.preview = data;
+      idlState.sheetName = data.selectedSheet || null;
+      
+      // Initialize ou récupérer la config de ce nouvel onglet
+      if (idlState.sheetName && !idlState.sheetConfigs[idlState.sheetName]) {
+        // Première fois qu'on visite cet onglet : hériter du baseMapping
+        idlState.sheetConfigs[idlState.sheetName] = cloneSheetConfig({
+          mapping: idlState.baseMapping || idlState.mapping,
+          excludedRows: new Set(),
+        });
+      }
+      
+      // Charger le mapping et excludedRows de cet onglet
+      loadSheetConfig(idlState.sheetName, data);
+      
+      renderIdlPreviewTable();
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    } finally {
+      hideLoader();
+    }
+  }
+
+  function renderIdlStep2() {
+    const data = idlState.preview;
+    if (!data) return;
+    sheetSelect.innerHTML = '';
+    for (const s of data.sheets) {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = sheetLabelWithIndicator(s);
+      if (s === data.selectedSheet) opt.selected = true;
+      sheetSelect.appendChild(opt);
+    }
+
+    if (multiSheetsWrap && multiSheetsList && multiSheetsAll) {
+      if (canUseMultiSheets()) {
+        multiSheetsWrap.classList.remove('hidden');
+        // Ajouter un message explicatif
+        let infoMsg = multiSheetsWrap.querySelector('.idl-multi-sheets-info');
+        if (!infoMsg) {
+          infoMsg = document.createElement('div');
+          infoMsg.className = 'idl-multi-sheets-info';
+          infoMsg.style.cssText = 'padding:8px 12px;margin-bottom:12px;background:var(--info,#dbeafe);border:1px solid var(--info-border,#93c5fd);border-radius:4px;font-size:0.85em;color:var(--text);line-height:1.4';
+          infoMsg.innerHTML = '<strong>ℹ️ Info :</strong> Le mapping du premier onglet s\'applique par défaut à tous. Vous pouvez visualiser et modifier le mapping et les exclusions pour chaque onglet si les colonnes varient.';
+          multiSheetsWrap.insertBefore(infoMsg, multiSheetsWrap.firstChild);
+        }
+        multiSheetsList.innerHTML = '';
+        const selected = new Set(idlState.selectedSheets || []);
+        for (const s of data.sheets) {
+          const chip = document.createElement('label');
+          chip.dataset.sheetName = s;
+          chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:0.8em;cursor:pointer';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = selected.has(s);
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.add(s);
+            else selected.delete(s);
+            idlState.selectedSheets = [...selected];
+            multiSheetsAll.checked = idlState.selectedSheets.length === data.sheets.length;
+          });
+          const txt = document.createElement('span');
+          txt.textContent = sheetLabelWithIndicator(s);
+          chip.appendChild(cb);
+          chip.appendChild(txt);
+          multiSheetsList.appendChild(chip);
+        }
+        multiSheetsAll.checked = (idlState.selectedSheets || []).length === data.sheets.length;
+      } else {
+        multiSheetsWrap.classList.add('hidden');
+        multiSheetsList.innerHTML = '';
+      }
+    }
+
+    refreshSheetIndicators();
+    totalRowsSpan.textContent = data.totalRows;
+    renderIdlPreviewTable();
+  }
+
+  multiSheetsAll?.addEventListener('change', () => {
+    const data = idlState.preview;
+    if (!data || !canUseMultiSheets()) return;
+    idlState.selectedSheets = multiSheetsAll.checked ? [...data.sheets] : [];
+    renderIdlStep2();
+  });
+
+  function renderIdlPreviewTable() {
+    const data = idlState.preview;
+    if (!data) return;
+    const mapping = idlState.mapping;
+    const excluded = idlState.excludedRows;
+    const head = qs('#idl-preview-head');
+    const body = qs('#idl-preview-body');
+    head.innerHTML = '';
+    body.innerHTML = '';
+
+    const fieldOptions = [
+      { key: '', label: '—' },
+      { key: 'num', label: 'N° Article' },
+      { key: 'designation', label: 'Désignation' },
+      { key: 'unit', label: 'Unité' },
+      { key: 'qty', label: 'Quantité MOE' },
+      { key: 'unit_price', label: 'Prix Unit. MOE' },
+      { key: 'amount', label: 'Montant MOE' },
+    ];
+    const colors = { num: '#6b8afd', designation: '#c4b5fd', unit: '#86efac', qty: '#fbbf24', unit_price: '#f87171', amount: '#38bdf8' };
+    const multiFields = new Set(['num', 'designation']);
+
+    const activeCount = data.totalRows - excluded.size;
+    totalRowsSpan.textContent = `${activeCount} / ${data.totalRows}`;
+
+    function makeDeleteBtn(rowNum) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '×';
+      btn.title = 'Supprimer cette ligne';
+      btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
+      btn.addEventListener('click', () => {
+        excluded.add(rowNum);
+        renderIdlPreviewTable();
+      });
+      return btn;
+    }
+
+    function makeRestoreBtn(rowNum) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '↩';
+      btn.title = 'Restaurer cette ligne';
+      btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
+      btn.addEventListener('click', () => {
+        excluded.delete(rowNum);
+        renderIdlPreviewTable();
+      });
+      return btn;
+    }
+
+    // Inverse map colIndex → field
+    const colFieldMap = {};
+    for (const [field, val] of Object.entries(mapping)) {
+      if (val == null) continue;
+      if (multiFields.has(field)) {
+        (Array.isArray(val) ? val : [val]).forEach(ci => { colFieldMap[ci] = field; });
+      } else {
+        colFieldMap[val] = field;
+      }
+    }
+
+    // Header row with selects
+    const trSel = document.createElement('tr');
+    const thAction = document.createElement('th');
+    thAction.style.cssText = 'width:32px;position:sticky;left:0;z-index:3;background:var(--card)';
+    trSel.appendChild(thAction);
+    const thRowNum = document.createElement('th');
+    thRowNum.style.cssText = 'width:46px;position:sticky;left:32px;z-index:3;background:var(--card);text-align:right;padding-right:8px';
+    thRowNum.textContent = '#';
+    trSel.appendChild(thRowNum);
+
+    for (const h of data.headers) {
+      const th = document.createElement('th');
+      th.style.cssText = 'padding:4px;vertical-align:top;position:sticky;top:0;z-index:2;background:var(--card)';
+      const curField = colFieldMap[h.index] || '';
+      const color = curField ? (colors[curField] || 'transparent') : 'transparent';
+
+      const sel = document.createElement('select');
+      sel.dataset.colIdx = h.index;
+      sel.style.cssText = `width:100%;padding:4px 2px;border-radius:4px;border:2px solid ${color};background:${color}18;color:var(--fg);font-size:0.72em;font-weight:600;cursor:pointer`;
+      for (const fo of fieldOptions) {
+        const opt = document.createElement('option');
+        opt.value = fo.key; opt.textContent = fo.label;
+        if (fo.key === curField) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener('change', () => {
+        const colIdx = Number(sel.dataset.colIdx);
+        const newField = sel.value;
+        const oldField = colFieldMap[colIdx] || '';
+        if (oldField) {
+          if (multiFields.has(oldField)) {
+            const arr = Array.isArray(mapping[oldField]) ? mapping[oldField] : [];
+            mapping[oldField] = arr.filter(c => c !== colIdx);
+            if (mapping[oldField].length === 0) delete mapping[oldField];
+          } else {
+            delete mapping[oldField];
+          }
+        }
+        if (newField) {
+          if (multiFields.has(newField)) {
+            if (!Array.isArray(mapping[newField])) mapping[newField] = [];
+            if (!mapping[newField].includes(colIdx)) mapping[newField].push(colIdx);
+          } else {
+            Object.keys(mapping).forEach(f => { if (!multiFields.has(f) && mapping[f] === colIdx) delete mapping[f]; });
+            mapping[newField] = colIdx;
+          }
+        }
+        if (canUseMultiSheets() && idlState.sheetName) {
+          if (!idlState.sheetConfigs || typeof idlState.sheetConfigs !== 'object') idlState.sheetConfigs = {};
+
+          if (!idlState.primarySheet) {
+            idlState.primarySheet = idlState.sheetName;
+          }
+
+          const prevCfg = idlState.sheetConfigs[idlState.sheetName] || cloneSheetConfig({ mapping, excludedRows: [...excluded] });
+          idlState.sheetConfigs[idlState.sheetName] = cloneSheetConfig({
+            ...prevCfg,
+            mapping,
+            excludedRows: [...excluded].filter(v => typeof v === 'number'),
+            mappingCustomized: idlState.sheetName !== idlState.primarySheet,
+          });
+
+          if (idlState.sheetName === idlState.primarySheet) {
+            idlState.sheetConfigs[idlState.sheetName].mappingCustomized = false;
+            propagatePrimaryMapping();
+          }
+          refreshSheetIndicators();
+        }
+        renderIdlPreviewTable();
+      });
+
+      const nameDiv = document.createElement('div');
+      nameDiv.style.cssText = 'font-size:0.68em;color:var(--muted);text-align:center;margin-top:2px;overflow:hidden;text-overflow:ellipsis;max-width:90px';
+      nameDiv.title = h.name; nameDiv.textContent = h.name;
+      th.appendChild(sel);
+      th.appendChild(nameDiv);
+      trSel.appendChild(th);
+    }
+    head.appendChild(trSel);
+
+    // Preview rows (all)
+    for (const row of data.previewRows) {
+      const rowNum = row._rowNum != null ? row._rowNum : ('idx_' + data.previewRows.indexOf(row));
+      const isExcluded = excluded.has(rowNum);
+      const tr = document.createElement('tr');
+      if (isExcluded) tr.style.cssText = 'opacity:0.35;text-decoration:line-through';
+
+      const tdAction = document.createElement('td');
+      tdAction.style.cssText = 'text-align:center;padding:2px;position:sticky;left:0;background:var(--card);z-index:1';
+      tdAction.appendChild(isExcluded ? makeRestoreBtn(rowNum) : makeDeleteBtn(rowNum));
+      tr.appendChild(tdAction);
+
+      const tdNum = document.createElement('td');
+      tdNum.style.cssText = 'color:var(--muted);font-size:0.7em;padding:2px 4px;position:sticky;left:32px;background:var(--card);text-align:right;z-index:1';
+      tdNum.textContent = row._rowNum;
+      tr.appendChild(tdNum);
+      for (const h of data.headers) {
+        const td = document.createElement('td');
+        const field = colFieldMap[h.index] || '';
+        const color = field ? (colors[field] || 'transparent') : 'transparent';
+        td.style.cssText = `padding:3px 6px;border-bottom:1px solid var(--border);background:${color}10;max-width:200px;overflow:hidden;text-overflow:ellipsis`;
+        const val = row[h.index];
+        td.textContent = val !== null && val !== undefined ? String(val) : '';
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+  }
+
+  confirmBtn?.addEventListener('click', async () => {
+    if (!idlState.files.length || !idlState.preview || !currentProject) return;
+    const useMultiSheets = canUseMultiSheets();
+    saveActiveSheetConfig();
+
+    if (!useMultiSheets) {
+      const desig = idlState.mapping.designation;
+      if (!desig || (Array.isArray(desig) && desig.length === 0)) {
+        showNotify({ title: 'Mapping incomplet', message: 'Assignez au moins une colonne "Désignation" avant de lancer l\'import.', type: 'error' });
+        return;
+      }
+    }
+
+    if (useMultiSheets && (!Array.isArray(idlState.selectedSheets) || idlState.selectedSheets.length === 0)) {
+      showNotify({ title: 'Validation', message: 'Sélectionnez au moins un onglet à importer.', type: 'error' });
+      return;
+    }
+
+    if (useMultiSheets) {
+      const invalidSheet = idlState.selectedSheets.find((sheet) => {
+        const cfg = idlState.sheetConfigs?.[sheet];
+        const d = cfg?.mapping?.designation;
+        return !d || (Array.isArray(d) && d.length === 0);
+      });
+      if (invalidSheet) {
+        showNotify({ title: 'Mapping incomplet', message: `L'onglet "${invalidSheet}" n'a pas de colonne Désignation mappée.`, type: 'error' });
+        return;
+      }
+    }
+
+    confirmBtn.disabled = true;
+    const originalHTML = confirmBtn.innerHTML;
+    const agg = { lotsCreated: 0, itemsImported: 0, itemsUpdated: 0, errors: [] };
+    try {
+      showLoader();
+      if (useMultiSheets) {
+        const file = idlState.files[0];
+        const baseLotName = (idlState.lotNames[0]?.name || deriveLotName(file.name)).trim();
+        const baseLotCode = (idlState.lotNames[0]?.code || '').trim() || null;
+        const selectedSheets = [...idlState.selectedSheets];
+        for (let i = 0; i < selectedSheets.length; i++) {
+          const sheetName = selectedSheets[i];
+          const sheetCfg = idlState.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: idlState.mapping, excludedRows: [...idlState.excludedRows] });
+          const lotName = selectedSheets.length > 1 ? `${baseLotName} - ${sheetName}` : baseLotName;
+          confirmBtn.innerHTML = `<span class="spinner-small"></span> Import onglet ${i + 1}/${selectedSheets.length}…`;
+          const params = {
+            lotName,
+            lotCode: selectedSheets.length > 1 ? sheetName : baseLotCode,
+            mapping: normIdlMapping(sheetCfg.mapping),
+            sheetName,
+            headerRow: idlState.headerRow,
+            excludedRows: Array.isArray(sheetCfg.excludedRows) ? sheetCfg.excludedRows.filter(v => typeof v === 'number') : [],
+          };
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('params', JSON.stringify(params));
+          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+            credentials: 'include',
+          });
+          const result = await resp.json();
+          if (!resp.ok) {
+            agg.errors.push({ file: `${file.name} / ${sheetName}`, error: result.error || 'Erreur inconnue' });
+          } else {
+            agg.lotsCreated += 1;
+            agg.itemsImported += result.itemsImported || 0;
+            agg.itemsUpdated += result.itemsUpdated || 0;
+          }
+        }
+      } else {
+        for (let i = 0; i < idlState.files.length; i++) {
+          const file = idlState.files[i];
+          const lotName = (idlState.lotNames[i]?.name || deriveLotName(file.name)).trim();
+          const lotCode = (idlState.lotNames[i]?.code || '').trim() || null;
+          confirmBtn.innerHTML = `<span class="spinner-small"></span> Import ${i + 1}/${idlState.files.length}…`;
+          const params = {
+            lotName, lotCode,
+            mapping: normIdlMapping(idlState.mapping),
+            sheetName: idlState.sheetName,
+            headerRow: idlState.headerRow,
+            excludedRows: [...idlState.excludedRows].filter(v => typeof v === 'number'),
+          };
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('params', JSON.stringify(params));
+          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+            credentials: 'include',
+          });
+          const result = await resp.json();
+          if (!resp.ok) {
+            agg.errors.push({ file: file.name, error: result.error || 'Erreur inconnue' });
+          } else {
+            agg.lotsCreated += 1;
+            agg.itemsImported += result.itemsImported || 0;
+            agg.itemsUpdated += result.itemsUpdated || 0;
+          }
+        }
+      }
+      step1.classList.add('hidden');
+      step2.classList.add('hidden');
+      step3.classList.remove('hidden');
+      const resultDiv = qs('#idl-result');
+      if (agg.errors.length === 0) {
+        resultDiv.innerHTML = `
+          <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
+          <h3 style="color:var(--success,#10b981);margin:0 0 16px 0">Import réussi !</h3>
+          <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap">
+            <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700">${agg.lotsCreated}</div>
+              <div class="muted" style="font-size:0.85em">lots créés</div>
+            </div>
+            <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700">${agg.itemsImported}</div>
+              <div class="muted" style="font-size:0.85em">articles créés</div>
+            </div>
+            ${agg.itemsUpdated > 0 ? `<div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700">${agg.itemsUpdated}</div>
+              <div class="muted" style="font-size:0.85em">articles mis à jour</div>
+            </div>` : ''}
+          </div>`;
+      } else {
+        resultDiv.innerHTML = `
+          <div style="font-size:3em;margin-bottom:12px">⚠️</div>
+          <h3 style="color:var(--warning,#f59e0b);margin:0 0 16px 0">Import partiellement réussi</h3>
+          <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap;margin-bottom:16px">
+            <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700">${agg.lotsCreated}</div>
+              <div class="muted" style="font-size:0.85em">lots créés</div>
+            </div>
+            <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700">${agg.itemsImported}</div>
+              <div class="muted" style="font-size:0.85em">articles créés</div>
+            </div>
+            <div style="padding:16px;background:var(--input-bg);border:2px solid var(--danger,#f87171);border-radius:8px;min-width:120px">
+              <div style="font-size:2em;font-weight:700;color:var(--danger,#f87171)">${agg.errors.length}</div>
+              <div class="muted" style="font-size:0.85em">erreurs</div>
+            </div>
+          </div>
+          <div style="text-align:left;border:1px solid var(--danger,#f87171);border-radius:8px;overflow:hidden">
+            <div style="background:var(--danger,#f87171);color:#fff;padding:8px 12px;font-weight:700;font-size:0.85em">Erreurs détaillées</div>
+            <ul style="padding:12px 16px;margin:0;font-size:0.82em">
+              ${agg.errors.map(e => `<li><strong>${escapeHtml(e.file)}</strong> : ${escapeHtml(e.error)}</li>`).join('')}
+            </ul>
+          </div>`;
+      }
+    } catch (err) {
+      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+    } finally {
+      hideLoader();
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = originalHTML;
+    }
+  });
+
+  doneBtn?.addEventListener('click', async () => {
+    closeModal();
+    await loadLotsForRound();
+  });
+
+  qs('#import-dpgf-lots')?.addEventListener('click', () => {
+    if (!currentProject) {
+      showNotify({ title: 'Validation', message: 'Ouvrez un projet d\'abord', type: 'info' });
+      return;
+    }
+    if (!currentRound) {
+      showNotify({ title: 'Validation', message: 'Sélectionnez un tour d\'abord', type: 'info' });
+      return;
+    }
+    openModal();
+  });
+}
+
 /* ================== INIT ================== */
 function showDashboard(){ 
   hide('#login-view'); 
@@ -5282,6 +8680,14 @@ function updateUIForRole() {
       addLotBtn.style.display = '';
     }
   }
+  const importDpgfLotsBtn = qs('#import-dpgf-lots');
+  if (importDpgfLotsBtn) {
+    if (isVisionneur() || isEntreprise()) {
+      importDpgfLotsBtn.style.display = 'none';
+    } else {
+      importDpgfLotsBtn.style.display = '';
+    }
+  }
   
   const tourLotsTab = qs('[data-tour-tab="tour-lots"]');
   if (tourLotsTab) {
@@ -5289,16 +8695,6 @@ function updateUIForRole() {
       tourLotsTab.style.display = 'none';
     } else {
       tourLotsTab.style.display = '';
-    }
-  }
-  
-  // Masquer le bouton de sauvegarde config questions projet pour les visionneurs
-  const saveProjectQuestions = qs('#save-project-questions');
-  if (saveProjectQuestions) {
-    if (isVisionneur() || isEntreprise()) {
-      saveProjectQuestions.style.display = 'none';
-    } else {
-      saveProjectQuestions.style.display = '';
     }
   }
   
@@ -5331,6 +8727,49 @@ function updateUIForRole() {
   } else {
     console.error('Access request button not found in DOM');
   }
+}
+
+let editingRoundId = null;
+let editingLotId = null;
+
+function openRoundEditModal(round){
+  if (isVisionneur()) { return; }
+  editingRoundId = round.id;
+  const modal = qs('#round-modal');
+  qs('#round-modal-title').textContent = 'Modifier le tour';
+  qs('#round-name').value = round.name || '';
+  qs('#round-description').value = round.description || '';
+  qs('#round-modal-msg').textContent = '';
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+function openLotCreateModal(){
+  editingLotId = null;
+  const modal = qs('#lot-modal');
+  qs('#lot-modal-title').textContent = 'Créer un lot';
+  qs('#lot-modal-delete')?.classList.add('hidden');
+  qs('#lot-code').value = '';
+  qs('#lot-name').value = '';
+  qs('#lot-macro-new').value = '';
+  populateMacroLotSelect();
+  qs('#lot-modal-msg').textContent = '';
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+function openLotEditModal(lot){
+  editingLotId = lot.id;
+  const modal = qs('#lot-modal');
+  qs('#lot-modal-title').textContent = 'Modifier le lot';
+  qs('#lot-modal-delete')?.classList.remove('hidden');
+  qs('#lot-code').value = lot.code || '';
+  qs('#lot-name').value = lot.name || '';
+  qs('#lot-macro-new').value = '';
+  populateMacroLotSelect(lot.macro_lot || '');
+  qs('#lot-modal-msg').textContent = '';
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
 }
 
 function bindUI(){
@@ -5440,6 +8879,20 @@ function bindUI(){
     window.location.href = '/login';
   });
 
+  // Event listeners pour la modal de suppression
+  qs('#delete-confirmation-close')?.addEventListener('click', hideDeleteConfirmation);
+  qs('#delete-confirmation-cancel')?.addEventListener('click', hideDeleteConfirmation);
+  qs('#delete-confirmation-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'delete-confirmation-modal') hideDeleteConfirmation();
+  });
+  qs('#delete-confirmation-confirm')?.addEventListener('click', async () => {
+    if (deleteConfirmationCallback && typeof deleteConfirmationCallback === 'function') {
+      const onConfirm = deleteConfirmationCallback;
+      hideDeleteConfirmation();
+      await onConfirm();
+    }
+  });
+
   // Navigation principale
   qsa('.nav-btn').forEach(b => b.addEventListener('click', () => !b.disabled && activateTab(b.dataset.tab)));
 
@@ -5532,17 +8985,6 @@ function bindUI(){
     openLotCreateModal();
   }catch(e){ showNotify({ title:'Erreur', message:e.message, type:'error' }); } });
   // ===== Modals Round: edit =====
-  let editingRoundId = null;
-  function openRoundEditModal(round){
-    if (isVisionneur()) { return; }
-    editingRoundId = round.id;
-    const modal = qs('#round-modal');
-    qs('#round-modal-title').textContent = 'Modifier le tour';
-    qs('#round-name').value = round.name || '';
-    qs('#round-description').value = round.description || '';
-    qs('#round-modal-msg').textContent = '';
-    modal.classList.remove('hidden'); modal.style.display='flex';
-  }
   qs('#round-modal-close')?.addEventListener('click', ()=>{ const m=qs('#round-modal'); m.classList.add('hidden'); m.style.display='none'; editingRoundId=null; });
   qs('#round-modal')?.addEventListener('click', (e)=>{ if (e.target.id==='round-modal'){ const m=qs('#round-modal'); m.classList.add('hidden'); m.style.display='none'; editingRoundId=null; } });
   qs('#round-modal-save')?.addEventListener('click', async ()=>{ try{
@@ -5555,35 +8997,44 @@ function bindUI(){
     await loadRounds();
   }catch(e){ qs('#round-modal-msg').textContent = e.message; }});
 // ===== Modals Lot: create/edit =====
-let editingLotId = null;
-function openLotCreateModal(){
-  editingLotId = null;
-  const modal = qs('#lot-modal');
-  qs('#lot-modal-title').textContent = 'Créer un lot';
-  qs('#lot-code').value = '';
-  qs('#lot-name').value = '';
-  qs('#lot-modal-msg').textContent = '';
-  modal.classList.remove('hidden'); modal.style.display='flex';
-}
-function openLotEditModal(lot){
-  editingLotId = lot.id;
-  const modal = qs('#lot-modal');
-  qs('#lot-modal-title').textContent = 'Modifier le lot';
-  qs('#lot-code').value = lot.code || '';
-  qs('#lot-name').value = lot.name || '';
-  qs('#lot-modal-msg').textContent = '';
-  modal.classList.remove('hidden'); modal.style.display='flex';
-}
 qs('#lot-modal-close')?.addEventListener('click', ()=>{ const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none'; });
 qs('#lot-modal')?.addEventListener('click', (e)=>{ if (e.target.id==='lot-modal'){ const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none'; } });
+qs('#lot-macro-group')?.addEventListener('change', toggleMacroLotNewInput);
+qs('#lot-modal-delete')?.addEventListener('click', async ()=>{
+  if (!editingLotId) return;
+  const lotName = qs('#lot-name')?.value?.trim() || 'ce lot';
+  showDeleteConfirmation({
+    title: 'Supprimer ce lot',
+    message: `Êtes-vous sûr de vouloir supprimer le lot "${lotName}" ?`,
+    extra: '<strong>⚠️ Attention:</strong> Cette action supprimera toutes les données liées à ce lot (articles, offres et réponses). Cette action ne peut pas être annulée.',
+    onConfirm: async () => {
+      try {
+        await api(`/projects/lots/${editingLotId}`, { method:'DELETE' });
+        if (currentLot?.id === editingLotId) {
+          currentLot = null;
+          disableTourTabs(['tour-config', 'tour-questions']);
+        }
+        const m = qs('#lot-modal');
+        m.classList.add('hidden');
+        m.style.display = 'none';
+        editingLotId = null;
+        await loadLotsForRound();
+        showNotify({ title: 'Succès', message: 'Lot supprimé', type: 'success' });
+      } catch (e) {
+        showNotify({ title: 'Erreur', message: e.message, type: 'error' });
+      }
+    }
+  });
+});
 qs('#lot-modal-save')?.addEventListener('click', async ()=>{ try{
   const code = qs('#lot-code').value.trim();
   const name = qs('#lot-name').value.trim();
+  const macro_lot = getMacroLotFromModal();
   if (!name) { qs('#lot-modal-msg').textContent = 'Le nom du lot est requis'; return; }
   if (editingLotId){
-    await api(`/projects/lots/${editingLotId}`, { method:'PUT', body:{ code, name } });
+    await api(`/projects/lots/${editingLotId}`, { method:'PUT', body:{ code, name, macro_lot } });
   } else {
-    await api(`/projects/${currentProject.id}/lots`, { method:'POST', body:{ code, name } });
+    await api(`/projects/${currentProject.id}/lots`, { method:'POST', body:{ code, name, macro_lot } });
   }
   const m=qs('#lot-modal'); m.classList.add('hidden'); m.style.display='none';
   await loadLotsForRound();
@@ -5725,20 +9176,14 @@ if (typeof window !== 'undefined') {
   window.initRoundsDragAndDrop = initRoundsDragAndDrop;
 }
 
-  // Config questions projet (autosave activée)
-  // qs('#save-project-questions')?.addEventListener('click', saveProjectQuestionConfig);
-  
-  // Fiches questions lot (autosave activée)
-  // qs('#save-thresholds')?.addEventListener('click', saveLotThresholds);
+  // Fiches questions (autosave activée)
   qs('#generate-questions')?.addEventListener('click', generateQuestions);
-  qs('#delete-all-questions')?.addEventListener('click', deleteAllQuestions);
-  qs('#refresh-questions')?.addEventListener('click', refreshQuestions);
   qs('#export-questions-excel')?.addEventListener('click', exportQuestionsExcel);
-  qs('#export-rao')?.addEventListener('click', exportRAO);
+  qs('#export-rao')?.addEventListener('click', openRaoExportModal);
     // Rôle entreprise : masquer génération et réglages des questions + ajout entreprise
     if (isEntreprise()) {
       const genBtn = qs('#generate-questions'); if (genBtn) genBtn.style.display = 'none';
-      const delAllBtn = qs('#delete-all-questions'); if (delAllBtn) delAllBtn.style.display = 'none';
+      const editorBtn = qs('#questions-editor-options'); if (editorBtn) editorBtn.style.display = 'none';
       const saveThresh = qs('#save-thresholds'); if (saveThresh) saveThresh.style.display = 'none';
       const addCompanyBtn = qs('#add-company'); if (addCompanyBtn) addCompanyBtn.style.display = 'none';
     }
@@ -5752,10 +9197,18 @@ if (typeof window !== 'undefined') {
   // Éditeur de questions
   qs('#questions-view-filter')?.addEventListener('change', loadQuestionsEditor);
   qs('#questions-target-company')?.addEventListener('change', loadQuestionsEditor);
-  qs('#refresh-questions-editor')?.addEventListener('click', loadQuestionsEditor);
+  qs('#questions-amount-filter')?.addEventListener('change', loadQuestionsEditor);
+  qs('#questions-editor-options')?.addEventListener('click', openQuestionsEditorModal);
 
-  renderSheetBindings();
-  
+  // Event listeners pour la modal d'édition des questions
+  qs('#questions-editor-modal-close')?.addEventListener('click', () => hide('#questions-editor-modal'));
+  qs('#questions-editor-modal-close-btn')?.addEventListener('click', () => hide('#questions-editor-modal'));
+  qs('#questions-editor-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'questions-editor-modal') hide('#questions-editor-modal');
+  });
+  qs('#delete-all-questions-btn')?.addEventListener('click', deleteAllQuestions);
+  qs('#validate-all-questions-btn')?.addEventListener('click', validateAllQuestionsEditor);
+
   // Gestion du thème
   initTheme();
   qsa('.theme-option').forEach(btn => {
@@ -5772,10 +9225,6 @@ if (typeof window !== 'undefined') {
   qs('#export-summary-pdf')?.addEventListener('click', () => {
     const title = `Récapitulatif - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim();
     exportTableToPDF('#summary-table', title || 'Récapitulatif');
-  });
-  qs('#export-rounds-compare-pdf')?.addEventListener('click', () => {
-    const title = `Comparaison des Tours - ${currentProject?.name || ''}`.trim();
-    exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
   });
 
   // Export Excel formaté via API
@@ -5799,70 +9248,82 @@ if (typeof window !== 'undefined') {
       showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
     }
   });
-  qs('#export-rounds-compare-excel')?.addEventListener('click', async () => {
-    if (!currentProject) { showNotify({ title:'Validation', message:'Sélectionnez un projet', type:'info' }); return; }
-    try {
-      const compareView = qs('#rounds-compare-view');
-      const roundSelected = compareView?.dataset.compareSelected || '';
-      const roundPrevious = compareView?.dataset.comparePrevious || '';
-      const roundOpening = compareView?.dataset.compareOpening || '';
-      const roundFrom = roundPrevious || roundOpening;
-      const roundTo = roundSelected;
-      const params = new URLSearchParams();
-      if (roundFrom) params.set('round_from', roundFrom);
-      if (roundTo) params.set('round_to', roundTo);
-      const requestUrl = `${API_BASE}/exports/rounds-comparison/${currentProject.id}${params.toString() ? `?${params.toString()}` : ''}`;
 
-      // Sérialiser les simulations pour l'onglet Simulation
-      const simData = roundsSimulations.map(sim => ({
-        name: sim.name,
-        defaultCompanyId: sim.defaultCompanyId,
-        selections: Object.fromEntries(sim.selections)
-      }));
-      const simulationRoundId = qs('#compare-round')?.value || '';
-
-      const res = await fetch(requestUrl, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          simulations: simData,
-          simulationRoundId: simulationRoundId,
-          selectedOptions: Array.from(selectedRoundOptions)
-        })
-      });
-      if (!res.ok) throw new Error('Erreur export');
-      const blob = await res.blob();
-      const downloadUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `ComparaisonTours_${currentProject?.name}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(downloadUrl);
-    } catch (err) {
-      showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
-    }
+  qs('#export-rounds-compare-options')?.addEventListener('click', openRoundsExportModal);
+  qs('#close-rounds-export-modal')?.addEventListener('click', closeRoundsExportModal);
+  qs('#cancel-rounds-export')?.addEventListener('click', closeRoundsExportModal);
+  qs('#confirm-rounds-export')?.addEventListener('click', confirmRoundsExport);
+  qs('#rounds-export-format')?.addEventListener('change', toggleRoundsExportEmailFields);
+  qs('#rounds-export-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'rounds-export-modal') closeRoundsExportModal();
   });
-  
+
+  qs('#export-data-options')?.addEventListener('click', openDataExportModal);
+  qs('#export-lot-compare-options')?.addEventListener('click', openLotCompareExportModal);
+  qs('#close-data-export-modal')?.addEventListener('click', closeDataExportModal);
+  qs('#cancel-data-export')?.addEventListener('click', closeDataExportModal);
+  qs('#confirm-data-export')?.addEventListener('click', confirmDataExport);
+  qs('#data-export-format')?.addEventListener('change', toggleDataExportEmailFields);
+  qs('#data-export-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'data-export-modal') closeDataExportModal();
+  });
+
+  qs('#close-rao-export-modal')?.addEventListener('click', closeRaoExportModal);
+  qs('#cancel-rao-export')?.addEventListener('click', closeRaoExportModal);
+  qs('#confirm-rao-export')?.addEventListener('click', confirmRaoExport);
+  qs('#rao-export-format')?.addEventListener('change', toggleRaoExportEmailFields);
+  qs('#rao-export-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'rao-export-modal') closeRaoExportModal();
+  });
+
+  qs('#export-questions-email')?.addEventListener('click', () => openQuestionsSendModal());
+
+  // Modal suivi des envois de fiches questions
+  qs('#close-questions-send-modal')?.addEventListener('click', closeQuestionsSendModal);
+  qs('#cancel-questions-send-modal')?.addEventListener('click', closeQuestionsSendModal);
+  qs('#questions-send-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'questions-send-modal') closeQuestionsSendModal();
+  });
+  qs('#qs-send-all-btn')?.addEventListener('click', () => sendQuestionsToAll(false));
+  qs('#qs-send-unsent-btn')?.addEventListener('click', () => sendQuestionsToAll(true));
+
+  qs('#close-export-email-modal')?.addEventListener('click', closeExportEmailModal);
+  qs('#cancel-export-email')?.addEventListener('click', closeExportEmailModal);
+  qs('#send-export-email')?.addEventListener('click', sendExportByEmail);
+  qs('#export-email-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'export-email-modal') closeExportEmailModal();
+  });
+
   // Modal de partage
   qs('#close-share-modal')?.addEventListener('click', closeShareModal);
   qs('#share-project-btn')?.addEventListener('click', shareProject);
   qs('#share-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'share-modal') closeShareModal();
   });
-  
+
   // Modal d'édition du projet
-  document.querySelectorAll('.close-edit-project-modal')?.forEach(btn => {
-    btn.addEventListener('click', closeEditProjectModal);
-  });
-  qs('#edit-project-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'edit-project-modal') closeEditProjectModal();
-  });
+  qs('#close-edit-project-modal')?.addEventListener('click', () => hide('#edit-project-modal'));
   qs('#save-edit-project')?.addEventListener('click', saveEditProject);
-  qs('#edit-add-share-btn')?.addEventListener('click', addEditProjectShare);
-  
+  qs('#edit-project-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'edit-project-modal') hide('#edit-project-modal');
+  });
+
+  // Modal export projet (onglet Projets)
+  qs('#open-phase-export-modal')?.addEventListener('click', () => {
+    if (!currentProject) {
+      showNotify({ title: 'Validation', message: 'Sélectionnez un projet', type: 'info' });
+      return;
+    }
+    openProjectExportModal(currentProject.id, currentProject.name, { scopeLevel: 'project' });
+  });
+  qs('#close-project-export-modal')?.addEventListener('click', closeProjectExportModal);
+  qs('#cancel-project-export')?.addEventListener('click', closeProjectExportModal);
+  qs('#confirm-project-export')?.addEventListener('click', confirmProjectExport);
+  qs('#project-export-question-sheets')?.addEventListener('change', toggleProjectExportFields);
+  qs('#project-export-modal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'project-export-modal') closeProjectExportModal();
+  });
+
   // Modal demande d'accès (visionneur)
   qs('#open-access-request-modal')?.addEventListener('click', openAccessRequestModal);
   qs('#close-access-request-modal')?.addEventListener('click', closeAccessRequestModal);
@@ -5873,24 +9334,19 @@ if (typeof window !== 'undefined') {
 
   // Modal approbation d'accès (responsable/admin)
   const approveConfirmBtn = qs('#approve-confirm-btn');
-  
   qs('#close-approve-access-modal')?.addEventListener('click', cancelApproveAccessModal);
   qs('#approve-cancel-btn')?.addEventListener('click', cancelApproveAccessModal);
-  
   if (approveConfirmBtn) {
-    approveConfirmBtn.addEventListener('click', () => {
-      confirmApproveAccess();
-    });
+    approveConfirmBtn.addEventListener('click', confirmApproveAccess);
   }
-  
   qs('#approve-search')?.addEventListener('input', (e) => filterApproveProjects(e.target.value));
   qs('#approve-access-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'approve-access-modal') cancelApproveAccessModal();
   });
-  
-  // Gestion demandes d'accès (responsable/admin)
+
+  // Gestion demandes d'accès
   qs('#filter-access-requests-status')?.addEventListener('change', loadAccessRequests);
-  
+
   // Attribution d'entreprise
   qs('#close-assign-company-modal')?.addEventListener('click', () => hide('#assign-company-modal'));
   qs('#assign-company-cancel-btn')?.addEventListener('click', () => hide('#assign-company-modal'));
@@ -5898,17 +9354,25 @@ if (typeof window !== 'undefined') {
   qs('#assign-company-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'assign-company-modal') hide('#assign-company-modal');
   });
-  
+
   // Admin: Reset des cooldowns de connexion
   qs('#reset-cooldowns-btn')?.addEventListener('click', async () => {
-    if (!confirm('Réinitialiser tous les cooldowns de connexion (débloquer tous les comptes) ?')) return;
-    try {
-      const result = await api('/auth/reset-cooldowns', { method: 'POST' });
-      showNotify({ title: 'Succès', message: result.message, type: 'success' });
-    } catch (err) {
-      showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-    }
+    showDeleteConfirmation({
+      title: 'Réinitialiser les cooldowns de connexion',
+      message: 'Êtes-vous sûr de vouloir débloquer tous les comptes ? Cela réinitialisera les compteurs de tentatives de connexion échouées.',
+      extra: '<strong>ℹ️ Remarque:</strong> Cette action affectera tous les utilisateurs du système.',
+      onConfirm: async () => {
+        try {
+          const result = await api('/auth/reset-cooldowns', { method: 'POST' });
+          showNotify({ title: 'Succès', message: result.message, type: 'success' });
+        } catch (err) {
+          showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+        }
+      }
+    });
   });
+
+  renderSheetBindings();
 }
 
 /* ================== PARAMÈTRES COMPTE ================== */
@@ -6215,7 +9679,10 @@ function annotateDynamicHelp(){
   setHelp(document.getElementById('mode-compare'), 'Afficher le comparatif consolidé des offres');
   setHelp(document.getElementById('generate-questions'), 'Générer automatiquement les fiches questions pour ce lot');
   setHelp(document.getElementById('export-summary-excel'), 'Exporter le récapitulatif en Excel formaté');
-  setHelp(document.getElementById('export-rounds-compare-excel'), 'Exporter la comparaison des tours en Excel');
+  setHelp(document.getElementById('export-rounds-compare-options'), 'Ouvrir les options d\'export de la comparaison des tours');
+  setHelp(document.getElementById('export-data-options'), 'Ouvrir les options d\'export de la zone Données');
+  setHelp(document.getElementById('export-lot-compare-options'), 'Ouvrir les options d\'export du tableau comparatif du lot');
+  setHelp(document.getElementById('open-phase-export-modal'), 'Ouvrir les options d\'export du projet depuis la phase');
 }
 
 function bindHelpToggle(){
@@ -6294,11 +9761,10 @@ document.addEventListener('DOMContentLoaded', () => {
       exportTableToPDF('#summary-table', title || 'Récapitulatif');
     });
   }
-  const compareBtn = document.getElementById('export-rounds-compare-pdf');
+  const compareBtn = document.getElementById('export-rounds-compare-options');
   if (compareBtn) {
     compareBtn.addEventListener('click', () => {
-      const title = `Comparaison des Tours - ${currentProject?.name || ''}`.trim();
-      exportTableToPDF('#rounds-compare-table', title || 'Comparaison des Tours');
+      openRoundsExportModal();
     });
   }
-})
+});

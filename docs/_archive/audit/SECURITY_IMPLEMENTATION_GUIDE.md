@@ -125,7 +125,7 @@ EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USER=your-email@gmail.com
 EMAIL_PASS=your-app-password
-EMAIL_FROM="TAO <noreply@example.com>"
+EMAIL_FROM="AO Link <noreply@example.com>"
 
 # URL publique de l'application
 APP_URL=https://app.example.com
@@ -253,8 +253,8 @@ import { authenticator } from 'otplib';
 
 export function generateSecret(email) {
   const secret = authenticator.generateSecret({
-    name: `TAO (${email})`,
-    issuer: 'TAO Comparateur'
+    name: `AO Link (${email})`,
+    issuer: 'AO Link'
   });
   return secret;
 }

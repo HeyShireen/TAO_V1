@@ -217,7 +217,7 @@ export async function convertPdfToExcelBuffer({ buffer, headerRow }) {
  * @param {string}  [params.companyName] - Nom entreprise (si nouvelle, pour mode "offer")
  * @param {string}  params.sheetName  - Onglet sélectionné
  * @param {number}  params.headerRow  - Numéro de ligne d'en-tête
- * @param {Object}  params.mapping    - { num: colIndex, designation: colIndex, unit: colIndex, qty: colIndex, unit_price: colIndex, amount: colIndex }
+ * @param {Object}  params.mapping    - { num: colIndex|colIndex[], designation: colIndex|colIndex[], unit: colIndex, qty: colIndex, unit_price: colIndex, amount: colIndex }
  */
 export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows }) {
   const wb = new ExcelJS.Workbook();
@@ -245,7 +245,7 @@ export async function applyImport({ buffer, mode, lotId, roundId, companyId, com
   const usedCols = new Set();
   for (const [field, val] of Object.entries(mapping || {})) {
     if (val == null) continue;
-    if (field === 'designation') {
+    if (field === 'designation' || field === 'num') {
       const arr = Array.isArray(val) ? val : [val];
       arr.forEach(ci => usedCols.add(Number(ci)));
     } else {
@@ -282,7 +282,7 @@ export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, 
   const usedCols = new Set();
   for (const [field, val] of Object.entries(mapping || {})) {
     if (val == null) continue;
-    if (field === 'designation') {
+    if (field === 'designation' || field === 'num') {
       const arr = Array.isArray(val) ? val : [val];
       arr.forEach(ci => usedCols.add(Number(ci)));
     } else {
@@ -308,15 +308,17 @@ export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, 
 }
 
 function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping }) {
+  const normalizedMapping = normalizeImportMapping(mapping);
+
   if (dataRows.length === 0) throw new Error('Aucune donnée à importer');
 
   if (mode === 'dpgf') {
-    return importDPGF({ lotId, dataRows, mapping });
+    return importDPGF({ lotId, dataRows, mapping: normalizedMapping });
   }
   if (mode === 'offer') {
     if (!companyId && !companyName) throw new Error('Entreprise requise');
     if (!roundId) throw new Error('Round ID requis');
-    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping });
+    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping });
   }
   throw new Error(`Mode inconnu: ${mode}`);
 }
@@ -326,6 +328,8 @@ async function importDPGF({ lotId, dataRows, mapping }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const normalizeForMatch = (value) => normalizeArticleNum(value);
 
     // Vérifier si le lot a déjà des items
     const existingItems = await client.query('SELECT COUNT(*) FROM items WHERE lot_id = $1', [lotId]);
@@ -343,17 +347,28 @@ async function importDPGF({ lotId, dataRows, mapping }) {
 
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
-        const num = mapping.num ? String(row[mapping.num] ?? '').trim() : null;
+        const num = buildNum(row, mapping.num);
         const designation = buildDesignation(row, mapping.designation);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
         const mt = mapping.amount ? parseNumber(row[mapping.amount]) : (qty != null && pu != null ? qty * pu : null);
+        
+        // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
+        const moeComments = [];
+        if (mapping.qty && extractComment(row[mapping.qty])) moeComments.push(extractComment(row[mapping.qty]));
+        if (mapping.unit_price && extractComment(row[mapping.unit_price])) moeComments.push(extractComment(row[mapping.unit_price]));
+        if (mapping.amount && extractComment(row[mapping.amount])) moeComments.push(extractComment(row[mapping.amount]));
+        const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
         // Matcher par Num d'abord, sinon par position
         let matchedItem = null;
         if (num) {
-          matchedItem = currentItems.rows.find(it => String(it.num ?? '').trim() === num);
+          const normalizedNum = normalizeForMatch(num);
+          matchedItem = currentItems.rows.find((it) => {
+            const candidate = normalizeForMatch(it.num);
+            return normalizedNum && candidate && candidate === normalizedNum;
+          });
         }
         if (!matchedItem && i < currentItems.rows.length) {
           matchedItem = currentItems.rows[i];
@@ -367,9 +382,9 @@ async function importDPGF({ lotId, dataRows, mapping }) {
           );
           // Upsert MOE
           await client.query(`
-            INSERT INTO moe_items (item_id, qty, unit_price, amount) VALUES ($1, $2, $3, $4)
-            ON CONFLICT (item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount
-          `, [matchedItem.id, qty, pu, mt]);
+            INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment
+          `, [matchedItem.id, qty, pu, mt, moeComment]);
           itemsUpdated++;
         } else {
           // Nouvel item
@@ -379,8 +394,8 @@ async function importDPGF({ lotId, dataRows, mapping }) {
             [lotId, num, designation || '(importé)', unit, pos]
           );
           await client.query(
-            'INSERT INTO moe_items (item_id, qty, unit_price, amount) VALUES ($1, $2, $3, $4)',
-            [insRes.rows[0].id, qty, pu, mt]
+            'INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1, $2, $3, $4, $5)',
+            [insRes.rows[0].id, qty, pu, mt, moeComment]
           );
           itemsImported++;
         }
@@ -389,12 +404,19 @@ async function importDPGF({ lotId, dataRows, mapping }) {
       // INSERT mode : créer tous les items
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
-        const num = mapping.num ? String(row[mapping.num] ?? '').trim() : null;
+        const num = buildNum(row, mapping.num);
         const designation = buildDesignation(row, mapping.designation);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
         const mt = mapping.amount ? parseNumber(row[mapping.amount]) : (qty != null && pu != null ? qty * pu : null);
+        
+        // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
+        const moeComments = [];
+        if (mapping.qty && extractComment(row[mapping.qty])) moeComments.push(extractComment(row[mapping.qty]));
+        if (mapping.unit_price && extractComment(row[mapping.unit_price])) moeComments.push(extractComment(row[mapping.unit_price]));
+        if (mapping.amount && extractComment(row[mapping.amount])) moeComments.push(extractComment(row[mapping.amount]));
+        const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
         if (!designation && !num) continue; // Skip lignes vides
 
@@ -407,8 +429,8 @@ async function importDPGF({ lotId, dataRows, mapping }) {
           [lotId, num, designation || '', unit, pos]
         );
         await client.query(
-          'INSERT INTO moe_items (item_id, qty, unit_price, amount) VALUES ($1, $2, $3, $4)',
-          [insRes.rows[0].id, qty, pu, mt]
+          'INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1, $2, $3, $4, $5)',
+          [insRes.rows[0].id, qty, pu, mt, moeComment]
         );
         itemsImported++;
       }
@@ -439,6 +461,14 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    if (!roundId) {
+      console.warn('[AMOUNT-DIAG][import.offer] Exécution sans roundId', {
+        lotId: Number(lotId),
+        companyId: companyId ? Number(companyId) : null,
+        companyName: companyName || null
+      });
+    }
 
     // Résoudre l'entreprise
     let resolvedCompanyId = companyId ? Number(companyId) : null;
@@ -476,14 +506,34 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       throw new Error('Le lot ne contient aucun article. Importez d\'abord la DPGF.');
     }
 
+    const projectConfigRes = await client.query(
+      `SELECT pqc.offer_amount_mismatch_comment
+       FROM lots l
+       LEFT JOIN project_question_config pqc ON pqc.project_id = l.project_id
+       WHERE l.id = $1`,
+      [lotId]
+    );
+    const offerAmountMismatchTemplate = String(
+      projectConfigRes.rows[0]?.offer_amount_mismatch_comment
+      || 'Montant total incohérent dans la DPGF : le montant importé est conservé.'
+    ).trim();
+
+    // Nettoyage prealable: on remplace integralement les donnees de cette entreprise
+    // pour ce lot + tour, y compris celles non presentes dans le nouvel import.
+    const clearExistingRes = await client.query(
+      `DELETE FROM offers o
+       USING items i
+       WHERE o.item_id = i.id
+         AND i.lot_id = $1
+         AND o.company_id = $2
+         AND o.round_id = $3`,
+      [lotId, resolvedCompanyId, roundId]
+    );
+    const clearedExistingOffers = Number(clearExistingRes.rowCount || 0);
+
     // --- Helpers de normalisation pour le matching ---
     function normalizeNum(n) {
-      if (!n) return '';
-      return String(n).trim().toLowerCase()
-        .replace(/[\s\u00A0]+/g, '')
-        .replace(/^0+(?=\d)/, '')
-        .replace(/\.0+$/, '')
-        .replace(/[.\-/]+$/, '');
+      return normalizeArticleNum(n);
     }
 
     function normalizeDesig(d) {
@@ -523,17 +573,51 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     let dpgfCursor = 0;             // Position dans les items DPGF
     let matched = 0;
     let skipped = 0;
+    let amountMismatchCount = 0;
     const addedPosts = [];          // Postes ajoutés par l'entreprise (pas dans la DPGF)
     const matchDetails = [];
 
+    function formatAmountForComment(value) {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) return '';
+      return numericValue.toFixed(2);
+    }
+
+    function buildAmountMismatchComment({ importedAmount, calculatedAmount, template }) {
+      if (!template) return null;
+      const deltaAmount = Number(importedAmount) - Number(calculatedAmount);
+      return String(template)
+        .replace(/\{\{\s*montant_total\s*\}\}/gi, formatAmountForComment(importedAmount))
+        .replace(/\{\{\s*montant_calcule\s*\}\}/gi, formatAmountForComment(calculatedAmount))
+        .replace(/\{\{\s*ecart\s*\}\}/gi, formatAmountForComment(deltaAmount));
+    }
+
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
-      const num = mapping.num ? String(row[mapping.num] ?? '').trim() : null;
+      const num = buildNum(row, mapping.num);
       const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
       const importedDesignation = mapping.designation ? buildDesignation(row, mapping.designation) : '';
       const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
       const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
       const mt = mapping.amount ? parseNumber(row[mapping.amount]) : (qty != null && pu != null ? qty * pu : null);
+      const calculatedAmount = (qty != null && pu != null) ? qty * pu : null;
+      const hasAmountMismatch = mt != null
+        && calculatedAmount != null
+        && Math.abs(Number(mt) - Number(calculatedAmount)) > 0.01;
+      const amountMismatchComment = hasAmountMismatch
+        ? buildAmountMismatchComment({
+            importedAmount: mt,
+            calculatedAmount,
+            template: offerAmountMismatchTemplate,
+          })
+        : null;
+
+      // Capturer les commentaires pour l'offre (texte saisi dans les cellules de quantité, PU ou montant)
+      const offerValueComments = [];
+      if (mapping.qty && extractComment(row[mapping.qty])) offerValueComments.push(extractComment(row[mapping.qty]));
+      if (mapping.unit_price && extractComment(row[mapping.unit_price])) offerValueComments.push(extractComment(row[mapping.unit_price]));
+      if (mapping.amount && extractComment(row[mapping.amount])) offerValueComments.push(extractComment(row[mapping.amount]));
+      const valueComment = offerValueComments.join(' | ') || null;
 
       // Ligne vide (pas de qty/pu/mt) → skip
       // MAIS : si la désignation ou le N° de cette ligne vide correspond à l'article DPGF courant,
@@ -604,7 +688,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       if (isMatch) {
         const dpgfItem = dpgfItems[dpgfCursor];
         // Extraire un commentaire si l'entreprise a ajouté du texte à la désignation
-        let offerComment = null;
+        let desigComment = null;
         const baseDesig = String(dpgfItem.designation ?? '').trim();
         const offerDesig = String(importedDesignation ?? '').trim();
         if (baseDesig && offerDesig) {
@@ -613,10 +697,20 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           if (offerLower.startsWith(baseLower)) {
             const extra = offerDesig.slice(baseDesig.length).trim();
             if (extra) {
-              offerComment = extra.replace(/^[-–—:]+/, '').trim();
+              desigComment = extra.replace(/^[-–—:]+/, '').trim();
             }
           }
         }
+        
+        // Fusionner les commentaires de désignation et des cellules de valeurs
+        const allComments = [];
+        if (desigComment) allComments.push(desigComment);
+        if (valueComment) allComments.push(valueComment);
+        if (amountMismatchComment && !allComments.includes(amountMismatchComment)) {
+          allComments.push(amountMismatchComment);
+          amountMismatchCount++;
+        }
+        const offerComment = allComments.length > 0 ? allComments.join(' | ') : null;
 
         await client.query(`
           INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment)
@@ -654,6 +748,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           qty,
           unit_price: pu,
           amount: mt,
+          comment: valueComment,
           context: {
             afterDpgfNum: prevDpgf?.num || null,
             afterDpgfDesignation: prevDpgf?.designation || null,
@@ -686,11 +781,11 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
 
         // Créer l'offre associée pour cette entreprise
         await client.query(`
-          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (item_id, company_id, round_id) DO UPDATE
-          SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount
-        `, [newItemId, resolvedCompanyId, roundId, post.unit, post.qty, post.unit_price, post.amount]);
+          SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment
+        `, [newItemId, resolvedCompanyId, roundId, post.unit, post.qty, post.unit_price, post.amount, post.comment]);
 
         nextPos++;
       }
@@ -704,21 +799,37 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     }));
 
     await client.query('COMMIT');
+    const warnings = [];
+    if (unmatchedDpgf.length > 0) {
+      warnings.push(`${unmatchedDpgf.length} article(s) DPGF n'ont pas été couverts par l'offre entreprise.`);
+    }
+    if (amountMismatchCount > 0) {
+      warnings.push(`${amountMismatchCount} ligne(s) avec incohérence montant total / montant calculé : commentaire automatique ajouté.`);
+      console.warn('[AMOUNT-DIAG][import.offer] Incohérences montant importé vs calculé', {
+        lotId: Number(lotId),
+        roundId: roundId ? Number(roundId) : null,
+        companyId: Number(resolvedCompanyId),
+        amountMismatchCount,
+        matched,
+        skipped
+      });
+    }
+
     return {
       ok: true,
       mode: 'offer',
       companyId: resolvedCompanyId,
+      clearedExistingOffers,
       matched,
       skipped,
+      amountMismatchCount,
       totalItems: dpgfItems.length,
       addedPosts,
       addedPostsCount: addedPosts.length,
       unmatchedDpgf,
       unmatchedDpgfCount: unmatchedDpgf.length,
       matchDetails: matchDetails.slice(0, 30),
-      warnings: unmatchedDpgf.length > 0
-        ? [`${unmatchedDpgf.length} article(s) DPGF n'ont pas été couverts par l'offre entreprise.`]
-        : [],
+      warnings,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -749,6 +860,44 @@ function buildDesignation(row, designationCols) {
     }
   }
   return '';
+}
+
+function buildNum(row, numCols) {
+  if (!numCols) return null;
+  const cols = Array.isArray(numCols) ? numCols : [numCols];
+  if (cols.length === 0) return null;
+
+  const sorted = [...cols].sort((a, b) => a - b);
+  const parts = [];
+  for (const c of sorted) {
+    const v = String(row[c] ?? '').trim();
+    if (v) parts.push(v);
+  }
+  if (parts.length === 0) return null;
+  // Fusion stricte des colonnes N° article pour reconstruire une reference unique.
+  return parts.join('');
+}
+
+function normalizeArticleNum(value) {
+  if (!value) return '';
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u00A0\u202F]/g, '')
+    .replace(/[._\-/]+/g, '')
+    .replace(/^0+(?=\d)/, '')
+    .replace(/\.0+$/, '');
+}
+
+function normalizeImportMapping(mapping) {
+  const m = { ...(mapping || {}) };
+  if (m.designation != null && !Array.isArray(m.designation)) {
+    m.designation = [m.designation];
+  }
+  if (m.num != null && !Array.isArray(m.num)) {
+    m.num = [m.num];
+  }
+  return m;
 }
 
 /* =============== Helpers =============== */
@@ -805,6 +954,18 @@ function parseNumber(val) {
   const token = m[0].replace(',', '.');
   n = Number(token);
   return isFinite(n) ? n : null;
+}
+
+/** Extrait le commentaire d'une valeur (texte qui n'est pas un nombre) */
+function extractComment(val) {
+  if (val == null || val === '') return null;
+  const str = String(val).trim();
+  if (str === '') return null;
+  // Si c'est un nombre valide, pas de commentaire
+  const n = parseNumber(val);
+  if (n !== null) return null;
+  // Sinon, retourner le texte comme commentaire
+  return str;
 }
 
 function autoDetectMapping(headers) {
@@ -964,7 +1125,7 @@ async function tryConvertPdfWithTabula(buffer) {
     throw new Error('Tabula introuvable. Placez tabula.jar dans server/tools/tabula/ ou definissez TABULA_JAR_PATH.');
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tao-tabula-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'aolink-tabula-'));
   const pdfPath = path.join(tempDir, `${crypto.randomUUID()}.pdf`);
   const csvPath = path.join(tempDir, `${crypto.randomUUID()}.csv`);
 

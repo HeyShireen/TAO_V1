@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# SECURITY TEST SUITE - TAO v1
+# SECURITY TEST SUITE - AO Link
 # ============================================================================
 # Ce script teste automatiquement les vulnérabilités de sécurité communes
 # Usage: ./test-security.sh https://app.example.com
@@ -248,7 +248,7 @@ test_json_response() {
 # ============================================================================
 
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}  🔒 TAO Security Test Suite${NC}"
+echo -e "${BLUE}  🔒 AO Link Security Test Suite${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 echo "Testing: $BASE_URL"
 echo ""

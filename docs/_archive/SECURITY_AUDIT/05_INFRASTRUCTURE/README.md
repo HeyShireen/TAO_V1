@@ -1,10 +1,10 @@
-# ⚙️ 05_INFRASTRUCTURE - Configuration Production
+﻿# âš™ï¸ 05_INFRASTRUCTURE - Configuration Production
 
-Configurations sécurisées pour déployer en production.
+Configurations sÃ©curisÃ©es pour dÃ©ployer en production.
 
 ---
 
-## 📄 Fichiers dans ce dossier
+## ðŸ“„ Fichiers dans ce dossier
 
 ### 1. **nginx.conf**
 - **Format:** Nginx configuration
@@ -19,7 +19,7 @@ Configurations sécurisées pour déployer en production.
 
 ### 2. **docker-compose.yml**
 - **Format:** Docker Compose
-- **Usage:** Développement + Production
+- **Usage:** DÃ©veloppement + Production
 - **Services:**
   - App Node.js
   - PostgreSQL database
@@ -50,9 +50,9 @@ Configurations sécurisées pour déployer en production.
 
 ---
 
-## 🚀 Déploiement Rapide
+## ðŸš€ DÃ©ploiement Rapide
 
-### Option A: Docker Compose (Recommandé)
+### Option A: Docker Compose (RecommandÃ©)
 ```bash
 cd 05_INFRASTRUCTURE
 docker-compose up -d
@@ -61,92 +61,92 @@ docker-compose up -d
 ### Option B: Nginx + Node (Manual)
 ```bash
 # 1. Copier nginx.conf
-sudo cp nginx.conf /etc/nginx/sites-available/tao-app
-sudo ln -s /etc/nginx/sites-available/tao-app /etc/nginx/sites-enabled/
+sudo cp nginx.conf /etc/nginx/sites-available/aolink-app
+sudo ln -s /etc/nginx/sites-available/aolink-app /etc/nginx/sites-enabled/
 
-# 2. Générer SSL
+# 2. GÃ©nÃ©rer SSL
 sudo certbot certonly --nginx -d app.example.com
 
-# 3. Redémarrer Nginx
+# 3. RedÃ©marrer Nginx
 sudo systemctl reload nginx
 ```
 
 ### Option C: Systemd (Production VM)
 ```bash
 # 1. Copier service file
-sudo cp systemd-service.conf /etc/systemd/system/tao-app.service
+sudo cp systemd-service.conf /etc/systemd/system/aolink-app.service
 
-# 2. Créer utilisateur
-sudo useradd -r -s /bin/false tao-user
+# 2. CrÃ©er utilisateur
+sudo useradd -r -s /bin/false aolink-user
 
-# 3. Activer et démarrer
+# 3. Activer et dÃ©marrer
 sudo systemctl daemon-reload
-sudo systemctl enable tao-app.service
-sudo systemctl start tao-app.service
+sudo systemctl enable aolink-app.service
+sudo systemctl start aolink-app.service
 ```
 
 ---
 
-## 📋 Pre-Deployment Checklist
+## ðŸ“‹ Pre-Deployment Checklist
 
 - [ ] Certificat SSL valide
-- [ ] ALLOWED_ORIGINS configuré
-- [ ] DATABASE_URL sécurisé (SSL/TLS)
+- [ ] ALLOWED_ORIGINS configurÃ©
+- [ ] DATABASE_URL sÃ©curisÃ© (SSL/TLS)
 - [ ] JWT_SECRET min 64 chars
-- [ ] Email credentials sécurisés
-- [ ] Backups configurés
+- [ ] Email credentials sÃ©curisÃ©s
+- [ ] Backups configurÃ©s
 - [ ] Monitoring actif
-- [ ] Logs centralisés
+- [ ] Logs centralisÃ©s
 
 ---
 
-## 🔐 Configuration Security
+## ðŸ” Configuration Security
 
 ### Nginx
-- ✅ HTTPS obligatoire (redirection HTTP→HTTPS)
-- ✅ HSTS header (1 an)
-- ✅ CSP policy strict
-- ✅ Security headers complets
-- ✅ Rate limiting adaptatif
-- ✅ Protection fichiers sensibles
+- âœ… HTTPS obligatoire (redirection HTTPâ†’HTTPS)
+- âœ… HSTS header (1 an)
+- âœ… CSP policy strict
+- âœ… Security headers complets
+- âœ… Rate limiting adaptatif
+- âœ… Protection fichiers sensibles
 
 ### Docker
-- ✅ Non-root user
-- ✅ No new privileges
-- ✅ Capability dropping
-- ✅ Read-only root filesystem option
-- ✅ Health checks
-- ✅ Resource limits
+- âœ… Non-root user
+- âœ… No new privileges
+- âœ… Capability dropping
+- âœ… Read-only root filesystem option
+- âœ… Health checks
+- âœ… Resource limits
 
 ### Systemd
-- ✅ Private tmp
-- ✅ Protect system
-- ✅ Protect home
-- ✅ No new privileges
-- ✅ Restrict namespaces
-- ✅ Lock personality
+- âœ… Private tmp
+- âœ… Protect system
+- âœ… Protect home
+- âœ… No new privileges
+- âœ… Restrict namespaces
+- âœ… Lock personality
 
 ---
 
-## 📊 Architecture Recommandée
+## ðŸ“Š Architecture RecommandÃ©e
 
 ```
 Internet
-  ↓
+  â†“
 Firewall (port 80, 443)
-  ↓
+  â†“
 Nginx (Load Balancer + WAF)
-  ↓
-Node.js App (×3 instances)
-  ↓
+  â†“
+Node.js App (Ã—3 instances)
+  â†“
 PostgreSQL (Master/Replica)
-  ↓
+  â†“
 Backups (Encrypted, Off-site)
 ```
 
 ---
 
-## 🔗 Intégration avec Guides
+## ðŸ”— IntÃ©gration avec Guides
 
 - **Pour Nginx:** Consulter [../02_GUIDES/DEPLOYMENT_SECURITY.md](../02_GUIDES/DEPLOYMENT_SECURITY.md)
 - **Pour Docker:** Consulter [../02_GUIDES/DEPLOYMENT_SECURITY.md](../02_GUIDES/DEPLOYMENT_SECURITY.md)
@@ -154,7 +154,7 @@ Backups (Encrypted, Off-site)
 
 ---
 
-## 💡 Support
+## ðŸ’¡ Support
 
 **Nginx questions?** Consulter [../02_GUIDES/DEPLOYMENT_SECURITY.md](../02_GUIDES/DEPLOYMENT_SECURITY.md) section Nginx
 
@@ -164,5 +164,5 @@ Backups (Encrypted, Off-site)
 
 ---
 
-**Après setup:** Valider avec [../04_SCRIPTS/test-security.sh](../04_SCRIPTS/test-security.sh)
+**AprÃ¨s setup:** Valider avec [../04_SCRIPTS/test-security.sh](../04_SCRIPTS/test-security.sh)
 

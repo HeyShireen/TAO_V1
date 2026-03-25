@@ -1,4 +1,4 @@
-# TAO V1 — Guide Technique 
+# AO Link — Guide Technique 
 
 **Tableau d'Analyse des Offres — Version 1.0**  
 Application web de comparaison et d'analyse d'offres pour marchés publics et privés.
@@ -22,7 +22,7 @@ Application web de comparaison et d'analyse d'offres pour marchés publics et pr
 
 ### Objectif du logiciel
 
-TAO V1 est un système de gestion et de comparaison d'offres permettant de :
+AO Link est un système de gestion et de comparaison d'offres permettant de :
 - **Organiser** des projets complexes en lots et rondes d'appel d'offres
 - **Comparer** les soumissions de multiples entreprises sur des critères quantitatifs et financier 
 - **Analyser** les écarts MOE (Maître d'Œuvre) vs entreprises
@@ -78,7 +78,7 @@ TAO V1 est un système de gestion et de comparaison d'offres permettant de :
 
 ### Architecture SPA et Routing
 
-TAO V1 utilise une architecture **Single Page Application (SPA)** avec un système de routing côté serveur pour gérer l'authentification.
+AO Link utilise une architecture **Single Page Application (SPA)** avec un système de routing côté serveur pour gérer l'authentification.
 
 #### Pages principales
 

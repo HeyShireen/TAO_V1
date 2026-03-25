@@ -17,7 +17,7 @@ Ce document montre comment les vulnérabilités pourraient être exploitées en 
 <!DOCTYPE html>
 <html>
 <body>
-<h1>Vérifiez vos offres TAO</h1>
+<h1>Vérifiez vos offres AO Link</h1>
 <p>Un moment, chargement en cours...</p>
 
 <script>

@@ -2,6 +2,8 @@
 import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, BorderStyle, UnderlineType, HeadingLevel, AlignmentType } from 'docx';
+import JSZip from 'jszip';
+import nodemailer from 'nodemailer';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 
@@ -10,8 +12,29 @@ const router = Router();
 // Toutes les routes nécessitent authentification
 router.use(requireAuth);
 
+// Transporteur email (réutilise la même config que utils/email.js)
+let emailTransporter = null;
+function getEmailTransporter() {
+  if (!emailTransporter) {
+    emailTransporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.EMAIL_PORT || '587'),
+      secure: process.env.EMAIL_PORT === '465',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      connectionTimeout: 10000,
+    });
+  }
+  return emailTransporter;
+}
+
 // Export Excel du récapitulatif d'un tour
-router.get('/summary/:roundId', async (req, res) => {
+async function handleSummaryExport(req, res) {
   try {
     const { roundId } = req.params;
     const userId = req.user.id;
@@ -111,7 +134,7 @@ router.get('/summary/:roundId', async (req, res) => {
 
     // Créer le workbook Excel
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'TAO';
+    workbook.creator = 'AO Link';
     workbook.created = new Date();
 
     const worksheet = workbook.addWorksheet('Récapitulatif');
@@ -279,7 +302,8 @@ router.get('/summary/:roundId', async (req, res) => {
     console.error('Export summary error:', err);
     res.status(500).json({ error: 'Erreur lors de l\'export' });
   }
-});
+}
+router.get('/summary/:roundId', handleSummaryExport);
 
 // Export Excel de la comparaison des tours
 async function handleRoundsComparison(req, res) {
@@ -1188,6 +1212,572 @@ router.get('/rao/:projectId', async (req, res) => {
   } catch (err) {
     console.error('Erreur génération RAO:', err);
     res.status(500).json({ error: 'Erreur lors de la génération du RAO: ' + err.message });
+  }
+});
+
+// ===== Envoi d'export par email =====
+function extractFilenameFromDisposition(contentDisposition, fallback) {
+  if (!contentDisposition) return fallback;
+  const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+async function fetchInternalExport(req, path, { method = 'GET', body = null, fallbackFilename = 'export.bin' } = {}) {
+  const internalRes = await fetch(`${req.protocol}://${req.get('host')}${path}`, {
+    method,
+    headers: {
+      'Cookie': req.headers.cookie || '',
+      'Authorization': req.headers.authorization || '',
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if (!internalRes.ok) {
+    const err = await internalRes.json().catch(() => ({ error: 'Erreur export' }));
+    const error = new Error(err.error || 'Erreur export');
+    error.status = internalRes.status;
+    throw error;
+  }
+
+  return {
+    buffer: Buffer.from(await internalRes.arrayBuffer()),
+    filename: extractFilenameFromDisposition(internalRes.headers.get('content-disposition'), fallbackFilename),
+    contentType: internalRes.headers.get('content-type') || 'application/octet-stream'
+  };
+}
+
+async function generateExportFile(req, exportType, exportParams = {}) {
+  if (exportType === 'rounds-comparison') {
+    const { projectId, roundFrom, roundTo, simulations = [], simulationRoundId = '', selectedOptions = [] } = exportParams;
+    if (!projectId) throw new Error('projectId requis pour cet export');
+
+    const params = new URLSearchParams();
+    if (roundFrom) params.set('round_from', String(roundFrom));
+    if (roundTo) params.set('round_to', String(roundTo));
+    const path = `/api/exports/rounds-comparison/${projectId}${params.toString() ? `?${params.toString()}` : ''}`;
+
+    return fetchInternalExport(req, path, {
+      method: 'POST',
+      body: { simulations, simulationRoundId, selectedOptions },
+      fallbackFilename: `ComparaisonTours_${projectId}.xlsx`
+    });
+  }
+
+  if (exportType === 'summary') {
+    const { roundId } = exportParams;
+    if (!roundId) throw new Error('roundId requis pour cet export');
+    return fetchInternalExport(req, `/api/exports/summary/${roundId}`, {
+      fallbackFilename: `AnalyseLot_Tour${roundId}.xlsx`
+    });
+  }
+
+  if (exportType === 'questions') {
+    const { lotId, roundId, companyId, status: filterStatus } = exportParams;
+    if (!lotId) throw new Error('lotId requis pour cet export');
+    const params = new URLSearchParams();
+    if (roundId) params.set('round_id', String(roundId));
+    if (companyId) params.set('company_id', String(companyId));
+    if (filterStatus) params.set('status', String(filterStatus));
+    return fetchInternalExport(req, `/api/question-config/lot/${lotId}/export-excel${params.toString() ? `?${params.toString()}` : ''}`, {
+      fallbackFilename: `Fiches_Questions_Lot_${lotId}.xlsx`
+    });
+  }
+
+  if (exportType === 'rao') {
+    const { projectId } = exportParams;
+    if (!projectId) throw new Error('projectId requis pour cet export');
+    return fetchInternalExport(req, `/api/exports/rao/${projectId}`, {
+      fallbackFilename: `RAO_${projectId}.docx`
+    });
+  }
+
+  throw new Error(`Type d'export inconnu: ${exportType}`);
+}
+
+function sanitizeZipSegment(value, fallback = 'Sans_nom') {
+  const clean = String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return clean || fallback;
+}
+
+function getZipStructure({ projectId, projectName, roundLabel }) {
+  const root = `Affaire_${sanitizeZipSegment(projectName || `Projet_${projectId}`)}`;
+  const roundFolder = sanitizeZipSegment(roundLabel || 'Tour_non_defini');
+
+  return {
+    root,
+    rao: `${root}/01_RAO`,
+    roundsComparison: `${root}/02_Comparaison_Tours`,
+    lotAnalysis: `${root}/03_Analyses_Lots/${roundFolder}`,
+    questionSheets: `${root}/04_Fiches_Questions/${roundFolder}`
+  };
+}
+
+router.post('/project-bundle-zip', async (req, res) => {
+  try {
+    const {
+      projectId,
+      currentRoundId,
+      questionLotId,
+      questionLotIds = [],
+      selections = {},
+      roundsComparisonParams = {}
+    } = req.body || {};
+
+    if (!projectId) return res.status(400).json({ error: 'projectId requis' });
+    const selectedKeys = Object.entries(selections).filter(([, enabled]) => !!enabled).map(([key]) => key);
+    if (selectedKeys.length === 0) {
+      return res.status(400).json({ error: 'Aucun export sélectionné' });
+    }
+
+    const projectMetaRes = await query(
+      `SELECT name FROM projects WHERE id = $1`,
+      [projectId]
+    );
+    if (projectMetaRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Projet introuvable' });
+    }
+
+    // Determine rounds to process: one specific round or all project rounds
+    let roundsToProcess = [];
+    if (currentRoundId) {
+      const r = await query(
+        `SELECT id, round_number, name FROM rounds WHERE id = $1 AND project_id = $2`,
+        [currentRoundId, projectId]
+      );
+      if (r.rowCount > 0) roundsToProcess.push(r.rows[0]);
+    } else if (selections.lotAnalysis || selections.questionSheets) {
+      const r = await query(
+        `SELECT id, round_number, name FROM rounds WHERE project_id = $1 ORDER BY round_number`,
+        [projectId]
+      );
+      roundsToProcess.push(...r.rows);
+    }
+
+    const firstRound = roundsToProcess[0];
+    const mainRoundLabel = firstRound
+      ? `Tour_${firstRound.round_number}${firstRound.name ? `_${firstRound.name}` : ''}`
+      : 'Tour_non_defini';
+    const projectName = projectMetaRes.rows[0]?.name;
+
+    const zipStructure = getZipStructure({ projectId, projectName, roundLabel: mainRoundLabel });
+
+    const zip = new JSZip();
+
+    if (selections.rao) {
+      const file = await generateExportFile(req, 'rao', { projectId });
+      zip.file(`${zipStructure.rao}/${sanitizeZipSegment(file.filename, 'RAO.docx')}`, file.buffer);
+    }
+
+    if (selections.roundsCompare) {
+      const file = await generateExportFile(req, 'rounds-comparison', { projectId, ...roundsComparisonParams });
+      zip.file(`${zipStructure.roundsComparison}/${sanitizeZipSegment(file.filename, 'Comparaison_Tours.xlsx')}`, file.buffer);
+    }
+
+    if (selections.lotAnalysis) {
+      for (const round of roundsToProcess) {
+        const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
+        const rStruct = getZipStructure({ projectId, projectName, roundLabel: roundLbl });
+        try {
+          const file = await generateExportFile(req, 'summary', { roundId: round.id });
+          zip.file(`${rStruct.lotAnalysis}/${sanitizeZipSegment(file.filename, `Analyse_Tour_${round.id}.xlsx`)}`, file.buffer);
+        } catch (e) {
+          if (e.status !== 404) throw e;
+        }
+      }
+    }
+
+    if (selections.questionSheets && roundsToProcess.length > 0) {
+      const projectLotsRes = await query(
+        `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+        [projectId]
+      );
+      const projectLots = projectLotsRes.rows || [];
+      const projectLotIds = new Set(projectLots.map(l => Number(l.id)).filter(Number.isFinite));
+
+      const explicitLotIds = Array.isArray(questionLotIds)
+        ? [...new Set(questionLotIds.map(id => Number(id)).filter(Number.isFinite))]
+        : [];
+
+      let lotIdsToExport = [];
+      if (explicitLotIds.length > 0) {
+        lotIdsToExport = explicitLotIds;
+      } else {
+        const lotSelection = String(questionLotId || '').trim().toLowerCase();
+        if (!lotSelection || lotSelection === 'all') {
+          lotIdsToExport = projectLots.map(l => Number(l.id)).filter(Number.isFinite);
+        } else {
+          const singleLotId = Number(questionLotId);
+          if (!Number.isFinite(singleLotId)) {
+            return res.status(400).json({ error: 'questionLotId invalide' });
+          }
+          lotIdsToExport = [singleLotId];
+        }
+      }
+
+      lotIdsToExport = lotIdsToExport.filter(lotId => projectLotIds.has(lotId));
+
+      if (lotIdsToExport.length === 0) {
+        return res.status(400).json({ error: 'Aucun lot valide sélectionné pour les fiches questions' });
+      }
+
+      const byId = new Map(projectLots.map(l => [Number(l.id), l]));
+      const lotCompaniesRes = await query(
+        `SELECT lc.lot_id, c.id as company_id, c.name as company_name
+         FROM lot_companies lc
+         JOIN companies c ON c.id = lc.company_id
+         WHERE lc.lot_id = ANY($1::bigint[])
+         ORDER BY lc.created_at, c.name`,
+        [lotIdsToExport]
+      );
+      const companiesByLotId = new Map();
+      for (const row of lotCompaniesRes.rows) {
+        const lotKey = Number(row.lot_id);
+        if (!companiesByLotId.has(lotKey)) companiesByLotId.set(lotKey, []);
+        companiesByLotId.get(lotKey).push({
+          id: Number(row.company_id),
+          name: row.company_name
+        });
+      }
+
+      for (const round of roundsToProcess) {
+        const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
+        const rStruct = getZipStructure({ projectId, projectName, roundLabel: roundLbl });
+        for (const lotId of lotIdsToExport) {
+          const lotCompanies = companiesByLotId.get(Number(lotId)) || [];
+          if (lotCompanies.length === 0) continue;
+          try {
+            const lot = byId.get(Number(lotId));
+            const lotPrefix = sanitizeZipSegment(`${lot?.code || `Lot_${lotId}`}_${lot?.name || ''}`, `Lot_${lotId}`);
+            for (const company of lotCompanies) {
+              const file = await generateExportFile(req, 'questions', {
+                lotId,
+                roundId: round.id,
+                companyId: company.id
+              });
+              const companyPrefix = sanitizeZipSegment(company.name, `Entreprise_${company.id}`);
+              const filename = sanitizeZipSegment(
+                `${companyPrefix}_Fiches_Questions_Lot_${lotId}_Tour_${round.round_number}.xlsx`,
+                `Entreprise_${company.id}_Fiches_Questions.xlsx`
+              );
+              const zipPath = `${rStruct.questionSheets}/${lotPrefix}/${companyPrefix}/${filename}`;
+              zip.file(zipPath, file.buffer);
+            }
+          } catch (e) {
+            if (e.status !== 404) throw e;
+          }
+        }
+      }
+    }
+
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    });
+
+    const safeDate = new Date().toISOString().split('T')[0];
+    const filename = `Exports_Projet_${projectId}_${safeDate}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(zipBuffer);
+  } catch (err) {
+    console.error('Erreur génération ZIP exports:', err);
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    res.status(status).json({ error: err.message || 'Erreur lors de la génération du ZIP' });
+  }
+});
+
+// ===== SUIVI DES ENVOIS DE FICHES QUESTIONS =====
+
+// Récupérer le statut d'envoi pour toutes les entreprises d'un lot/tour
+router.get('/questions-send-status', async (req, res) => {
+  try {
+    const lotId = Number(req.query.lotId);
+    const roundId = Number(req.query.roundId);
+    if (!lotId || !roundId) {
+      return res.status(400).json({ error: 'lotId et roundId obligatoires' });
+    }
+
+    // Vérifier accès au lot
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+
+    const userId = req.user.id;
+    const projectId = lotRes.rows[0].project_id;
+    const accessCheck = await query(
+      `SELECT 1 FROM projects p
+       LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+      [projectId, userId, req.user.role]
+    );
+    if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });
+
+    // Récupérer les entreprises du lot + leur dernier envoi
+    const result = await query(
+      `SELECT c.id, c.name, c.email, c.color,
+              s.sent_at AS last_sent_at,
+              s.sent_to_email AS last_sent_to_email,
+              u.email AS sent_by_email,
+              s.email_subject AS last_email_subject,
+              (SELECT COUNT(*) FROM question_sheet_sends
+               WHERE lot_id = $1 AND round_id = $2 AND company_id = c.id) AS send_count
+       FROM lot_companies lc
+       JOIN companies c ON c.id = lc.company_id
+       LEFT JOIN LATERAL (
+         SELECT qs.sent_at, qs.sent_to_email, qs.sent_by, qs.email_subject
+         FROM question_sheet_sends qs
+         WHERE qs.lot_id = $1 AND qs.round_id = $2 AND qs.company_id = c.id
+         ORDER BY qs.sent_at DESC
+         LIMIT 1
+       ) s ON true
+       LEFT JOIN users u ON u.id = s.sent_by
+       WHERE lc.lot_id = $1
+       ORDER BY lc.created_at, c.name`,
+      [lotId, roundId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur récupération suivi envois:', err);
+    res.status(500).json({ error: 'Erreur lors de la récupération du suivi' });
+  }
+});
+
+// Export ZIP des fiches questions: un fichier par entreprise
+router.get('/questions-by-company/:lotId', async (req, res) => {
+  try {
+    const lotId = Number(req.params.lotId);
+    const roundId = Number(req.query.round_id);
+    const status = req.query.status ? String(req.query.status) : '';
+    const companyIdFilter = req.query.company_id ? Number(req.query.company_id) : null;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const userCompanyId = req.user?.company_id || null;
+
+    if (!lotId) return res.status(400).json({ error: 'lotId invalide' });
+    if (!roundId) return res.status(400).json({ error: 'round_id obligatoire' });
+
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+
+    const projectId = lotRes.rows[0].project_id;
+    const accessCheck = await query(
+      `SELECT 1 FROM projects p
+       LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+      [projectId, req.user.id, req.user.role]
+    );
+    if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });
+
+    const params = [lotId];
+    let companyWhere = '';
+    if (isEntreprise) {
+      if (!userCompanyId) return res.status(403).json({ error: 'Aucune entreprise associée à ce compte' });
+      params.push(userCompanyId);
+      companyWhere = ` AND c.id = $${params.length}`;
+    } else if (companyIdFilter) {
+      params.push(companyIdFilter);
+      companyWhere = ` AND c.id = $${params.length}`;
+    }
+
+    const companiesRes = await query(
+      `SELECT c.id, c.name
+       FROM lot_companies lc
+       JOIN companies c ON c.id = lc.company_id
+       WHERE lc.lot_id = $1${companyWhere}
+       ORDER BY lc.created_at, c.name`,
+      params
+    );
+
+    if (companiesRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Aucune entreprise trouvée pour ce lot' });
+    }
+
+    const zip = new JSZip();
+    let addedCount = 0;
+    for (const company of companiesRes.rows) {
+      try {
+        const file = await generateExportFile(req, 'questions', {
+          lotId,
+          roundId,
+          companyId: Number(company.id),
+          status
+        });
+
+        const companyPrefix = sanitizeZipSegment(company.name, `Entreprise_${company.id}`);
+        const fileName = sanitizeZipSegment(
+          `${companyPrefix}_Fiches_Questions_Lot_${lotId}_Tour_${roundId}.xlsx`,
+          `Entreprise_${company.id}_Fiches_Questions.xlsx`
+        );
+        zip.file(fileName, file.buffer);
+        addedCount++;
+      } catch (e) {
+        if (e.status !== 404) throw e;
+      }
+    }
+
+    if (addedCount === 0) {
+      return res.status(404).json({ error: 'Aucune fiche question à exporter pour les entreprises sélectionnées' });
+    }
+
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    });
+
+    const safeDate = new Date().toISOString().split('T')[0];
+    const filename = `Fiches_Questions_Lot_${lotId}_Par_Entreprise_${safeDate}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(zipBuffer);
+  } catch (err) {
+    console.error('Erreur export fiches questions par entreprise:', err);
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    res.status(status).json({ error: err.message || 'Erreur lors de l\'export' });
+  }
+});
+
+// Envoyer la fiche question à une entreprise spécifique et enregistrer l'envoi
+router.post('/send-questions-to-company', async (req, res) => {
+  try {
+    const { lotId, roundId, companyId, email, subject, message } = req.body;
+
+    if (!lotId || !roundId || !companyId || !email) {
+      return res.status(400).json({ error: 'lotId, roundId, companyId et email obligatoires' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Adresse email invalide' });
+    }
+
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.status(500).json({ error: 'Configuration email non disponible sur le serveur' });
+    }
+
+    // Vérifier accès
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+
+    const projectId = lotRes.rows[0].project_id;
+    const userId = req.user.id;
+    const accessCheck = await query(
+      `SELECT 1 FROM projects p
+       LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+      [projectId, userId, req.user.role]
+    );
+    if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });
+
+    // Générer le fichier Excel des fiches questions filtré par entreprise
+    const { buffer, filename, contentType } = await generateExportFile(req, 'questions', {
+      lotId: Number(lotId),
+      roundId: Number(roundId),
+      companyId: String(companyId)
+    });
+
+    const finalSubject = subject || `Fiches Questions - Lot ${lotId}`;
+    const mailOptions = {
+      from: `"AO Link" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: finalSubject,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Fiches Questions AO Link</h2>
+          ${message ? `<p style="white-space: pre-line;">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : ''}
+          <p style="color: #666; font-size: 14px; margin-top: 20px;">
+            Veuillez trouver ci-joint le fichier Excel des fiches questions exporté depuis AO Link.
+          </p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="color: #999; font-size: 12px;">
+            Envoyé par ${req.user.email} via AO Link
+          </p>
+        </div>
+      `,
+      attachments: [{ filename, content: buffer, contentType }]
+    };
+
+    await getEmailTransporter().sendMail(mailOptions);
+
+    // Enregistrer l'envoi
+    await query(
+      `INSERT INTO question_sheet_sends (lot_id, round_id, company_id, sent_by, sent_to_email, email_subject)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [lotId, roundId, companyId, userId, email, finalSubject]
+    );
+
+    console.log(`✅ Fiches questions envoyées à ${email} (lot ${lotId}, tour ${roundId}, entreprise ${companyId}) par ${req.user.email}`);
+    res.json({ success: true, sent_to: email });
+
+  } catch (err) {
+    console.error('Erreur envoi fiches questions:', err);
+    res.status(500).json({ error: 'Erreur lors de l\'envoi: ' + err.message });
+  }
+});
+
+router.post('/send-email', async (req, res) => {
+  try {
+    const { to, subject, message, exportType, exportParams } = req.body;
+
+    // Validation des champs obligatoires
+    if (!to || !subject || !exportType) {
+      return res.status(400).json({ error: 'Champs obligatoires manquants (to, subject, exportType)' });
+    }
+
+    // Validation basique des adresses email
+    const emailList = Array.isArray(to) ? to : to.split(',').map(e => e.trim()).filter(Boolean);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    for (const email of emailList) {
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: `Adresse email invalide: ${email}` });
+      }
+    }
+
+    // Vérifier que l'email est configuré
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.status(500).json({ error: 'Configuration email non disponible sur le serveur' });
+    }
+
+    const { buffer, filename, contentType } = await generateExportFile(req, exportType, exportParams || {});
+
+    // Envoyer l'email avec la pièce jointe
+    const mailOptions = {
+      from: `"AO Link" <${process.env.EMAIL_USER}>`,
+      to: emailList.join(', '),
+      subject: subject,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Export AO Link</h2>
+          ${message ? `<p style="white-space: pre-line;">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : ''}
+          <p style="color: #666; font-size: 14px; margin-top: 20px;">
+            Veuillez trouver ci-joint le fichier Excel exporté depuis AO Link.
+          </p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="color: #999; font-size: 12px;">
+            Envoyé par ${req.user.email} via AO Link
+          </p>
+        </div>
+      `,
+      attachments: [{
+        filename: filename,
+        content: buffer,
+        contentType: contentType
+      }]
+    };
+
+    await getEmailTransporter().sendMail(mailOptions);
+    console.log(`✅ Export email envoyé à ${emailList.join(', ')} par ${req.user.email}`);
+    res.json({ success: true, message: `Email envoyé à ${emailList.length} destinataire(s)` });
+
+  } catch (err) {
+    console.error('Erreur envoi email export:', err);
+    res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email: ' + err.message });
   }
 });
 

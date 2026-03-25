@@ -36,12 +36,12 @@ export async function sendVerificationEmail(email, token) {
   const verificationUrl = `${process.env.APP_URL || 'http://localhost:4000'}/api/auth/verify-email/${token}`;
   
   const mailOptions = {
-    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
     to: email,
-    subject: 'Confirmez votre adresse email - TAO',
+    subject: 'Confirmez votre adresse email - AO Link',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Bienvenue sur TAO !</h2>
+        <h2 style="color: #333;">Bienvenue sur AO Link !</h2>
         <p>Merci de vous être inscrit. Pour activer votre compte, veuillez confirmer votre adresse email en cliquant sur le lien ci-dessous :</p>
         <p style="margin: 30px 0;">
           <a href="${verificationUrl}" style="background: #0066cc; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
@@ -76,7 +76,7 @@ export async function sendAccessRequestNotification(responsableEmail, visionneur
   const dashboardUrl = `${process.env.APP_URL || 'http://localhost:4000'}`;
   
   const mailOptions = {
-    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
     to: responsableEmail,
     subject: `Nouvelle demande d'accès - ${projectName}`,
     html: `
@@ -96,7 +96,7 @@ export async function sendAccessRequestNotification(responsableEmail, visionneur
         </p>
         
         <p style="color: #666; font-size: 14px;">
-          Connectez-vous à TAO pour approuver ou rejeter cette demande.
+          Connectez-vous à AO Link pour approuver ou rejeter cette demande.
         </p>
       </div>
     `,
@@ -118,14 +118,14 @@ export async function sendAccessApprovedEmail(visionneurEmail, projectName) {
   const dashboardUrl = `${process.env.APP_URL || 'http://localhost:4000'}`;
   
   const mailOptions = {
-    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
     to: visionneurEmail,
     subject: `Accès accordé - ${projectName}`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #28a745;">✅ Accès accordé</h2>
         <p>Votre demande d'accès au projet <strong>${projectName}</strong> a été approuvée.</p>
-        <p>Vous pouvez maintenant consulter ce projet dans votre espace TAO.</p>
+        <p>Vous pouvez maintenant consulter ce projet dans votre espace AO Link.</p>
         
         <p style="margin: 30px 0;">
           <a href="${dashboardUrl}" style="background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
@@ -149,7 +149,7 @@ export async function sendAccessApprovedEmail(visionneurEmail, projectName) {
  */
 export async function sendAccessRejectedEmail(visionneurEmail, projectName, reason) {
   const mailOptions = {
-    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
     to: visionneurEmail,
     subject: `Demande d'accès refusée - ${projectName}`,
     html: `
@@ -186,13 +186,13 @@ export async function sendPasswordResetEmail(email, token) {
   const resetUrl = `${process.env.APP_URL || 'http://localhost:4000'}/api/auth/reset-password/${token}`;
   
   const mailOptions = {
-    from: `"TAO Comparateur" <${process.env.EMAIL_USER}>`,
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
     to: email,
-    subject: 'Réinitialisation de votre mot de passe - TAO',
+    subject: 'Réinitialisation de votre mot de passe - AO Link',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #0066cc;">🔐 Réinitialisation de mot de passe</h2>
-        <p>Vous avez demandé à réinitialiser votre mot de passe sur <strong>TAO Comparateur</strong>.</p>
+        <p>Vous avez demandé à réinitialiser votre mot de passe sur <strong>AO Link</strong>.</p>
         
         <p>Cliquez sur le bouton ci-dessous pour créer un nouveau mot de passe :</p>
         

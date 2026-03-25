@@ -1,37 +1,37 @@
-# 🧪 04_SCRIPTS - Scripts de Test
+﻿# ðŸ§ª 04_SCRIPTS - Scripts de Test
 
-Scripts automatisés pour valider la sécurité.
+Scripts automatisÃ©s pour valider la sÃ©curitÃ©.
 
 ---
 
-## 📄 Fichiers dans ce dossier
+## ðŸ“„ Fichiers dans ce dossier
 
-### **test-security.sh** ⭐⭐⭐
+### **test-security.sh** â­â­â­
 - **Taille:** 250 lignes
 - **Language:** Bash
-- **Status:** ✅ Production-ready
-- **Utilité:** Tests automatisés de sécurité
+- **Status:** âœ… Production-ready
+- **UtilitÃ©:** Tests automatisÃ©s de sÃ©curitÃ©
 
 ---
 
-## 🚀 Usage
+## ðŸš€ Usage
 
 ```bash
-# Donner permission d'exécution
+# Donner permission d'exÃ©cution
 chmod +x 04_SCRIPTS/test-security.sh
 
-# Exécuter sur local
+# ExÃ©cuter sur local
 ./test-security.sh http://localhost:4000
 
-# Exécuter sur production
+# ExÃ©cuter sur production
 ./test-security.sh https://app.example.com
 
-# Output: Security Score % + détails
+# Output: Security Score % + dÃ©tails
 ```
 
 ---
 
-## ✅ Tests Effectués (13 tests)
+## âœ… Tests EffectuÃ©s (13 tests)
 
 1. **HTTPS Redirect** - Force HTTPS en prod
 2. **HSTS Header** - Security header present
@@ -39,80 +39,80 @@ chmod +x 04_SCRIPTS/test-security.sh
 4. **HTTP Security Headers** - X-Frame, X-Content-Type, etc.
 5. **XSS Protection** - X-XSS-Protection header
 6. **Clickjacking** - X-Frame-Options header
-7. **Server Version** - Server header supprimé
+7. **Server Version** - Server header supprimÃ©
 8. **Cookie Security** - HttpOnly + Secure flags
-9. **CORS Protection** - CORS correctement configuré
-10. **SQL Injection** - Paramètres validés
-11. **Missing Auth** - Routes protégées
-12. **Rate Limiting** - Rate limits appliqués
+9. **CORS Protection** - CORS correctement configurÃ©
+10. **SQL Injection** - ParamÃ¨tres validÃ©s
+11. **Missing Auth** - Routes protÃ©gÃ©es
+12. **Rate Limiting** - Rate limits appliquÃ©s
 13. **JSON Response** - Content-Type correct
 
 ---
 
-## 📊 Output Example
+## ðŸ“Š Output Example
 
 ```
-════════════════════════════════════════════════════════
-  🔒 TAO Security Test Suite
-════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  ðŸ”’ AO Link Security Test Suite
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 Testing: http://localhost:4000
 
-✓ PASS: HTTPS active
-✓ PASS: HSTS header présent
-✓ PASS: CSP header présent
-✓ PASS: X-XSS-Protection header présent
-✓ PASS: X-Frame-Options présent
-✓ PASS: Server header supprimé
-✓ PASS: Cookie HttpOnly flag présent
-✓ PASS: CORS correctement configuré
-✓ PASS: Protection SQL Injection active
-✓ PASS: Authentification requise
-✓ PASS: Rate limiting appliqué
-✓ PASS: Content-Type correct
-✓ PASS: JSON Response Security
+âœ“ PASS: HTTPS active
+âœ“ PASS: HSTS header prÃ©sent
+âœ“ PASS: CSP header prÃ©sent
+âœ“ PASS: X-XSS-Protection header prÃ©sent
+âœ“ PASS: X-Frame-Options prÃ©sent
+âœ“ PASS: Server header supprimÃ©
+âœ“ PASS: Cookie HttpOnly flag prÃ©sent
+âœ“ PASS: CORS correctement configurÃ©
+âœ“ PASS: Protection SQL Injection active
+âœ“ PASS: Authentification requise
+âœ“ PASS: Rate limiting appliquÃ©
+âœ“ PASS: Content-Type correct
+âœ“ PASS: JSON Response Security
 
-════════════════════════════════════════════════════════
-  📊 RÉSULTATS
-════════════════════════════════════════════════════════
-✓ Passed: 13
-✗ Failed: 0
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  ðŸ“Š RÃ‰SULTATS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+âœ“ Passed: 13
+âœ— Failed: 0
 
-Score de Sécurité: 100% (13/13 tests)
+Score de SÃ©curitÃ©: 100% (13/13 tests)
 
-✅ TOUS LES TESTS PASSÉS!
+âœ… TOUS LES TESTS PASSÃ‰S!
 ```
 
 ---
 
-## 🎯 Quand Utiliser
+## ðŸŽ¯ Quand Utiliser
 
 - **Before deployment:** Valider que tout fonctionne
-- **After changes:** Vérifier que rien n'est cassé
-- **In CI/CD:** Intégrer dans pipeline
-- **Regular monitoring:** Exécuter régulièrement
+- **After changes:** VÃ©rifier que rien n'est cassÃ©
+- **In CI/CD:** IntÃ©grer dans pipeline
+- **Regular monitoring:** ExÃ©cuter rÃ©guliÃ¨rement
 
 ---
 
-## 📋 Checklist
+## ðŸ“‹ Checklist
 
 - [ ] Script executable (chmod +x)
 - [ ] Application running
-- [ ] Exécuter test-security.sh
-- [ ] Tous les tests doivent passer ✅
-- [ ] Score de sécurité ≥ 85%
+- [ ] ExÃ©cuter test-security.sh
+- [ ] Tous les tests doivent passer âœ…
+- [ ] Score de sÃ©curitÃ© â‰¥ 85%
 - [ ] Aucun warning critique
 
 ---
 
-## 💡 Tips
+## ðŸ’¡ Tips
 
-**Test échoue?** Consulter [../02_GUIDES/SECURITY_IMPLEMENTATION_GUIDE.md](../02_GUIDES/SECURITY_IMPLEMENTATION_GUIDE.md)
+**Test Ã©choue?** Consulter [../02_GUIDES/SECURITY_IMPLEMENTATION_GUIDE.md](../02_GUIDES/SECURITY_IMPLEMENTATION_GUIDE.md)
 
 **Besoin de debug?** Utiliser `./test-security.sh -v` pour verbose mode
 
-**Intégrer dans CI?** Ajouter à `.github/workflows/security.yml`
+**IntÃ©grer dans CI?** Ajouter Ã  `.github/workflows/security.yml`
 
 ---
 
-**Utiliser après:** Implémenter les codes fixes de [../03_CODE_FIXES/](../03_CODE_FIXES/)
+**Utiliser aprÃ¨s:** ImplÃ©menter les codes fixes de [../03_CODE_FIXES/](../03_CODE_FIXES/)
 

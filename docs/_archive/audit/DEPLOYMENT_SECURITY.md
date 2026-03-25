@@ -1,10 +1,10 @@
-# ⚙️ CONFIGURATION NGINX - HARDENING PRODUCTION
+﻿# âš™ï¸ CONFIGURATION NGINX - HARDENING PRODUCTION
 
-## Fichier: `/etc/nginx/sites-available/tao-app`
+## Fichier: `/etc/nginx/sites-available/aolink-app`
 
 ```nginx
 # Upstream Node.js
-upstream tao_backend {
+upstream aolink_backend {
     server localhost:4000;
     keepalive 32;
 }
@@ -15,7 +15,7 @@ server {
     listen [::]:80;
     server_name app.example.com www.example.com;
     
-    # ✅ Redirection forcée HTTPS
+    # âœ… Redirection forcÃ©e HTTPS
     return 301 https://$server_name$request_uri;
 }
 
@@ -26,18 +26,18 @@ server {
     server_name app.example.com www.example.com;
 
     # ====== SSL CONFIGURATION ======
-    # Générer avec Let's Encrypt: certbot certonly --nginx
+    # GÃ©nÃ©rer avec Let's Encrypt: certbot certonly --nginx
     ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
     
-    # ✅ Ciphers sécurisés (Mozilla Modern Config)
+    # âœ… Ciphers sÃ©curisÃ©s (Mozilla Modern Config)
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256';
     ssl_prefer_server_ciphers on;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
     
-    # ✅ HSTS Header
+    # âœ… HSTS Header
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
     
     # ====== SECURITY HEADERS ======
@@ -66,15 +66,15 @@ server {
     limit_conn_zone $binary_remote_addr zone=addr:10m;
     
     # ====== LOGGING ======
-    access_log /var/log/nginx/tao-access.log;
-    error_log /var/log/nginx/tao-error.log;
+    access_log /var/log/nginx/aolink-access.log;
+    error_log /var/log/nginx/aolink-error.log;
     
     # ====== PROXY TO NODE ======
     location / {
         limit_req zone=general burst=20 nodelay;
         limit_conn addr 10;
         
-        proxy_pass http://tao_backend;
+        proxy_pass http://aolink_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -94,7 +94,7 @@ server {
     location ~ ^/api/auth/(login|register|forgot-password|reset-password)$ {
         limit_req zone=auth burst=3 nodelay;
         
-        proxy_pass http://tao_backend;
+        proxy_pass http://aolink_backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -106,7 +106,7 @@ server {
     location ~ ^/api/exports/ {
         limit_req zone=export burst=1 nodelay;
         
-        proxy_pass http://tao_backend;
+        proxy_pass http://aolink_backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -155,46 +155,46 @@ server {
 ## Activation
 
 ```bash
-# Vérifier la syntaxe
+# VÃ©rifier la syntaxe
 sudo nginx -t
 
 # Activer le site
-sudo ln -s /etc/nginx/sites-available/tao-app /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/aolink-app /etc/nginx/sites-enabled/
 
 # Recharger Nginx
 sudo systemctl reload nginx
 
-# Vérifier le statut
+# VÃ©rifier le statut
 sudo systemctl status nginx
 ```
 
 ---
 
-## 🔍 Vérification SSL/TLS
+## ðŸ” VÃ©rification SSL/TLS
 
 ```bash
 # Test SSL
 openssl s_client -connect app.example.com:443
 
-# Vérifier certificat
+# VÃ©rifier certificat
 openssl x509 -in /etc/letsencrypt/live/app.example.com/fullchain.pem -text -noout
 
-# Scan de sécurité (SSL Labs)
+# Scan de sÃ©curitÃ© (SSL Labs)
 # Aller sur: https://www.ssllabs.com/ssltest/analyze.html?d=app.example.com
 ```
 
 ---
 
-## 📜 Certificat Auto-Renouvellement Let's Encrypt
+## ðŸ“œ Certificat Auto-Renouvellement Let's Encrypt
 
 ```bash
 # Installer Certbot
 sudo apt-get install certbot python3-certbot-nginx
 
-# Créer le certificat
+# CrÃ©er le certificat
 sudo certbot certonly --nginx -d app.example.com -d www.example.com
 
-# Auto-renewal (Certbot gère automatiquement)
+# Auto-renewal (Certbot gÃ¨re automatiquement)
 sudo systemctl status certbot.timer
 
 # Tester renouvellement
@@ -203,14 +203,14 @@ sudo certbot renew --dry-run
 
 ---
 
-# ⚙️ CONFIGURATION DOCKER - HARDENING PRODUCTION
+# âš™ï¸ CONFIGURATION DOCKER - HARDENING PRODUCTION
 
 ## Dockerfile
 
 ```dockerfile
 FROM node:20-alpine
 
-# ✅ Non-root user
+# âœ… Non-root user
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001
 
@@ -219,7 +219,7 @@ WORKDIR /app
 # Copier package*.json
 COPY package*.json ./
 
-# Installer dépendances en production
+# Installer dÃ©pendances en production
 RUN npm ci --only=production && npm cache clean --force
 
 # Copier source code
@@ -248,7 +248,7 @@ version: '3.9'
 services:
   app:
     build: .
-    container_name: tao-app
+    container_name: aolink-app
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -265,9 +265,9 @@ services:
     depends_on:
       - db
     networks:
-      - tao-network
+      - aolink-network
     volumes:
-      - /var/log/tao:/app/logs
+      - /var/log/aolink:/app/logs
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -277,15 +277,15 @@ services:
 
   db:
     image: postgres:15-alpine
-    container_name: tao-db
+    container_name: aolink-db
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: tao_prod
+      POSTGRES_DB: aolink_prod
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - tao-network
+      - aolink-network
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -293,7 +293,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: tao-nginx
+    container_name: aolink-nginx
     restart: unless-stopped
     ports:
       - "80:80"
@@ -302,7 +302,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
-      - tao-network
+      - aolink-network
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -314,33 +314,33 @@ volumes:
   postgres_data:
 
 networks:
-  tao-network:
+  aolink-network:
     driver: bridge
 ```
 
 ---
 
-# 🔐 SYSTEMD SERVICE (Sans Docker)
+# ðŸ” SYSTEMD SERVICE (Sans Docker)
 
-## Fichier: `/etc/systemd/system/tao-app.service`
+## Fichier: `/etc/systemd/system/aolink-app.service`
 
 ```ini
 [Unit]
-Description=TAO Application Server
+Description=AO Link Application Server
 After=network.target postgresql.service
 Wants=postgresql.service
 
 [Service]
 Type=simple
-User=tao-user
-WorkingDirectory=/opt/tao/server
+User=aolink-user
+WorkingDirectory=/opt/aolink/server
 
-# ✅ Sécurité
+# âœ… SÃ©curitÃ©
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/opt/tao/server/logs
+ReadWritePaths=/opt/aolink/server/logs
 ProtectClock=yes
 ProtectHostname=yes
 RestrictNamespaces=yes
@@ -349,7 +349,7 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 
 # Environment
-EnvironmentFile=/opt/tao/.env
+EnvironmentFile=/opt/aolink/.env
 Environment="NODE_ENV=production"
 Environment="NODE_OPTIONS=--max-old-space-size=512"
 
@@ -362,7 +362,7 @@ RestartSec=10s
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=tao-app
+SyslogIdentifier=aolink-app
 
 [Install]
 WantedBy=multi-user.target
@@ -371,22 +371,22 @@ WantedBy=multi-user.target
 ## Commandes
 
 ```bash
-# Créer utilisateur
-sudo useradd -r -s /bin/false tao-user
+# CrÃ©er utilisateur
+sudo useradd -r -s /bin/false aolink-user
 
 # Activer service
 sudo systemctl daemon-reload
-sudo systemctl enable tao-app.service
-sudo systemctl start tao-app.service
+sudo systemctl enable aolink-app.service
+sudo systemctl start aolink-app.service
 
-# Vérifier statut
-sudo systemctl status tao-app.service
-sudo journalctl -u tao-app.service -f
+# VÃ©rifier statut
+sudo systemctl status aolink-app.service
+sudo journalctl -u aolink-app.service -f
 ```
 
 ---
 
-# 📊 MONITORING & ALERTES
+# ðŸ“Š MONITORING & ALERTES
 
 ## Prometheus + Grafana
 
@@ -398,7 +398,7 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'tao-app'
+  - job_name: 'aolink-app'
     static_configs:
       - targets: ['localhost:4000']
 ```
@@ -408,27 +408,27 @@ scrape_configs:
 ```yaml
 # alerts.yml
 groups:
-  - name: tao-security
+  - name: aolink-security
     rules:
       - alert: AuthenticationFailures
         expr: rate(auth_failures_total[5m]) > 10
         annotations:
-          summary: "Nombreuses tentatives de connexion échouées"
+          summary: "Nombreuses tentatives de connexion Ã©chouÃ©es"
       
       - alert: UnusualAPIActivity
         expr: rate(http_requests_total[5m]) > 1000
         annotations:
-          summary: "Activité API anormale détectée"
+          summary: "ActivitÃ© API anormale dÃ©tectÃ©e"
       
       - alert: SQLErrorRate
         expr: rate(sql_errors_total[5m]) > 5
         annotations:
-          summary: "Taux d'erreur SQL élevé"
+          summary: "Taux d'erreur SQL Ã©levÃ©"
 ```
 
 ---
 
-# 🧪 Tests Automatisés de Sécurité
+# ðŸ§ª Tests AutomatisÃ©s de SÃ©curitÃ©
 
 ## GitHub Actions - Security Scan
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>TAO — Comparateur d'offres</title>
+  <title>AO Link — Comparateur d'offres</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Archivo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -32,7 +32,7 @@
           <a href="/" title="Retour à l'accueil">
             <img id="header-logo" src="./assets/logo.png" alt="Logo" class="header-logo" style="cursor:pointer" />
           </a>
-          <h1>TAO</h1>
+          <h1>AO Link</h1>
           <nav class="main-nav">
             <button data-tab="tab-projects" class="nav-btn active"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg><span class="nav-label">Projets</span></button>
             <button data-tab="tab-rounds" class="nav-btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg><span class="nav-label">Tours</span></button>
@@ -150,6 +150,7 @@
             </div>
           </div>
         </div>
+
       </section>
 
       <!-- Onglet Tours (Gestion des tours) -->
@@ -169,7 +170,7 @@
                 <p class="muted" style="margin:4px 0 0 0">Créez et gérez les différentes phases du projet (ouverture, 1er tour, 2ème tour, etc.)</p>
               </div>
               <div class="row gap">
-                <button id="export-rao" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Générer RAO Word</button>
+                <button id="export-rao" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter</button>
               </div>
             </div>
             
@@ -201,8 +202,7 @@
               </div>
               <div class="row gap" style="margin-left:auto;align-items:flex-end;flex-wrap:wrap">
                 <button id="update-comparison" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Mettre a jour</button>
-                <button id="export-rounds-compare-pdf" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-printer"></use></svg>Export PDF</button>
-                <button id="export-rounds-compare-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Export Excel</button>
+                <button id="export-rounds-compare-options" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter</button>
               </div>
             </div>
             <div style="margin-top:20px">
@@ -211,6 +211,8 @@
                 <button id="rounds-compare-tab-options" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-layers"></use></svg>Selection options</button>
                 <button id="rounds-compare-tab-simulation" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-flask"></use></svg>Simulation</button>
               </div>
+
+              <div id="rounds-macro-lot-colors" class="chips hidden" style="margin-bottom:12px"></div>
 
               <div id="rounds-compare-table-wrapper" class="table-wrapper tall">
                 <table id="rounds-compare-table" class="summary-table">
@@ -266,7 +268,9 @@
           <div id="tour-lots" class="tour-tabpanel">
             <div style="margin-bottom: 16px; display:flex; gap:12px; align-items:center;">
               <button id="add-lot" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-plus"></use></svg>Ajouter un lot</button>
+              <button id="import-dpgf-lots" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer DPGF</button>
               <span class="muted" style="font-size:12px">Glissez-déposez les lignes pour réordonner</span>
+              <button id="open-phase-export-modal" class="btn ghost" style="margin-left:auto"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter</button>
             </div>
             <div class="table-wrapper">
               <table id="lots-table">
@@ -309,6 +313,7 @@
               <div class="row gap">
                 <button id="mode-compare" class="btn ghost active-mode"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-eye"></use></svg>Comparatif</button>
                 <button id="mode-edit" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-edit"></use></svg>Édition</button>
+                <button id="export-lot-compare-options" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter</button>
               </div>
             </div>
 
@@ -320,9 +325,21 @@
             <div id="lot-companies" class="chips"></div>
             <div class="spacer"></div>
             <button id="open-import-modal" class="btn ghost" title="Importer un fichier Excel"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer</button>
+            <button id="export-data-options" class="btn ghost" title="Exporter les données"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter</button>
             <button id="undo" class="btn ghost">↶</button>
             <button id="redo" class="btn ghost">↷</button>
             <button id="save-grid" class="btn" title="Sauvegarde automatique activée">Sauvegarder</button>
+            <div id="sheet-edit-legend" class="chips" style="margin-left:8px;padding-left:8px;border-left:1px solid var(--border)">
+              <div class="sheet-legend-chip">
+                <div id="sheet-legend-unanswered-swatch" class="sheet-legend-swatch"></div>
+                <span style="font-size:0.85rem;color:var(--fg)">Réponse oubliée</span>
+                <span id="sheet-legend-unanswered-label" style="font-size:0.8rem;color:var(--muted);font-weight:600">Article sans réponse</span>
+              </div>
+              <div class="sheet-legend-chip">
+                <div id="sheet-legend-unexpected-swatch" class="sheet-legend-swatch"></div>
+                <span id="sheet-legend-unexpected-label" style="font-size:0.85rem;color:var(--fg)">Réponse non attendue</span>
+              </div>
+            </div>
           </div>
 
           <!-- VUE TABLEUR -->
@@ -385,14 +402,20 @@
               
               <label for="questions-target-company" style="font-weight:600;margin-left:16px;color:var(--copper)">Entreprise ciblée:</label>
               <select id="questions-target-company" name="questions-target-company" class="compact-select" style="padding:8px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
-                <option value="">➜ Sélectionner une entreprise...</option>
+                <option value="">Sélectionner une entreprise...</option>
+              </select>
+
+              <label for="questions-amount-filter" style="font-weight:600;margin-left:16px">Montants:</label>
+              <select id="questions-amount-filter" name="questions-amount-filter" class="compact-select" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <option value="all">Tous</option>
+                <option value="highest">Plus élevés</option>
+                <option value="lowest">Plus faibles</option>
               </select>
               
               <div class="questions-actions">
-                <button id="generate-questions" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Générer les fiches questions</button>
                 <button id="export-questions-excel" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Exporter Excel</button>
-                <button id="delete-all-questions" class="btn ghost" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-trash"></use></svg>Supprimer toutes les fiches</button>
-                <button id="refresh-questions-editor" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser</button>
+                <button id="export-questions-email" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer par mail</button>
+                <button id="questions-editor-options" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Édition</button>
               </div>
             </div>
             
@@ -434,6 +457,7 @@
                   <span style="font-size:0.9rem;color:var(--fg)">Réponse oubliée</span>
                   <span id="legend-unanswered-comment" style="font-size:0.85rem;color:var(--muted);font-weight:600">Article sans réponse</span>
                 </div>
+
               </div>
             </div>
             
@@ -459,7 +483,7 @@
           
             <!-- Section Quantités -->
             <div style="margin-bottom:32px">
-              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">📦 Seuils de Quantité</h4>
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-box"></use></svg>Seuils de Quantité</h4>
               <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
                 <!-- Quantité très basse -->
                 <div style="border-radius:12px;border:2px solid #0d6efd;background:rgba(13, 110, 253, 0.08);padding:16px">
@@ -510,7 +534,7 @@
 
             <!-- Section Prix -->
             <div>
-              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">💰 Seuils de Prix Unitaire</h4>
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Seuils de Prix Unitaire</h4>
               <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
                 <!-- Prix très bas -->
                 <div style="border-radius:12px;border:2px solid #0d6efd;background:rgba(13, 110, 253, 0.08);padding:16px">
@@ -559,9 +583,60 @@
               </div>
             </div>
 
+            <!-- Section Montants -->
+            <div style="margin-top:32px">
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Seuils de Montant</h4>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
+                <!-- Montant très bas -->
+                <div style="border-radius:12px;border:2px solid #0d6efd;background:rgba(13, 110, 253, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0d6efd"></span>
+                    <strong style="color:#0d6efd">Très Bas</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-amount-very-low" name="threshold-amount-very-low" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-amount-very-low" name="q-amount-very-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Montant bas -->
+                <div style="border-radius:12px;border:2px solid #0dcaf0;background:rgba(13, 202, 240, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0dcaf0"></span>
+                    <strong style="color:#0dcaf0">Bas</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-amount-low" name="threshold-amount-low" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-amount-low" name="q-amount-low" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Montant haut -->
+                <div style="border-radius:12px;border:2px solid #fd7e14;background:rgba(253, 126, 20, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#fd7e14"></span>
+                    <strong style="color:#fd7e14">Haut</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-amount-high" name="threshold-amount-high" type="number" min="0" max="100" step="1" value="10" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-amount-high" name="q-amount-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+                <!-- Montant très haut -->
+                <div style="border-radius:12px;border:2px solid #dc3545;background:rgba(220, 53, 69, 0.08);padding:16px">
+                  <div style="display:flex;align-items:center;margin-bottom:12px;gap:8px">
+                    <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#dc3545"></span>
+                    <strong style="color:#dc3545">Très Haut</strong>
+                  </div>
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Seuil (%) :</label>
+                  <input id="threshold-amount-very-high" name="threshold-amount-very-high" type="number" min="0" max="100" step="1" value="25" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);margin-bottom:12px" />
+                  <label style="display:block;font-size:0.9rem;margin-bottom:8px;color:var(--fg)">Question :</label>
+                  <textarea id="q-amount-very-high" name="q-amount-very-high" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem;resize:vertical"></textarea>
+                </div>
+              </div>
+            </div>
+
             <!-- Section Réponses Oubliées -->
             <div style="margin-top:32px">
-              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)">⚠️ Réponses Oubliées</h4>
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-alert-triangle"></use></svg>Réponses Oubliées</h4>
               <div style="border-radius:12px;border:2px solid #ffc107;background:rgba(255,193,7,0.08);padding:16px;max-width:560px">
                 <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Commentaire et couleur de fond appliqués automatiquement aux cellules d'une entreprise qui n'a pas répondu à un article (quantité et prix vides).</p>
                 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
@@ -577,11 +652,19 @@
               </div>
             </div>
 
-            <div class="row gap" style="margin-top:24px;margin-bottom:16px">
-              <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder les seuils</button>
+            <!-- Section Incohérence de Montant Import -->
+            <div style="margin-top:20px">
+              <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Incohérence de Montant Import</h4>
+              <div style="border-radius:12px;border:2px solid #0dcaf0;background:rgba(13, 202, 240, 0.08);padding:16px;max-width:760px">
+                <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Commentaire ajouté automatiquement lors de l'import offre si le montant total saisi est différent du montant calculé (Qté × PU). Le montant importé est conservé.</p>
+                <label style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">Commentaire automatique :</label>
+                <input id="q-offer-amount-mismatch-comment" name="q-offer-amount-mismatch-comment" type="text" value="Montant total incohérent dans la DPGF : le montant importé est conservé." style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem" />
+              </div>
             </div>
-            
-            <button id="save-project-questions" class="btn" style="margin-top:16px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Sauvegarder</button>
+
+            <div class="row gap" style="margin-top:24px;margin-bottom:16px">
+              <button id="save-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Enregistrement auto</button>
+            </div>
           </div>
 
         
@@ -599,9 +682,22 @@
               <label class="field" style="min-width:0;flex:1 1 180px"><span>Code</span><input id="lot-code" type="text" placeholder="Ex: LOT 1" maxlength="50"/></label>
               <label class="field" style="min-width:0;flex:2 1 240px"><span>Nom</span><input id="lot-name" type="text" placeholder="Ex: Gros Oeuvre" maxlength="200" required/></label>
             </div>
+            <div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:12px">
+              <label class="field" style="min-width:0;flex:1 1 260px">
+                <span>Macrolot</span>
+                <select id="lot-macro-group" name="lot-macro-group">
+                  <option value="">Aucun macrolot</option>
+                </select>
+              </label>
+              <label id="lot-macro-new-wrapper" class="field hidden" style="min-width:0;flex:1 1 240px">
+                <span>Nouveau macrolot</span>
+                <input id="lot-macro-new" type="text" maxlength="100" placeholder="Ex: Enveloppe batiment"/>
+              </label>
+            </div>
             <p id="lot-modal-msg" class="muted" style="margin-top:8px"></p>
           </div>
           <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="lot-modal-delete" class="btn ghost hidden" style="margin-right:auto;color:var(--danger, #ef4444);border-color:var(--danger, #ef4444)">Supprimer</button>
             <button id="lot-modal-save" class="btn">Enregistrer</button>
           </div>
         </div>
@@ -623,6 +719,308 @@
           </div>
           <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
             <button id="round-modal-save" class="btn">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal générique de confirmation de suppression -->
+      <div id="delete-confirmation-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 500px;">
+          <div class="modal-header">
+            <h3 id="delete-confirmation-title" style="color: var(--danger)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-alert-triangle"></use></svg>Confirmer la suppression</h3>
+            <button id="delete-confirmation-close" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <p id="delete-confirmation-message" style="margin-bottom:16px;line-height:1.6"></p>
+            <div id="delete-confirmation-extra" style="padding:12px;background:var(--input-bg);border:1px solid var(--border);border-radius:4px;margin-bottom:16px;font-size:0.9em;display:none"></div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="delete-confirmation-cancel" class="btn ghost">Annuler</button>
+            <button id="delete-confirmation-confirm" class="btn" style="background-color:var(--danger);color:white">Supprimer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal envoi export par email -->
+      <div id="export-email-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 560px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer l'export par email</h3>
+            <button id="close-export-email-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label for="export-email-to">Destinataires</label>
+              <input id="export-email-to" name="export-email-to" type="text" placeholder="ex: contact@client.fr, bureau@entreprise.fr" />
+              <small class="muted">Séparez plusieurs emails avec une virgule.</small>
+            </div>
+            <div class="field">
+              <label for="export-email-subject">Objet</label>
+              <input id="export-email-subject" name="export-email-subject" type="text" />
+            </div>
+            <div class="field">
+              <label for="export-email-message">Message (optionnel)</label>
+              <textarea id="export-email-message" name="export-email-message" rows="5" placeholder="Bonjour,\nVeuillez trouver en pièce jointe l'export Excel."></textarea>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="cancel-export-email" class="btn ghost">Annuler</button>
+            <button id="send-export-email" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal options d'export comparaison des tours -->
+      <div id="rounds-export-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 560px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Options d'export</h3>
+            <button id="close-rounds-export-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label for="rounds-export-format">Format d'export</label>
+              <select id="rounds-export-format" name="rounds-export-format">
+                <option value="excel">Excel</option>
+                <option value="pdf">PDF</option>
+                <option value="email">Email (Excel en pièce jointe)</option>
+              </select>
+            </div>
+
+            <div id="rounds-export-email-fields" class="hidden">
+              <div class="field">
+                <label for="rounds-export-email-to">Destinataires</label>
+                <input id="rounds-export-email-to" name="rounds-export-email-to" type="text" placeholder="ex: contact@client.fr, bureau@entreprise.fr" />
+                <small class="muted">Séparez plusieurs emails avec une virgule.</small>
+              </div>
+              <div class="field">
+                <label for="rounds-export-email-subject">Objet</label>
+                <input id="rounds-export-email-subject" name="rounds-export-email-subject" type="text" />
+              </div>
+              <div class="field">
+                <label for="rounds-export-email-message">Message (optionnel)</label>
+                <textarea id="rounds-export-email-message" name="rounds-export-email-message" rows="5" placeholder="Bonjour,\nVeuillez trouver en pièce jointe l'export Excel."></textarea>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="cancel-rounds-export" class="btn ghost">Annuler</button>
+            <button id="confirm-rounds-export" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Exporter</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal options d'export données (zone import) -->
+      <div id="data-export-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 560px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Options d'export des données</h3>
+            <button id="close-data-export-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label for="data-export-format">Format d'export</label>
+              <select id="data-export-format" name="data-export-format">
+                <option value="excel">Excel</option>
+                <option value="pdf">PDF</option>
+                <option value="email">Email (Excel en pièce jointe)</option>
+              </select>
+            </div>
+
+            <div id="data-export-email-fields" class="hidden">
+              <div class="field">
+                <label for="data-export-email-to">Destinataires</label>
+                <input id="data-export-email-to" name="data-export-email-to" type="text" placeholder="ex: contact@client.fr, bureau@entreprise.fr" />
+                <small class="muted">Séparez plusieurs emails avec une virgule.</small>
+              </div>
+              <div class="field">
+                <label for="data-export-email-subject">Objet</label>
+                <input id="data-export-email-subject" name="data-export-email-subject" type="text" />
+              </div>
+              <div class="field">
+                <label for="data-export-email-message">Message (optionnel)</label>
+                <textarea id="data-export-email-message" name="data-export-email-message" rows="5" placeholder="Bonjour,\nVeuillez trouver en pièce jointe l'export Excel."></textarea>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="cancel-data-export" class="btn ghost">Annuler</button>
+            <button id="confirm-data-export" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Exporter</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal export RAO Word -->
+      <div id="rao-export-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 560px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Générer le RAO Word</h3>
+            <button id="close-rao-export-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label for="rao-export-format">Type d'export</label>
+              <select id="rao-export-format" name="rao-export-format">
+                <option value="rao">RAO Word seul (.docx)</option>
+                <option value="zip">Export complet (ZIP avec arborescence)</option>
+                <option value="email">Email (RAO Word en pièce jointe)</option>
+              </select>
+            </div>
+            <div id="rao-export-email-fields" class="hidden">
+              <div class="field">
+                <label for="rao-export-email-to">Destinataires</label>
+                <input id="rao-export-email-to" name="rao-export-email-to" type="text" placeholder="ex: contact@client.fr, bureau@entreprise.fr" />
+                <small class="muted">Séparez plusieurs emails avec une virgule.</small>
+              </div>
+              <div class="field">
+                <label for="rao-export-email-subject">Objet</label>
+                <input id="rao-export-email-subject" name="rao-export-email-subject" type="text" />
+              </div>
+              <div class="field">
+                <label for="rao-export-email-message">Message (optionnel)</label>
+                <textarea id="rao-export-email-message" name="rao-export-email-message" rows="5" placeholder="Bonjour,&#10;Veuillez trouver en pièce jointe le RAO Word."></textarea>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="cancel-rao-export" class="btn ghost">Annuler</button>
+            <button id="confirm-rao-export" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Générer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal exports projet/phase -->
+      <div id="project-export-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 680px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Exporter le projet</h3>
+            <button id="close-project-export-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <p id="project-export-title" class="muted" style="margin-top:0"></p>
+            <p id="project-export-scope-hint" class="muted" style="margin-top:0;margin-bottom:12px"></p>
+
+            <div style="display:flex;flex-direction:column;gap:10px;padding:12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+              <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-rounds-compare" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter la comparaison des tours (Excel)</span></label>
+              <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-lot-analysis" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter l'analyse par lot du tour (Excel)</span></label>
+              <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-question-sheets" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter les fiches questions (Excel)</span></label>
+            </div>
+
+            <p class="muted" style="margin-top:0;margin-bottom:12px">La phase actuellement sélectionnée sera utilisée pour les exports liés au tour.</p>
+
+            <div id="project-export-question-fields" class="hidden" style="padding:12px;border:1px solid var(--border);border-radius:8px">
+              <div class="field" style="margin-bottom:0">
+                <label for="project-export-question-lot">Lot(s) à exporter</label>
+                <select id="project-export-question-lot" name="project-export-question-lot"></select>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="cancel-project-export" class="btn ghost">Annuler</button>
+            <button id="confirm-project-export" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Lancer l'export</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal suivi des envois de fiches questions -->
+      <div id="questions-send-modal" class="modal hidden">
+        <div class="modal-content" style="max-width:1200px;width:98%">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Suivi des envois — Fiches Questions</h3>
+            <button id="close-questions-send-modal" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body" style="padding:0">
+            <div style="padding:12px 20px;background:var(--input-bg);border-bottom:1px solid var(--border)">
+              <input id="qs-send-subject" type="text" class="field" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Objet de l'email…" />
+            </div>
+            <!-- Message de composition global -->
+            <div style="padding:12px 20px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+                <div style="flex:1;min-width:250px">
+                  <label style="font-size:0.85em;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">Message</label>
+                  <textarea id="qs-send-message" rows="2" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);resize:vertical;font-size:0.9em" placeholder="Message d'accompagnement…"></textarea>
+                </div>
+              </div>
+            </div>
+            <!-- Tableau des entreprises -->
+            <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+              <table style="width:100%;border-collapse:collapse;font-size:0.9em">
+                <thead>
+                  <tr style="background:var(--input-bg);position:sticky;top:0;z-index:1">
+                    <th style="padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Entreprise</th>
+                    <th style="padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Email</th>
+                    <th style="padding:10px 14px;text-align:center;border-bottom:2px solid var(--border);white-space:nowrap">Statut envoi</th>
+                    <th style="padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Dernier envoi</th>
+                    <th style="padding:10px 14px;text-align:center;border-bottom:2px solid var(--border);white-space:nowrap">Nb envois</th>
+                    <th style="padding:10px 14px;text-align:center;border-bottom:2px solid var(--border);white-space:nowrap">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="qs-send-table-body">
+                  <!-- Rempli dynamiquement -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--border);flex-wrap:wrap">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button id="qs-send-all-btn" class="btn primary">
+                <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer à toutes les entreprises
+              </button>
+              <button id="qs-send-unsent-btn" class="btn ghost">
+                <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Envoyer aux non-envoyées
+              </button>
+            </div>
+            <button id="cancel-questions-send-modal" class="btn ghost">Fermer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal édition des fiches questions -->
+      <div id="questions-editor-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header">
+            <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Édition des fiches questions</h3>
+            <button id="questions-editor-modal-close" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+          </div>
+          <div class="modal-body">
+            <div style="display:flex; flex-direction:column; gap:16px">
+              <!-- Option 1: Générer les fiches -->
+              <div style="padding:12px; background:var(--input-bg); border:1px solid var(--border); border-radius:8px">
+                <div style="display:flex; align-items:flex-start; gap:12px">
+                  <div style="flex:1">
+                    <h4 style="margin:0 0 4px 0">Générer les fiches questions</h4>
+                    <p style="margin:0; font-size:0.9em; color:var(--muted)">Génère automatiquement les fiches questions pour le lot et le tour sélectionnés.</p>
+                  </div>
+                  <button id="generate-questions" class="btn ghost" style="white-space:nowrap"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Générer</button>
+                </div>
+              </div>
+
+              <!-- Option 1: Supprimer toutes les fiches -->
+              <div style="padding:12px; background:var(--input-bg); border:1px solid var(--border); border-radius:8px">
+                <div style="display:flex; align-items:flex-start; gap:12px">
+                  <div style="flex:1">
+                    <h4 style="margin:0 0 4px 0">Supprimer toutes les fiches questions</h4>
+                    <p style="margin:0; font-size:0.9em; color:var(--muted)">Supprime toutes les fiches questions du lot pour ce tour. Cette action ne peut pas être annulée.</p>
+                  </div>
+                  <button id="delete-all-questions-btn" class="btn ghost" style="color:var(--danger); white-space:nowrap"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-trash"></use></svg>Supprimer</button>
+                </div>
+              </div>
+
+              <!-- Option 3: Valider toutes les fiches -->
+              <div style="padding:12px; background:var(--input-bg); border:1px solid var(--border); border-radius:8px">
+                <div style="display:flex; align-items:flex-start; gap:12px">
+                  <div style="flex:1">
+                    <h4 style="margin:0 0 4px 0">Valider les fiches questions</h4>
+                    <p style="margin:0; font-size:0.9em; color:var(--muted)">Valide toutes les fiches du lot pour ce tour (ou uniquement l'entreprise ciblée si sélectionnée).</p>
+                  </div>
+                  <button id="validate-all-questions-btn" class="btn ghost" style="color:var(--success); white-space:nowrap"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Valider</button>
+                </div>
+              </div>
+            </div>
+            <p id="questions-editor-modal-msg" class="muted" style="margin-top:12px;font-size:0.9em"></p>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)">
+            <button id="questions-editor-modal-close-btn" class="btn ghost">Fermer</button>
           </div>
         </div>
       </div>
@@ -760,7 +1158,7 @@
 
           <div class="settings-section">
             <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-info"></use></svg>À propos</h4>
-            <p class="muted">TAO - Comparateur d'Offres v1.0</p>
+            <p class="muted">AO Link - Comparateur d'Offres v1.0</p>
             <p class="muted">© 2025 - Tous droits réservés</p>
           </div>
         </div>
@@ -924,6 +1322,8 @@
             <strong>DPGF (MOE) :</strong> Importe la structure du lot (articles, quantités, prix unitaires MOE). Crée ou met à jour les lignes du tableur.
           </div>
 
+          <div id="import-selected-files" class="hidden" style="margin-bottom:8px;padding:10px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px"></div>
+
           <div class="field">
             <label for="import-file-input" style="display:flex;align-items:center;gap:8px;padding:24px;border:2px dashed var(--border);border-radius:10px;cursor:pointer;text-align:center;justify-content:center;transition:border-color 0.2s">
               <svg class="icon" aria-hidden="true" style="width:24px;height:24px"><use href="./assets/icons.svg#icon-file"></use></svg>
@@ -932,11 +1332,14 @@
             <input id="import-file-input" type="file" accept=".xlsx,.xls" style="display:none" />
           </div>
           <div id="import-file-info" class="muted hidden" style="margin-top:8px;font-size:0.85em"></div>
+          <div class="row gap" style="margin-top:12px;justify-content:flex-end">
+            <button id="import-go-step2" class="btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Configurer les colonnes</button>
+          </div>
         </div>
 
         <!-- Étape 2 : Aperçu + Mapping directement en en-tête -->
         <div id="import-step-2" class="hidden">
-          <!-- Section entreprise (visible uniquement en mode offre) -->
+          <!-- Section entreprise (visible uniquement en mode offre simple) -->
           <div id="import-offer-fields" class="hidden" style="margin-bottom:16px">
             <div class="row gap" style="align-items:flex-end">
               <div class="field" style="flex:1">
@@ -951,6 +1354,24 @@
                 <input id="import-company-new" type="text" placeholder="Nom de la nouvelle entreprise" />
               </div>
             </div>
+          </div>
+          <!-- Section batch (visible en import multiple offre) -->
+          <div id="import-batch-hint" class="hidden" style="margin-bottom:16px;padding:16px;background:var(--input-bg);border-radius:8px;border:2px solid var(--border);font-size:0.85em">
+            <style>
+              .batch-files-list { list-style: none; margin: 12px 0 0 0; padding: 0; }
+              .batch-files-list li { padding: 8px 12px; background: var(--card); margin: 4px 0; border-radius: 6px; border-left: 3px solid var(--success, #10b981); font-size: 0.82em; }
+              .batch-files-list .company-name { color: var(--muted); font-size: 0.8em; display: block; margin-top: 2px; }
+            </style>
+            <div style="font-weight:600;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>Import multiple (paramétrage appliqué à tous)</div>
+            <ul id="import-batch-files-list" class="batch-files-list"></ul>
+            <div style="margin-top:12px;color:var(--muted);font-size:0.8em">
+              Chaque fichier doit avoir une entreprise renseignée. Le premier mappage sert de base, puis vous pouvez ajuster fichier par fichier.
+            </div>
+          </div>
+          <div id="import-file-nav" class="hidden" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px">
+            <button id="import-prev-file" class="btn ghost" type="button">← Fichier précédent</button>
+            <div id="import-current-file" class="muted" style="flex:1;text-align:center;font-size:0.82em"></div>
+            <button id="import-next-file" class="btn ghost" type="button">Fichier suivant →</button>
           </div>
           <div class="row gap" style="margin-bottom:8px;align-items:center">
             <button id="import-back-step1" class="btn ghost">← Retour</button>
@@ -976,9 +1397,11 @@
             </table>
           </div>
 
-          <div class="row gap" style="margin-top:12px;justify-content:flex-end">
+          <div id="import-actions" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end;align-items:center">
             <button id="import-cancel" class="btn ghost">Annuler</button>
-            <button id="import-confirm" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Lancer l'import</button>
+            <div style="flex:1;text-align:right">
+              <button id="import-confirm" class="btn" style="font-weight:700;padding:12px 24px;gap:8px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg><span id="import-confirm-text">Lancer l'import</span></button>
+            </div>
           </div>
         </div>
 
@@ -991,6 +1414,78 @@
             <button id="import-done" class="btn">Fermer et actualiser</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Import DPGF → Création automatique de lots -->
+  <div id="import-dpgf-lots-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:920px">
+      <div class="modal-header">
+        <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Importer des DPGF (créer des lots)</h3>
+        <button id="idl-modal-close" class="btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+      </div>
+      <div class="modal-body" style="padding:0">
+
+        <!-- Étape 1 : Sélection des fichiers + noms des lots -->
+        <div id="idl-step-1" style="padding:16px">
+          <p class="muted" style="margin-top:0">Sélectionnez un ou plusieurs fichiers DPGF (Excel ou PDF). Chaque fichier créera automatiquement un nouveau lot.</p>
+          <div class="field">
+            <label for="idl-file-input">Fichiers DPGF</label>
+            <input type="file" id="idl-file-input" multiple accept=".xlsx,.xls,.pdf" style="width:100%;padding:8px;border:2px dashed var(--border);border-radius:8px;cursor:pointer;background:var(--input-bg)">
+          </div>
+          <div id="idl-files-list" style="margin-top:12px"></div>
+          <div class="row gap" style="justify-content:flex-end;margin-top:16px">
+            <button id="idl-cancel" class="btn ghost">Annuler</button>
+            <button id="idl-go-step2" class="btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Configurer les colonnes</button>
+          </div>
+        </div>
+
+        <!-- Étape 2 : Mapping des colonnes -->
+        <div id="idl-step-2" class="hidden" style="padding:16px">
+          <div class="row gap" style="margin-bottom:12px;align-items:center;flex-wrap:wrap">
+            <button id="idl-back-step1" class="btn ghost">← Retour</button>
+            <h4 style="margin:0">Aperçu &amp; correspondance des colonnes</h4>
+            <span class="muted" style="font-size:0.82em">(<span id="idl-total-rows">0</span> lignes)</span>
+            <div class="spacer"></div>
+            <div class="field" style="margin:0">
+              <label for="idl-header-row" style="font-size:0.85em">Ligne en-tête :</label>
+              <input id="idl-header-row" type="number" min="1" max="50" value="1" style="width:56px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em;text-align:center">
+            </div>
+            <div class="field" style="margin:0">
+              <label for="idl-sheet-select" style="font-size:0.85em">Onglet :</label>
+              <select id="idl-sheet-select" name="idl-sheet-select" style="padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em"></select>
+            </div>
+          </div>
+          <div id="idl-multi-sheets" class="hidden" style="margin:-4px 0 10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--input-bg)">
+            <div class="row gap" style="align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px">
+              <strong style="font-size:0.85em">Import multi-onglets (fichier unique)</strong>
+              <label style="display:flex;align-items:center;gap:6px;font-size:0.82em"><input type="checkbox" id="idl-sheets-all" checked> Tout sélectionner</label>
+            </div>
+            <div id="idl-sheets-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+            <p class="muted" style="font-size:0.78em;margin:8px 0 0 0">Chaque onglet sélectionné créera un lot. Le nom du lot sera basé sur le nom saisi + nom de l'onglet.</p>
+          </div>
+          <p class="muted" style="font-size:0.82em;margin-bottom:8px">Ce mapping s'applique à tous les fichiers sélectionnés. Assignez au moins une colonne <strong>Désignation</strong>.</p>
+          <div class="table-wrapper" style="max-height:50vh;overflow:auto">
+            <table id="idl-preview-table" style="font-size:0.78em;white-space:nowrap">
+              <thead id="idl-preview-head"></thead>
+              <tbody id="idl-preview-body"></tbody>
+            </table>
+          </div>
+          <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end">
+            <button id="idl-cancel2" class="btn ghost">Annuler</button>
+            <button id="idl-confirm" class="btn" style="font-weight:700;padding:12px 24px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Lancer l'import</button>
+          </div>
+        </div>
+
+        <!-- Étape 3 : Résultats -->
+        <div id="idl-step-3" class="hidden" style="padding:24px;text-align:center">
+          <div id="idl-result"></div>
+          <div style="margin-top:16px">
+            <button id="idl-done" class="btn">Fermer et actualiser</button>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>

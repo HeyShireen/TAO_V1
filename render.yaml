@@ -1,7 +1,7 @@
 services:
   # Service web
   - type: web
-    name: tao-app
+    name: aolink-app
     env: node
     region: frankfurt  # ou oregon, singapore selon votre localisation
     plan: free  # ou starter pour production
@@ -14,10 +14,10 @@ services:
         generateValue: true  # Render génère automatiquement
       - key: DATABASE_URL
         fromDatabase:
-          name: tao-db
+          name: aolink-db
           property: connectionString
       - key: APP_URL
-        sync: false  # URL de votre app Render (ex: https://tao-app.onrender.com)
+        sync: false  # URL de votre app Render (ex: https://aolink-app.onrender.com)
       - key: EMAIL_USER
         sync: false  # alban.michaud65@gmail.com
       - key: EMAIL_PASS
@@ -26,21 +26,21 @@ services:
         sync: false  # À configurer manuellement si besoin
       - key: REDIS_URL
         fromService:
-          name: tao-redis
+          name: aolink-redis
           type: redis
           property: connectionString
 
 databases:
   # Base de données PostgreSQL
-  - name: tao-db
-    databaseName: tao_db
+  - name: aolink-db
+    databaseName: aolink_db
     plan: free  # ou starter pour production
     region: frankfurt  # Même région que le service web
     ipAllowList: []  # Vide = accessible depuis votre service web uniquement
 
   # Redis (cache, sessions, rate-limiting)
   - type: redis
-    name: tao-redis
+    name: aolink-redis
     plan: free  # ou starter pour production
     region: frankfurt
     ipAllowList: []

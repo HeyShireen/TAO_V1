@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS public.lots (
   id BIGSERIAL PRIMARY KEY,
   project_id BIGINT NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
   code TEXT,
+  macro_lot TEXT,
   name TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS public.moe_items (
   item_id BIGINT NOT NULL PRIMARY KEY REFERENCES public.items(id) ON DELETE CASCADE,
   qty NUMERIC,
   unit_price NUMERIC,
-  amount NUMERIC
+  amount NUMERIC,
+  comment TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.offers (

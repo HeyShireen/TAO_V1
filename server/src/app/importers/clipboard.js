@@ -9,6 +9,18 @@ function safeNum(val) {
   return isFinite(n) ? n : null;
 }
 
+/** Extrait le commentaire d'une valeur (texte qui n'est pas un nombre) */
+function extractComment(val) {
+  if (val == null || val === '') return null;
+  const str = String(val).trim();
+  if (str === '') return null;
+  // Si c'est un nombre valide, pas de commentaire
+  const n = Number(str);
+  if (isFinite(n)) return null;
+  // Sinon, retourner le texte comme commentaire
+  return str;
+}
+
 // rows: array of arrays; headers: array of strings
 export async function importLotFromClipboard({ lotId, headers, rows, roundId }) {
   if (!headers.length || !rows.length) throw new Error('Tableau vide');
@@ -73,6 +85,13 @@ export async function importLotFromClipboard({ lotId, headers, rows, roundId }) 
     const qty = moeQIdx >= 0 ? safeNum(row[moeQIdx]) : null;
     const pu  = moePUIdx >= 0 ? safeNum(row[moePUIdx]) : null;
     const mt  = moeMTIdx >= 0 && row[moeMTIdx] !== '' ? safeNum(row[moeMTIdx]) : (qty!=null && pu!=null ? qty*pu : null);
+    
+    // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
+    const moeComments = [];
+    if (moeQIdx >= 0 && extractComment(row[moeQIdx])) moeComments.push(extractComment(row[moeQIdx]));
+    if (moePUIdx >= 0 && extractComment(row[moePUIdx])) moeComments.push(extractComment(row[moePUIdx]));
+    if (moeMTIdx >= 0 && extractComment(row[moeMTIdx])) moeComments.push(extractComment(row[moeMTIdx]));
+    const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
     const itemRes = await query(
       'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
@@ -80,8 +99,8 @@ export async function importLotFromClipboard({ lotId, headers, rows, roundId }) 
     );
     const itemId = itemRes.rows[0].id;
 
-    await query('INSERT INTO moe_items (item_id, qty, unit_price, amount) VALUES ($1,$2,$3,$4)',
-      [itemId, qty, pu, mt]);
+    await query('INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1,$2,$3,$4,$5)',
+      [itemId, qty, pu, mt, moeComment]);
 
     for (const comp of companies) {
       const ci = comp.cols;
@@ -89,10 +108,18 @@ export async function importLotFromClipboard({ lotId, headers, rows, roundId }) 
       const up = ci.pu  != null ? safeNum(row[ci.pu])  : null;
       const uu = ci.u   != null ? row[ci.u]           : null;
       const um = ci.mt  != null && row[ci.mt] !== '' ? safeNum(row[ci.mt]) : (uq!=null && up!=null ? uq*up : null);
+      
+      // Capturer les commentaires pour l'offre (texte saisi dans les cellules)
+      const offerComments = [];
+      if (ci.qty != null && extractComment(row[ci.qty])) offerComments.push(extractComment(row[ci.qty]));
+      if (ci.pu != null && extractComment(row[ci.pu])) offerComments.push(extractComment(row[ci.pu]));
+      if (ci.mt != null && extractComment(row[ci.mt])) offerComments.push(extractComment(row[ci.mt]));
+      const offerComment = offerComments.length > 0 ? offerComments.join(' | ') : null;
+      
       if (uq!=null || up!=null || uu!=null || um!=null) {
         await query(
-          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount',
-          [itemId, comp.id, roundId || null, uu, uq, up, um]
+          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment',
+          [itemId, comp.id, roundId || null, uu, uq, up, um, offerComment]
         );
       }
     }

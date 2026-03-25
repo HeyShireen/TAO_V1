@@ -1,7 +1,7 @@
-# Cahier des charges - TAO V1 (Tableau d'Analyse des Offres)
+# Cahier des charges - AO Link (Tableau d'Analyse des Offres)
 
 ## 1. Contexte et objectifs
-TAO V1 est une application web destinee a analyser et comparer des offres (entreprises) face a un referentiel MOE. Elle structure les projets en lots et en rounds, genere des questions de RAO et fournit des exports pour la prise de decision.
+AO Link est une application web destinee a analyser et comparer des offres (entreprises) face a un referentiel MOE. Elle structure les projets en lots et en rounds, genere des questions de RAO et fournit des exports pour la prise de decision.
 
 Objectifs principaux :
 - Centraliser les projets, lots, articles et offres dans un referentiel unique.

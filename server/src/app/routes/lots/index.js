@@ -66,14 +66,16 @@ router.get('/:id', async (req, res) => {
         l.id as lot_id, l.code, l.name as lot_name, l.project_id,
         i.id as item_id, i.num, i.designation, i.unit, i.position, i.source_company_id,
         ${isEntreprise ? 'NULL AS moe_qty, NULL AS moe_unit_price, NULL AS moe_amount,' : 'm.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,'}
-        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name, 'color', c2.color) ORDER BY lc2.created_at, c2.id)
+        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name, 'color', c2.color, 'email', c2.email) ORDER BY lc2.created_at, c2.id)
          FROM lot_companies lc2
          JOIN companies c2 ON c2.id = lc2.company_id
          WHERE lc2.lot_id = l.id
          ${isEntreprise && userCompanyId ? 'AND c2.id = ' + userCompanyId : ''}) as companies,
         json_agg(jsonb_build_object(
+          'id', o.id,
           'item_id', o.item_id,
           'company_id', o.company_id,
+          'round_id', o.round_id,
           'unit', o.unit,
           'qty', o.qty,
           'unit_price', o.unit_price,
@@ -108,7 +110,9 @@ router.get('/:id', async (req, res) => {
     // Extraire items avec leurs données MOE
     const itemsMap = new Map();
     const moeList = isEntreprise ? [] : [];
-    const offersList = [];
+    const offersByKey = new Map();
+    let duplicatedOffersCount = 0;
+    const duplicatedOfferSamples = [];
 
     result.rows.forEach(row => {
       if (row.item_id && !itemsMap.has(row.item_id)) {
@@ -134,12 +138,49 @@ router.get('/:id', async (req, res) => {
 
       if (row.offers) {
         row.offers.forEach(offer => {
-          if (offer.item_id && !offersList.find(o => o.item_id === offer.item_id && o.company_id === offer.company_id)) {
-            offersList.push(offer);
+          const itemId = Number(offer.item_id);
+          const companyId = Number(offer.company_id);
+          if (!Number.isFinite(itemId) || !Number.isFinite(companyId)) return;
+
+          const offerRoundId = Number(offer.round_id);
+          const key = `${itemId}_${companyId}_${Number.isFinite(offerRoundId) ? offerRoundId : 'none'}`;
+          const offerId = Number(offer.id) || 0;
+          const previous = offersByKey.get(key);
+
+          if (previous) {
+            duplicatedOffersCount += 1;
+            if (duplicatedOfferSamples.length < 15) {
+              duplicatedOfferSamples.push({
+                lotId: id,
+                roundId: Number.isFinite(offerRoundId) ? offerRoundId : null,
+                itemId,
+                companyId,
+                keptOfferId: Math.max(offerId, previous._offerId || 0),
+                droppedOfferId: Math.min(offerId || 0, previous._offerId || 0)
+              });
+            }
+          }
+
+          if (!previous || offerId >= previous._offerId) {
+            offersByKey.set(key, {
+              ...offer,
+              _offerId: offerId
+            });
           }
         });
       }
     });
+
+    const offersList = Array.from(offersByKey.values()).map(({ _offerId, ...offer }) => offer);
+
+    if (duplicatedOffersCount > 0) {
+      console.warn('[AMOUNT-DIAG][lots.get] Offres dupliquées détectées pour item+entreprise+tour', {
+        lotId: id,
+        requestedRoundId: roundId,
+        duplicatedOffersCount,
+        samples: duplicatedOfferSamples
+      });
+    }
 
     // Filtrer les offres par company pour entreprise (déjà fait en SQL) mais garde sécurité côté code
     const filteredOffers = isEntreprise && userCompanyId
@@ -224,12 +265,14 @@ router.get('/:id/table', async (req, res) => {
       line.companies.push({
         company_id: c.id,
         name: c.name,
+        color: c.color || null,
         u: off.unit ?? null,
         qty: off.qty ?? null,
         pu: off.unit_price ?? null,
         mt: off.amount ?? (off.qty != null && off.unit_price != null ? off.qty * off.unit_price : null),
         delta_qty_pct: dQty,
-        delta_pu_pct: dPu
+        delta_pu_pct: dPu,
+        comment: off.comment ?? null
       });
     }
     return line;
@@ -381,6 +424,26 @@ router.patch('/companies/:companyId/color', isResponsableOrAdmin, async (req, re
     res.json({ ok: true, color });
   } catch (err) {
     console.error('Erreur mise à jour couleur:', err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour' });
+  }
+});
+
+/* ---------- EMAIL ENTREPRISE ---------- */
+router.patch('/companies/:companyId/email', isResponsableOrAdmin, async (req, res) => {
+  const companyId = Number(req.params.companyId);
+  const { email } = req.body || {};
+  // Validation format email basique (ou vide pour effacer)
+  if (email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Adresse email invalide' });
+    }
+  }
+  try {
+    await query('UPDATE companies SET email = $1 WHERE id = $2', [email || null, companyId]);
+    res.json({ ok: true, email: email || null });
+  } catch (err) {
+    console.error('Erreur mise à jour email:', err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour' });
   }
 });
@@ -599,6 +662,15 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
     if (!mode) return res.status(400).json({ error: 'Mode requis (dpgf ou offer)' });
     if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
 
+    if (String(mode) === 'offer' && !roundId) {
+      console.warn('[AMOUNT-DIAG][import.apply] Import offre sans roundId', {
+        lotId,
+        companyId: companyId ? Number(companyId) : null,
+        companyName: companyName || null,
+        userId: req.user?.id || null
+      });
+    }
+
     // Utiliser le fichier caché si disponible, sinon le fichier uploadé
     let buffer = req.file?.buffer;
     let mime = req.file?.mimetype;
@@ -627,6 +699,25 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
       mapping,
       excludedRows: excludedRows || [],
     });
+
+    if (String(mode) === 'offer') {
+      const amountMismatchCount = Number(result?.amountMismatchCount || 0);
+      const unmatchedDpgfCount = Number(result?.unmatchedDpgfCount || 0);
+      const addedPostsCount = Number(result?.addedPostsCount || 0);
+      if (amountMismatchCount > 0 || unmatchedDpgfCount > 0 || addedPostsCount > 0) {
+        console.warn('[AMOUNT-DIAG][import.apply] Import offre avec anomalies fonctionnelles', {
+          lotId,
+          roundId: roundId ? Number(roundId) : null,
+          companyId: Number(result?.companyId || companyId || 0) || null,
+          matched: Number(result?.matched || 0),
+          skipped: Number(result?.skipped || 0),
+          amountMismatchCount,
+          unmatchedDpgfCount,
+          addedPostsCount,
+          warnings: result?.warnings || []
+        });
+      }
+    }
 
     // Nettoyer le fichier caché après usage
     if (fileId) tempFileCache.delete(fileId);

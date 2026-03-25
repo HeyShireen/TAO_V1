@@ -2,6 +2,20 @@ import ExcelJS from 'exceljs';
 import { query } from '../db.js';
 
 /**
+ * Extrait le commentaire d'une valeur (texte qui n'est pas un nombre)
+ */
+function extractComment(val) {
+  if (val == null || val === '') return null;
+  const str = String(val).trim();
+  if (str === '') return null;
+  // Si c'est un nombre valide, pas de commentaire
+  const n = Number(str);
+  if (isFinite(n)) return null;
+  // Sinon, retourner le texte comme commentaire
+  return str;
+}
+
+/**
  * Expected Excel structure (V1):
  * Header row with at least: Num, Désignation, U (optional), Quantité MOE, PU MOE, Montant MOE
  * Then groups of 3-4 columns per company, named, for example:
@@ -131,8 +145,15 @@ export async function importLotFromExcel({ lotId, buffer, roundId }) {
     );
     const itemId = itemRes.rows[0].id;
 
-    await query('INSERT INTO moe_items (item_id, qty, unit_price, amount) VALUES ($1,$2,$3,$4)',
-      [itemId, qtyMoe, puMoe, mtMoe]
+    // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
+    const moeComments = [];
+    if (r[moeQtyCol] != null && extractComment(r[moeQtyCol])) moeComments.push(extractComment(r[moeQtyCol]));
+    if (r[moePuCol] != null && extractComment(r[moePuCol])) moeComments.push(extractComment(r[moePuCol]));
+    if (r[moeMtCol] != null && extractComment(r[moeMtCol])) moeComments.push(extractComment(r[moeMtCol]));
+    const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
+
+    await query('INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1,$2,$3,$4,$5)',
+      [itemId, qtyMoe, puMoe, mtMoe, moeComment]
     );
 
     for (const company of companies) {
@@ -141,11 +162,19 @@ export async function importLotFromExcel({ lotId, buffer, roundId }) {
       const up = cols['pu'] ? Number(r[cols['pu']]) : null;
       const uu = cols['u'] ? r[cols['u']] : null;
       const um = cols['mt'] ? Number(r[cols['mt']]) : (uq != null && up != null ? uq * up : null);
+      
+      // Capturer les commentaires pour l'offre (texte saisi dans les cellules)
+      const offerComments = [];
+      if (cols['qty'] && extractComment(r[cols['qty']])) offerComments.push(extractComment(r[cols['qty']]));
+      if (cols['pu'] && extractComment(r[cols['pu']])) offerComments.push(extractComment(r[cols['pu']]));
+      if (cols['mt'] && extractComment(r[cols['mt']])) offerComments.push(extractComment(r[cols['mt']]));
+      const offerComment = offerComments.length > 0 ? offerComments.join(' | ') : null;
+      
       // Some rows may be empty for a company; skip if no price/unit provided
       if (uq != null || up != null || uu != null || um != null) {
         await query(
-          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount',
-          [itemId, company.id, roundId || null, uu, uq, up, um]
+          'INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (item_id, company_id, round_id) DO UPDATE SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment',
+          [itemId, company.id, roundId || null, uu, uq, up, um, offerComment]
         );
       }
     }

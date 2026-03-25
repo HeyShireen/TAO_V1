@@ -2,535 +2,817 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>TAO — Tableau d'Analyse d'Offres</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Archivo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AO Link - Tableau d'Analyse d'Offres</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
   <link rel="icon" type="image/x-icon" href="./assets/favicon_io/favicon.ico" />
   <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon_io/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon_io/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicon_io/apple-touch-icon.png" />
   <link rel="manifest" href="./assets/favicon_io/site.webmanifest" />
-  <meta name="theme-color" content="#0a0e14" />
+  <meta name="theme-color" content="#0f111a" />
   <style>
+    :root {
+      --home-shell: rgba(10, 12, 21, 0.72);
+      --home-card: rgba(12, 16, 30, 0.78);
+      --home-soft: rgba(255, 255, 255, 0.06);
+      --home-ice: #73d2ff;
+      --home-copper: #efb36e;
+      --home-hero: linear-gradient(135deg, rgba(35, 48, 82, 0.88) 0%, rgba(15, 19, 34, 0.96) 55%, rgba(26, 33, 54, 0.92) 100%);
+      --home-grid: linear-gradient(rgba(115, 210, 255, 0.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(115, 210, 255, 0.09) 1px, transparent 1px);
+    }
+
+    body {
+      font-family: 'Sora', sans-serif;
+    }
+
     .home-header {
       position: fixed;
       top: 0;
       left: 0;
       right: 0;
       height: 72px;
-      background: rgba(15,17,26,0.9);
-      border-bottom: 1px solid var(--border);
+      z-index: 1000;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 36px;
-      z-index: 1000;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      gap: 12px;
+      padding: 0 32px;
+      background: rgba(10, 13, 22, 0.74);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
     }
+
     .home-logo-container {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
+      min-width: 0;
     }
+
     .home-logo {
       height: 36px;
       width: auto;
-      filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3));
     }
+
     .home-title {
       margin: 0;
-      font-size: 14px;
-      font-family: 'IBM Plex Mono', monospace;
-      font-weight: 600;
+      font: 600 13px/1 'IBM Plex Mono', monospace;
       letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: var(--copper);
+      color: var(--home-copper);
+      white-space: nowrap;
     }
+
     .home-nav {
       display: flex;
-      gap: 12px;
       align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
+
     .home-content {
-      margin-top: 72px;
-      padding: 72px 40px 80px;
       max-width: 1200px;
-      margin-left: auto;
-      margin-right: auto;
+      margin: 0 auto;
+      padding: 98px 28px 72px;
     }
+
     .hero {
-      display: grid;
-      grid-template-columns: minmax(0,1.1fr) minmax(0,0.9fr);
-      gap: 40px;
-      align-items: center;
-      padding: 56px;
-      border-radius: 20px;
-      background: linear-gradient(135deg, rgba(34,42,66,0.95), rgba(19,24,39,0.98));
-      border: 1px solid rgba(255,255,255,0.08);
-      box-shadow: 0 24px 60px rgba(0,0,0,0.35);
       position: relative;
       overflow: hidden;
+      background: var(--home-hero);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 20px;
+      padding: 42px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+      gap: 32px;
+      box-shadow: 0 26px 52px rgba(0, 0, 0, 0.38);
+      isolation: isolate;
     }
-    .hero::before {
+
+    .hero::before,
+    .hero::after {
       content: '';
       position: absolute;
-      width: 420px;
-      height: 420px;
-      border-radius: 50%;
-      right: -120px;
-      top: -160px;
-      background: radial-gradient(circle, rgba(122,92,255,0.25), rgba(122,92,255,0));
-      filter: blur(2px);
+      pointer-events: none;
+      z-index: -1;
     }
+
+    .hero::before {
+      inset: -40% auto auto -18%;
+      width: 460px;
+      height: 460px;
+      background: radial-gradient(circle, rgba(239, 179, 110, 0.22) 0%, rgba(239, 179, 110, 0) 66%);
+      animation: drift 9s ease-in-out infinite;
+    }
+
+    .hero::after {
+      inset: auto -12% -30% auto;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(115, 210, 255, 0.22) 0%, rgba(115, 210, 255, 0) 68%);
+      animation: drift 11s ease-in-out infinite reverse;
+    }
+
     .hero-eyebrow {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 12px;
-      letter-spacing: 0.2em;
+      margin: 0 0 14px 0;
+      font: 500 11px/1.4 'IBM Plex Mono', monospace;
       text-transform: uppercase;
-      color: var(--muted);
-      margin: 0 0 12px 0;
+      letter-spacing: 0.24em;
+      color: rgba(255, 255, 255, 0.72);
     }
+
     .hero-title {
-      font-size: clamp(2.6rem, 3.6vw, 3.4rem);
+      margin: 0;
+      font-size: clamp(2rem, 4.1vw, 3.35rem);
       line-height: 1.05;
-      margin: 0 0 16px 0;
       color: #fff;
-      font-weight: 700;
+      letter-spacing: -0.03em;
     }
+
     .hero-subtitle {
-      font-size: 1.05rem;
-      color: rgba(255,255,255,0.78);
-      margin: 0 0 20px 0;
-      max-width: 520px;
+      margin: 16px 0 0 0;
+      max-width: 640px;
+      font-size: 1rem;
+      color: rgba(235, 240, 255, 0.84);
     }
+
     .hero-ctas {
+      margin-top: 26px;
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 18px;
+      gap: 10px;
     }
+
+    .home-button-solid {
+      background: linear-gradient(135deg, #efb36e 0%, #73d2ff 100%);
+      color: #0f111a;
+      border: 0;
+      box-shadow: 0 10px 28px rgba(115, 210, 255, 0.2);
+    }
+
     .hero-proof {
+      margin-top: 18px;
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
-      color: var(--muted);
-      font-size: 0.95rem;
+      gap: 8px;
     }
+
     .hero-proof span {
+      border: 1px solid rgba(255, 255, 255, 0.17);
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 999px;
+      padding: 6px 11px;
+      font: 500 11px/1 'IBM Plex Mono', monospace;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.84);
     }
-    .hero-proof span {
-      padding: 6px 12px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
+
     .hero-panel {
-      background: rgba(7,10,18,0.65);
-      border: 1px solid rgba(255,255,255,0.08);
+      padding: 18px;
       border-radius: 16px;
-      padding: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: var(--home-shell);
       display: grid;
-      gap: 18px;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      gap: 14px;
+      align-content: start;
     }
+
     .hero-panel h3 {
       margin: 0;
-      font-size: 1.1rem;
+      font-size: 1.03rem;
       color: #fff;
     }
+
     .hero-panel p {
       margin: 0;
+      font-size: 0.9rem;
+      color: rgba(233, 236, 249, 0.78);
+    }
+
+    .visual-strip {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .visual-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      min-height: 148px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .visual-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: saturate(0.9) contrast(1.04);
+      opacity: 0.9;
+    }
+
+    .visual-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(6, 9, 18, 0.08), rgba(6, 9, 18, 0.82));
+    }
+
+    .visual-caption {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      z-index: 1;
+      color: #fff;
+      font: 600 11px/1.3 'IBM Plex Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .kpi {
+      padding: 13px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      background: rgba(255, 255, 255, 0.05);
+      display: grid;
+      gap: 4px;
+    }
+
+    .kpi-value {
+      margin: 0;
+      color: #fff;
+      font-size: 1.16rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .kpi-label {
+      margin: 0;
+      color: rgba(235, 239, 250, 0.72);
+      font-size: 0.77rem;
+    }
+
+    .section {
+      margin-top: 50px;
+    }
+
+    .section-head {
+      margin-bottom: 18px;
+      max-width: 740px;
+    }
+
+    .section-label {
+      margin: 0 0 10px 0;
+      font: 500 11px/1.3 'IBM Plex Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: rgba(233, 236, 249, 0.72);
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: clamp(1.45rem, 2.8vw, 2.18rem);
+      line-height: 1.18;
+      color: #fff;
+    }
+
+    .section-subtitle {
+      margin: 12px 0 0;
       color: var(--muted);
       font-size: 0.95rem;
     }
-    .kpi-grid {
+
+    .feature-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0,1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
     }
-    .kpi {
-      background: rgba(255,255,255,0.04);
-      border-radius: 12px;
-      padding: 14px;
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .kpi-value {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: #fff;
-    }
-    .kpi-label {
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-    .section {
-      margin: 56px 0;
-    }
-    .section-title {
-      font-size: 2.2rem;
-      color: #fff;
-      margin: 0 0 12px 0;
-    }
-    .section-subtitle {
-      color: var(--muted);
-      margin: 0 0 18px 0;
-      max-width: 520px;
-    }
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 18px;
-    }
+
     .feature-card {
-      padding: 22px;
-      background: rgba(12,16,28,0.7);
+      background: var(--home-card);
+      border: 1px solid rgba(255, 255, 255, 0.11);
       border-radius: 14px;
-      border: 1px solid rgba(255,255,255,0.08);
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
+      padding: 18px;
+      transform: translateY(16px);
+      opacity: 0;
+      animation: rise 0.7s ease forwards;
     }
-    .feature-card:hover {
-      transform: translateY(-6px);
-      box-shadow: 0 16px 36px rgba(0,0,0,0.35);
+
+    .feature-card:nth-child(2) {
+      animation-delay: 0.08s;
     }
+
+    .feature-card:nth-child(3) {
+      animation-delay: 0.16s;
+    }
+
+    .feature-card:nth-child(4) {
+      animation-delay: 0.24s;
+    }
+
+    .feature-card:nth-child(5) {
+      animation-delay: 0.32s;
+    }
+
+    .feature-card:nth-child(6) {
+      animation-delay: 0.4s;
+    }
+
     .feature-icon {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
-      background: rgba(122,92,255,0.18);
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
       color: #fff;
       margin-bottom: 12px;
+      background: linear-gradient(135deg, rgba(239, 179, 110, 0.45), rgba(115, 210, 255, 0.38));
     }
-    .feature-icon .icon { width: 22px; height: 22px; }
+
+    .feature-icon .icon {
+      width: 20px;
+      height: 20px;
+      margin-right: 0;
+    }
+
     .feature-title {
-      font-size: 1.1rem;
-      margin: 0 0 8px 0;
+      margin: 0;
+      font-size: 1.03rem;
       color: #fff;
     }
-    .feature-desc {
-      margin: 0;
+
+    .feature-text {
+      margin: 10px 0 0;
+      font-size: 0.88rem;
+      color: rgba(230, 236, 250, 0.78);
       line-height: 1.55;
-      color: var(--muted);
-      font-size: 0.9rem;
     }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px;
+      background: var(--home-shell);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+    }
+
+    .flow-step {
+      position: relative;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--home-soft);
+      background: rgba(255, 255, 255, 0.03);
+      min-height: 112px;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      right: -7px;
+      width: 12px;
+      height: 1px;
+      background: rgba(115, 210, 255, 0.5);
+    }
+
+    .flow-step small {
+      display: block;
+      color: var(--home-copper);
+      font: 500 11px/1 'IBM Plex Mono', monospace;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .flow-step h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 0.95rem;
+    }
+
+    .flow-step .icon {
+      margin-right: 0;
+      width: 18px;
+      height: 18px;
+      color: var(--home-ice);
+      margin-bottom: 8px;
+    }
+
+    .flow-step p {
+      margin: 8px 0 0;
+      color: rgba(230, 236, 250, 0.72);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+
     .split {
       display: grid;
-      grid-template-columns: minmax(0,1fr) minmax(0,1fr);
-      gap: 28px;
-      align-items: start;
-    }
-    .stack-card {
-      padding: 24px;
-      border-radius: 16px;
-      background: rgba(12,16,28,0.7);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .steps {
-      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 12px;
     }
-    .step {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      padding: 12px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.06);
-      font-size: 0.95rem;
-      color: var(--muted);
-    }
-    .step-number {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: rgba(122,92,255,0.2);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      font-weight: 600;
-      font-size: 0.85rem;
-    }
-    .roles-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 18px;
-    }
-    .role-card {
-      padding: 20px;
+
+    .panel {
       border-radius: 14px;
-      background: rgba(12,16,28,0.7);
-      border: 1px solid rgba(255,255,255,0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: var(--home-shell);
+      overflow: hidden;
     }
-    .role-title {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 1.05rem;
-      margin: 0 0 8px 0;
+
+    .panel-title {
+      margin: 0;
+      padding: 15px 16px;
       color: #fff;
+      font-size: 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      background: linear-gradient(90deg, rgba(239, 179, 110, 0.16), rgba(115, 210, 255, 0.1));
     }
+
+    .roles-table {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr 1fr;
+    }
+
+    .role-cell {
+      padding: 12px 14px;
+      font-size: 0.83rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      color: rgba(233, 236, 249, 0.84);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .role-cell.role-head {
+      font: 600 11px/1.2 'IBM Plex Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--home-copper);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .stack-list {
+      list-style: none;
+      padding: 10px 14px 14px;
+      margin: 0;
+      display: grid;
+      gap: 9px;
+    }
+
+    .stack-list li {
+      padding: 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      background: rgba(255, 255, 255, 0.03);
+      color: rgba(233, 236, 249, 0.82);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+
+    .stack-list strong {
+      display: block;
+      color: #fff;
+      font-size: 0.9rem;
+      margin-bottom: 3px;
+    }
+
     .cta-banner {
-      background: linear-gradient(135deg, rgba(122,92,255,0.22), rgba(0,174,255,0.18));
-      border: 1px solid rgba(255,255,255,0.14);
+      margin-top: 44px;
       border-radius: 18px;
-      padding: 36px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: var(--home-grid);
+      background-size: 26px 26px;
+      background-color: rgba(11, 15, 28, 0.92);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+      padding: 28px;
       display: flex;
-      flex-wrap: wrap;
-      gap: 20px;
       justify-content: space-between;
       align-items: center;
-      box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+      gap: 16px;
+      flex-wrap: wrap;
     }
+
     .cta-banner h3 {
-      margin: 0 0 8px 0;
-      color: #fff;
-    }
-    .cta-banner p {
       margin: 0;
-      color: rgba(255,255,255,0.8);
+      color: #fff;
+      font-size: 1.18rem;
     }
-    @media (max-width: 980px) {
-      .hero { grid-template-columns: 1fr; padding: 36px; }
-      .split { grid-template-columns: 1fr; }
-      .home-content { padding: 56px 24px 80px; }
-      .home-header { padding: 0 24px; }
+
+    .cta-banner p {
+      margin: 10px 0 0;
+      color: rgba(233, 236, 249, 0.78);
+      font-size: 0.9rem;
+      max-width: 560px;
     }
-    @media (max-width: 640px) {
-      .hero { padding: 20px; }
-      .hero-title { font-size: clamp(1.8rem, 5vw, 2.6rem); }
-      .hero-subtitle { font-size: 0.95rem; }
-      .hero-ctas { flex-direction: column; align-items: stretch; }
-      .hero-ctas .btn { text-align: center; justify-content: center; }
-      .home-nav { gap: 6px; }
-      .home-nav .btn { padding: 10px 14px; font-size: 12px; }
-      .home-title { display: none; }
-      .home-header { height: 56px; padding: 0 12px; }
-      .home-content { margin-top: 56px; padding: 32px 12px 60px; }
-      .section-title { font-size: 1.6rem; }
-      .feature-card { padding: 16px; }
-      .feature-icon { width: 36px; height: 36px; }
-      .kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
-      .kpi { padding: 10px; }
-      .kpi-value { font-size: 1.1rem; }
-      .kpi-label { font-size: 0.7rem; }
-      .cta-banner { padding: 24px; flex-direction: column; text-align: center; }
-      .cta-banner .hero-ctas { width: 100%; }
-      .roles-grid { grid-template-columns: 1fr; }
-      .features-grid { grid-template-columns: 1fr; }
-      .stack-card { padding: 16px; }
-      .hero-panel { padding: 16px; }
-      .hero-proof { flex-wrap: wrap; gap: 6px; }
-      .hero-proof span { font-size: 0.65rem; padding: 4px 8px; }
+
+    @keyframes drift {
+      0%,
+      100% {
+        transform: translate3d(0, 0, 0);
+      }
+      50% {
+        transform: translate3d(0, 14px, 0);
+      }
     }
-    @media (max-width: 400px) {
-      .hero { padding: 14px; }
-      .hero-title { font-size: 1.5rem; }
-      .kpi-grid { grid-template-columns: 1fr; }
-      .section-title { font-size: 1.3rem; }
-      .home-content { padding: 24px 8px 40px; }
+
+    @keyframes rise {
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @media (max-width: 1080px) {
+      .feature-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+        padding: 30px;
+      }
+
+      .flow {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .visual-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow-step:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .home-header {
+        height: auto;
+        padding: 10px 14px;
+      }
+
+      .home-title {
+        display: none;
+      }
+
+      .home-content {
+        padding: 96px 14px 54px;
+      }
+
+      .home-nav {
+        width: 100%;
+      }
+
+      .home-nav .btn {
+        flex: 1 1 auto;
+        text-align: center;
+        justify-content: center;
+      }
+
+      .hero {
+        padding: 22px;
+      }
+
+      .hero-ctas {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-grid,
+      .roles-table,
+      .split,
+      .feature-grid,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .visual-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .role-cell {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
     }
   </style>
 </head>
 <body>
   <header class="home-header">
     <div class="home-logo-container">
-      <img src="./assets/logo.png" alt="Logo" class="home-logo" onerror="this.style.display='none'" />
-      <h1 class="home-title">TAO</h1>
+      <img src="./assets/logo.png" alt="Logo AO Link" class="home-logo" onerror="this.style.display='none'" />
+      <h1 class="home-title">AO Link</h1>
     </div>
     <nav class="home-nav">
-      <a href="/app" id="nav-app-link" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Accéder à l'application</a>
-      <a href="/login" id="nav-login-link" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>Connexion</a>
-      <button id="nav-logout-btn" class="btn ghost" style="display:none">Déconnexion</button>
+      <a href="/app" id="nav-app-link" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Acceder a l'application</a>
+      <a href="/login" id="nav-login-link" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>Connexion</a>
+      <button id="nav-logout-btn" class="btn ghost" style="display:none">Deconnexion</button>
     </nav>
   </header>
 
   <main class="home-content">
     <section class="hero">
       <div>
-        <p class="hero-eyebrow">Commercialisez vos appels d'offres</p>
-        <h1 class="hero-title">Vendez plus vite. Choisissez mieux.</h1>
-        <p class="hero-subtitle">Plateforme RAO pour piloter, comparer et conclure.</p>
+        <p class="hero-eyebrow">Tableau d'analyse des offres</p>
+        <h2 class="hero-title">Pilotez vos AO de la collecte d'offres jusqu'a la decision finale.</h2>
         <div class="hero-ctas">
           <a href="/app" id="hero-app-link" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Acceder a l'application</a>
-          <a href="/login" id="hero-login-link" class="btn" style="background:linear-gradient(135deg,#5d75ff 0%,#00b2ff 100%);border:none;box-shadow:0 10px 24px rgba(0,178,255,0.25)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Demarrer un essai</a>
-          <a href="#features" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-book"></use></svg>Voir les modules</a>
+          <a href="/login" id="hero-login-link" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Commencer maintenant</a>
+          <a href="#modules" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-book"></use></svg>Voir les modules</a>
         </div>
         <div class="hero-proof">
-          <span>AO & MOE</span>
-          <span>Multi-tours</span>
-          <span>RAO 1 clic</span>
+          <span>MOE vs Entreprises</span>
+          <span>Imports Excel robustes</span>
+          <span>RAO et exports Word/Excel</span>
         </div>
       </div>
-      <div class="hero-panel">
-        <h3>Tableau de pilotage</h3>
-        <p>Decisions, ecarts, export.</p>
+
+      <aside class="hero-panel">
+        <h3>Ce que la plateforme structure</h3>
+        <p>Un seul espace pour tout le cycle AO.</p>
         <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-value">-42%</div>
-            <div class="kpi-label">Temps de preparation RAO</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">+3 tours</div>
-            <div class="kpi-label">Simulation sans friction</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">100%</div>
-            <div class="kpi-label">Traçabilite des decisions</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">0</div>
-            <div class="kpi-label">Tableurs eparpilles</div>
-          </div>
+          <article class="kpi">
+            <p class="kpi-value">Projets + lots</p>
+          </article>
+          <article class="kpi">
+            <p class="kpi-value">Rounds</p>
+          </article>
+          <article class="kpi">
+            <p class="kpi-value">Questions RAO</p>
+          </article>
+          <article class="kpi">
+            <p class="kpi-value">Roles securises</p>
+          </article>
         </div>
+        <div class="visual-strip" aria-label="Apercus visuels du produit">
+          <article class="visual-card">
+            <img src="./assets/background.jpg" alt="Vue projet et lots" loading="lazy" />
+            <span class="visual-caption">Projets</span>
+          </article>
+          <article class="visual-card">
+            <img src="./assets/background.jpg" alt="Vue comparatif des offres" loading="lazy" style="object-position:center 42%" />
+            <span class="visual-caption">Comparatif</span>
+          </article>
+          <article class="visual-card">
+            <img src="./assets/logo.png" alt="Logo AO Link" loading="lazy" style="object-fit:contain;padding:26px;background:radial-gradient(circle at center, rgba(115,210,255,0.2), rgba(10,12,21,0.9))" />
+            <span class="visual-caption">Exports</span>
+          </article>
+        </div>
+      </aside>
+    </section>
+
+    <section id="modules" class="section">
+      <div class="section-head">
+        <p class="section-label">Modules coeur</p>
+        <h2 class="section-title">Une interface alignee sur le vrai workflow AO.</h2>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg></div>
+          <h3 class="feature-title">Projets, lots et options</h3>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg></div>
+          <h3 class="feature-title">Import d'offres Excel</h3>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg></div>
+          <h3 class="feature-title">Comparaison par round</h3>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg></div>
+          <h3 class="feature-title">Questions RAO automatiques</h3>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg></div>
+          <h3 class="feature-title">Exports de decision</h3>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg></div>
+          <h3 class="feature-title">Securite integree</h3>
+        </article>
       </div>
     </section>
 
-    <section id="features" class="section">
-      <h2 class="section-title">Une plateforme qui vend votre methode</h2>
-      <p class="section-subtitle">Structure, tours, comparaisons, RAO.</p>
-      <div class="features-grid">
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg></div>
-          <h3 class="feature-title">Portefeuille unifie</h3>
-          <p class="feature-desc">Vue globale et historique.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg></div>
-          <h3 class="feature-title">Gestion multi-tours</h3>
-          <p class="feature-desc">Comparaison sans friction.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg></div>
-          <h3 class="feature-title">Comparaisons instantanees</h3>
-          <p class="feature-desc">Ecarts et anomalies visibles.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg></div>
-          <h3 class="feature-title">Questions automatiques</h3>
-          <p class="feature-desc">Seuils et alertes.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg></div>
-          <h3 class="feature-title">Rapports RAO prets</h3>
-          <p class="feature-desc">Clairs et presents.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg></div>
-          <h3 class="feature-title">Acces et roles</h3>
-          <p class="feature-desc">Le bon niveau.</p>
-        </div>
+    <section class="section">
+      <div class="section-head">
+        <p class="section-label">Parcours utilisateur</p>
+        <h2 class="section-title">Schema du flux AO</h2>
+      </div>
+      <div class="flow">
+        <article class="flow-step">
+          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>
+          <small>Etape 01</small>
+          <h3>Creer le projet</h3>
+        </article>
+        <article class="flow-step">
+          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>
+          <small>Etape 02</small>
+          <h3>Importer les offres</h3>
+        </article>
+        <article class="flow-step">
+          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>
+          <small>Etape 03</small>
+          <h3>Comparer par round</h3>
+        </article>
+        <article class="flow-step">
+          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>
+          <small>Etape 04</small>
+          <h3>Generer les RAO</h3>
+        </article>
+        <article class="flow-step">
+          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>
+          <small>Etape 05</small>
+          <h3>Exporter et decider</h3>
+        </article>
       </div>
     </section>
 
     <section class="section split">
-      <div class="stack-card">
-        <h2 class="section-title">Un discours commercial aligne</h2>
-        <p class="section-subtitle">Du dossier au RAO.</p>
-        <div class="steps">
-          <div class="step">
-            <div class="step-number">1</div>
-            <div><strong>Centraliser</strong> le dossier</div>
-          </div>
-          <div class="step">
-            <div class="step-number">2</div>
-            <div><strong>Comparer</strong> et valider</div>
-          </div>
-          <div class="step">
-            <div class="step-number">3</div>
-            <div><strong>Presenter</strong> le RAO</div>
-          </div>
+      <article class="panel">
+        <h3 class="panel-title">Matrice des roles</h3>
+        <div class="roles-table">
+          <div class="role-cell role-head">Role</div>
+          <div class="role-cell role-head">Perimetre</div>
+          <div class="role-cell role-head">Visibilite</div>
+
+          <div class="role-cell">Admin</div>
+          <div class="role-cell">Administration globale</div>
+          <div class="role-cell">Tous projets et utilisateurs</div>
+
+          <div class="role-cell">Responsable</div>
+          <div class="role-cell">Pilotage complet du dossier</div>
+          <div class="role-cell">Analyses + exports</div>
+
+          <div class="role-cell">Lecteur</div>
+          <div class="role-cell">Consultation</div>
+          <div class="role-cell">Lecture seule</div>
+
+          <div class="role-cell">Entreprise</div>
+          <div class="role-cell">Saisie de son offre</div>
+          <div class="role-cell">Sans acces MOE ni concurrents</div>
         </div>
-      </div>
-      <div class="stack-card">
-        <h3 style="margin-top:0">Pourquoi TAO se vend bien</h3>
-        <p class="feature-desc">Des signaux immediats.</p>
-        <div class="kpi-grid" style="margin-top:16px">
-          <div class="kpi">
-            <div class="kpi-value">+20%</div>
-            <div class="kpi-label">Efficacite du comparatif</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">2x</div>
-            <div class="kpi-label">Plus de rigueur percue</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">15 min</div>
-            <div class="kpi-label">Pour sortir un RAO</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-value">4 roles</div>
-            <div class="kpi-label">Collaboration securisee</div>
-          </div>
-        </div>
-      </div>
+      </article>
+
+      <article class="panel">
+        <h3 class="panel-title">Resultats concrets</h3>
+        <ul class="stack-list">
+          <li>
+            <strong>Un seul espace de travail</strong>
+          </li>
+          <li>
+            <strong>Comparaison immediate</strong>
+          </li>
+          <li>
+            <strong>Questions RAO prêtes plus vite</strong>
+          </li>
+          <li>
+            <strong>Exports exploitables en reunion</strong>
+          </li>
+        </ul>
+      </article>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">Des roles clairs</h2>
-      <p class="section-subtitle">Chaque acteur, le bon niveau.</p>
-      <div class="roles-grid">
-        <div class="role-card">
-          <h3 class="role-title"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-shield"></use></svg>Administrateur</h3>
-          <p class="feature-desc">Standard et securite.</p>
-        </div>
-        <div class="role-card">
-          <h3 class="role-title"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-briefcase"></use></svg>Responsable</h3>
-          <p class="feature-desc">Pilotage et choix.</p>
-        </div>
-        <div class="role-card">
-          <h3 class="role-title"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-home"></use></svg>Entreprise</h3>
-          <p class="feature-desc">Saisie des offres.</p>
-        </div>
-        <div class="role-card">
-          <h3 class="role-title"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-eye"></use></svg>Visionneur</h3>
-          <p class="feature-desc">Lecture seule.</p>
-        </div>
+    <section class="cta-banner">
+      <div>
+        <h3>AO Link met l'analyse d'offres au meme niveau que vos exigences metier.</h3>
       </div>
-    </section>
-
-    <section class="section">
-      <div class="cta-banner">
-        <div>
-          <h3>Pret a professionnaliser vos AO ?</h3>
-          <p>Un avantage commercial immediat.</p>
-        </div>
-        <div class="hero-ctas">
-          <a href="/login" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Demarrer maintenant</a>
-          <a href="/login" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Demander une demo</a>
-        </div>
+      <div class="hero-ctas" style="margin-top:0">
+        <a href="/login" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Aller a la connexion</a>
+        <a href="/app" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-home"></use></svg>Acceder a l'app</a>
       </div>
     </section>
   </main>
 
   <script>
-    // Détecter si l'utilisateur est connecté via le cookie auth
     function checkAuth() {
       const cookies = document.cookie.split(';');
       const authCookie = cookies.find(c => c.trim().startsWith('auth='));
-      const hasAuth = authCookie && authCookie.split('=')[1] && 
-                      authCookie.split('=')[1] !== 'undefined' && 
-                      authCookie.split('=')[1] !== 'null';
-      
+      const hasAuth = authCookie && authCookie.split('=')[1] && authCookie.split('=')[1] !== 'undefined' && authCookie.split('=')[1] !== 'null';
+
       if (hasAuth) {
-        // Utilisateur connecté : afficher boutons app
         document.getElementById('nav-app-link').style.display = 'inline-block';
         document.getElementById('nav-logout-btn').style.display = 'inline-block';
         document.getElementById('nav-login-link').style.display = 'none';
         document.getElementById('hero-app-link').style.display = 'inline-block';
         document.getElementById('hero-login-link').style.display = 'none';
       } else {
-        // Utilisateur non connecté : afficher boutons login
         document.getElementById('nav-app-link').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = 'none';
         document.getElementById('nav-login-link').style.display = 'inline-block';
@@ -538,25 +820,22 @@
         document.getElementById('hero-login-link').style.display = 'inline-block';
       }
     }
-    
-    // Gérer la déconnexion
+
     document.getElementById('nav-logout-btn').addEventListener('click', async () => {
       try {
-        await fetch('/api/auth/logout', { 
-          method: 'POST', 
-          credentials: 'include' 
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          credentials: 'include'
         });
         localStorage.removeItem('token');
         window.location.reload();
-      } catch(e) {
-        console.error('Erreur déconnexion', e);
+      } catch (e) {
+        console.error('Erreur deconnexion', e);
       }
     });
-    
-    // Vérifier l'auth au chargement
+
     checkAuth();
-    
-    // Smooth scroll for anchor links
+
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
       anchor.addEventListener('click', function (e) {
         e.preventDefault();

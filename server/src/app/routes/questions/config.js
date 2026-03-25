@@ -47,12 +47,28 @@ router.get('/project/:projectId', requireManager, async (req, res) => {
 router.put('/project/:projectId', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color } = req.body;
+    const {
+      question_qty_very_low,
+      question_qty_low,
+      question_qty_high,
+      question_qty_very_high,
+      question_price_very_low,
+      question_price_low,
+      question_price_high,
+      question_price_very_high,
+      question_amount_very_low,
+      question_amount_low,
+      question_amount_high,
+      question_amount_very_high,
+      unanswered_comment,
+      unanswered_color,
+      offer_amount_mismatch_comment
+    } = req.body;
     
     const result = await query(
       `INSERT INTO project_question_config 
-        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
        ON CONFLICT (project_id) 
        DO UPDATE SET 
          question_qty_very_low = EXCLUDED.question_qty_very_low,
@@ -63,11 +79,16 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
          question_price_low = EXCLUDED.question_price_low,
          question_price_high = EXCLUDED.question_price_high,
          question_price_very_high = EXCLUDED.question_price_very_high,
+         question_amount_very_low = EXCLUDED.question_amount_very_low,
+         question_amount_low = EXCLUDED.question_amount_low,
+         question_amount_high = EXCLUDED.question_amount_high,
+         question_amount_very_high = EXCLUDED.question_amount_very_high,
          unanswered_comment = EXCLUDED.unanswered_comment,
          unanswered_color = EXCLUDED.unanswered_color,
+         offer_amount_mismatch_comment = EXCLUDED.offer_amount_mismatch_comment,
          updated_at = now()
        RETURNING *`,
-      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, unanswered_comment, unanswered_color]
+      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment]
     );
     
     res.json(result.rows[0]);
@@ -109,12 +130,25 @@ router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
 router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold } = req.body;
+    const {
+      qty_very_low_threshold,
+      qty_low_threshold,
+      qty_high_threshold,
+      qty_very_high_threshold,
+      price_very_low_threshold,
+      price_low_threshold,
+      price_high_threshold,
+      price_very_high_threshold,
+      amount_very_low_threshold,
+      amount_low_threshold,
+      amount_high_threshold,
+      amount_very_high_threshold
+    } = req.body;
     
     const result = await query(
       `INSERT INTO lot_threshold_config 
-        (lot_id, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+        (lot_id, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, amount_very_low_threshold, amount_low_threshold, amount_high_threshold, amount_very_high_threshold, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
        ON CONFLICT (lot_id) 
        DO UPDATE SET 
          qty_very_low_threshold = EXCLUDED.qty_very_low_threshold,
@@ -125,9 +159,13 @@ router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
          price_low_threshold = EXCLUDED.price_low_threshold,
          price_high_threshold = EXCLUDED.price_high_threshold,
          price_very_high_threshold = EXCLUDED.price_very_high_threshold,
+         amount_very_low_threshold = EXCLUDED.amount_very_low_threshold,
+         amount_low_threshold = EXCLUDED.amount_low_threshold,
+         amount_high_threshold = EXCLUDED.amount_high_threshold,
+         amount_very_high_threshold = EXCLUDED.amount_very_high_threshold,
          updated_at = now()
        RETURNING *`,
-      [lotId, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold]
+      [lotId, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, amount_very_low_threshold, amount_low_threshold, amount_high_threshold, amount_very_high_threshold]
     );
     
     res.json(result.rows[0]);
@@ -163,7 +201,11 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       price_very_low_threshold: 25,
       price_low_threshold: 10,
       price_high_threshold: 10,
-      price_very_high_threshold: 25
+      price_very_high_threshold: 25,
+      amount_very_low_threshold: 25,
+      amount_low_threshold: 10,
+      amount_high_threshold: 10,
+      amount_very_high_threshold: 25
     };
     
     // 2. Récupérer les questions du projet
@@ -185,7 +227,11 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       question_price_very_low: 'Pourquoi le prix unitaire est-il bien inférieur à la MOE ?',
       question_price_low: 'Pourquoi le prix unitaire est-il inférieur à la MOE ?',
       question_price_high: 'Pourquoi le prix unitaire est-il supérieur à la MOE ?',
-      question_price_very_high: 'Pourquoi le prix unitaire est-il bien supérieur à la MOE ?'
+      question_price_very_high: 'Pourquoi le prix unitaire est-il bien supérieur à la MOE ?',
+      question_amount_very_low: 'Pourquoi le montant est-il bien inférieur à la MOE ?',
+      question_amount_low: 'Pourquoi le montant est-il inférieur à la MOE ?',
+      question_amount_high: 'Pourquoi le montant est-il supérieur à la MOE ?',
+      question_amount_very_high: 'Pourquoi le montant est-il bien supérieur à la MOE ?'
     };
     
     // 3. Récupérer les items, MOE et offres
@@ -208,6 +254,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     
     // 4. Générer les questions
     const generated = [];
+    const getComparableAmount = (row) => {
+      const directAmount = Number.parseFloat(row?.amount);
+      if (Number.isFinite(directAmount)) return directAmount;
+      const qty = Number.parseFloat(row?.qty);
+      const unitPrice = Number.parseFloat(row?.unit_price);
+      if (Number.isFinite(qty) && Number.isFinite(unitPrice)) {
+        return qty * unitPrice;
+      }
+      return null;
+    };
+
     const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct }) => {
       if (itemId) {
         await query(
@@ -357,6 +414,58 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_high' });
         }
       }
+
+      const moeAmount = getComparableAmount(moe);
+      const offerAmount = getComparableAmount(offer);
+      if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
+        const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
+
+        if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'amount_very_low',
+            text: questions.question_amount_very_low,
+            moeValue: moeAmount,
+            offerValue: offerAmount,
+            deviationPct: amountDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_very_low' });
+        } else if (amountDev < -Math.abs(thresholds.amount_low_threshold)) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'amount_low',
+            text: questions.question_amount_low,
+            moeValue: moeAmount,
+            offerValue: offerAmount,
+            deviationPct: amountDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_low' });
+        } else if (amountDev > Math.abs(thresholds.amount_very_high_threshold)) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'amount_very_high',
+            text: questions.question_amount_very_high,
+            moeValue: moeAmount,
+            offerValue: offerAmount,
+            deviationPct: amountDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_very_high' });
+        } else if (amountDev > Math.abs(thresholds.amount_high_threshold)) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: 'amount_high',
+            text: questions.question_amount_high,
+            moeValue: moeAmount,
+            offerValue: offerAmount,
+            deviationPct: amountDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_high' });
+        }
+      }
     }
 
     // 5. Ajouter les options (items d'option)
@@ -487,6 +596,57 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
             generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_high' });
           }
         }
+
+        const moeAmount = getComparableAmount(moe);
+        const offerAmount = getComparableAmount(offer);
+        if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
+          const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
+          if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'amount_very_low',
+              text: questions.question_amount_very_low,
+              moeValue: moeAmount,
+              offerValue: offerAmount,
+              deviationPct: amountDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_very_low' });
+          } else if (amountDev < -Math.abs(thresholds.amount_low_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'amount_low',
+              text: questions.question_amount_low,
+              moeValue: moeAmount,
+              offerValue: offerAmount,
+              deviationPct: amountDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_low' });
+          } else if (amountDev > Math.abs(thresholds.amount_very_high_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'amount_very_high',
+              text: questions.question_amount_very_high,
+              moeValue: moeAmount,
+              offerValue: offerAmount,
+              deviationPct: amountDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_very_high' });
+          } else if (amountDev > Math.abs(thresholds.amount_high_threshold)) {
+            await upsertQuestion({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              type: 'amount_high',
+              text: questions.question_amount_high,
+              moeValue: moeAmount,
+              offerValue: offerAmount,
+              deviationPct: amountDev
+            });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_high' });
+          }
+        }
       }
     }
     
@@ -579,11 +739,94 @@ router.get('/lot/:lotId', async (req, res) => {
   }
 });
 
+// Créer une fiche question manuelle
+router.post('/question', requireManager, async (req, res) => {
+  try {
+    const {
+      lot_id,
+      round_id,
+      item_id,
+      option_item_id,
+      company_id,
+      question_text,
+      question_type,
+      status
+    } = req.body || {};
+
+    if (!lot_id || !round_id || !company_id || !question_text || !question_type) {
+      return res.status(400).json({ error: 'Champs requis: lot_id, round_id, company_id, question_text, question_type' });
+    }
+
+    const lotId = Number(lot_id);
+    const roundId = Number(round_id);
+    const companyId = Number(company_id);
+    const itemId = item_id != null ? Number(item_id) : null;
+    const optionItemId = option_item_id != null ? Number(option_item_id) : null;
+
+    if (!Number.isFinite(lotId) || !Number.isFinite(roundId) || !Number.isFinite(companyId)) {
+      return res.status(400).json({ error: 'Paramètres numériques invalides' });
+    }
+
+    if ((itemId == null && optionItemId == null) || (itemId != null && optionItemId != null)) {
+      return res.status(400).json({ error: 'Fournir exactement un seul identifiant: item_id ou option_item_id' });
+    }
+
+    const safeText = String(question_text).trim();
+    if (!safeText) {
+      return res.status(400).json({ error: 'question_text vide' });
+    }
+
+    const safeType = String(question_type).trim();
+    const safeStatus = status ? String(status).trim() : 'pending';
+
+    let result;
+
+    if (itemId != null) {
+      result = await query(
+        `INSERT INTO generated_questions
+          (lot_id, round_id, item_id, company_id, question_type, question_text, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (round_id, lot_id, item_id, company_id, question_type)
+           WHERE item_id IS NOT NULL
+         DO UPDATE SET
+           question_text = EXCLUDED.question_text,
+           status = EXCLUDED.status
+         RETURNING *`,
+        [lotId, roundId, itemId, companyId, safeType, safeText, safeStatus]
+      );
+    } else {
+      result = await query(
+        `INSERT INTO generated_questions
+          (lot_id, round_id, option_item_id, company_id, question_type, question_text, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (round_id, lot_id, option_item_id, company_id, question_type)
+           WHERE option_item_id IS NOT NULL
+         DO UPDATE SET
+           question_text = EXCLUDED.question_text,
+           status = EXCLUDED.status
+         RETURNING *`,
+        [lotId, roundId, optionItemId, companyId, safeType, safeText, safeStatus]
+      );
+    }
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur création fiche question:', err);
+    if (err?.code === '23514') {
+      return res.status(400).json({ error: 'Type de question invalide' });
+    }
+    if (err?.code === '23503') {
+      return res.status(400).json({ error: 'Référence invalide (lot/tour/item/entreprise)' });
+    }
+    res.status(500).json({ error: 'Impossible de créer la fiche question' });
+  }
+});
+
 // Mettre à jour une fiche question (réponse, statut)
 router.put('/question/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { comment, status } = req.body;
+    const { comment, status, question_text, company_id } = req.body || {};
     const isEntreprise = req.user?.role === 'entreprise';
 
     if (!id || !/^\d+$/.test(id)) {
@@ -603,14 +846,57 @@ router.put('/question/:id', async (req, res) => {
       if (checkResult.rows[0].company_id !== req.user.company_id) {
         return res.status(403).json({ error: 'Accès refusé - Cette question ne vous appartient pas' });
       }
+
+      // Une entreprise peut répondre, mais ne peut pas réassigner/éditer le texte de la fiche.
+      if (question_text !== undefined || company_id !== undefined) {
+        return res.status(403).json({ error: 'Accès refusé - Modification non autorisée' });
+      }
     }
-    
+
+    const updates = [];
+    const params = [];
+
+    if (comment !== undefined) {
+      params.push(comment);
+      updates.push(`comment = $${params.length}`);
+    }
+
+    if (status !== undefined) {
+      params.push(status);
+      updates.push(`status = $${params.length}`);
+      updates.push(`answered_at = CASE WHEN $${params.length} = 'answered' THEN now() ELSE answered_at END`);
+    }
+
+    if (question_text !== undefined) {
+      const safeText = String(question_text).trim();
+      if (!safeText) {
+        return res.status(400).json({ error: 'question_text vide' });
+      }
+      params.push(safeText);
+      updates.push(`question_text = $${params.length}`);
+    }
+
+    if (company_id !== undefined) {
+      const companyId = Number(company_id);
+      if (!Number.isFinite(companyId)) {
+        return res.status(400).json({ error: 'company_id invalide' });
+      }
+      params.push(companyId);
+      updates.push(`company_id = $${params.length}`);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+    }
+
+    params.push(questionId);
+
     const result = await query(
-      `UPDATE generated_questions 
-       SET comment = $1, status = $2, answered_at = CASE WHEN $2 = 'answered' THEN now() ELSE answered_at END
-       WHERE id = $3
+      `UPDATE generated_questions
+       SET ${updates.join(', ')}
+       WHERE id = $${params.length}
        RETURNING *`,
-      [comment, status, questionId]
+      params
     );
     
     if (result.rowCount === 0) {
@@ -621,6 +907,103 @@ router.put('/question/:id', async (req, res) => {
   } catch (err) {
     console.error('Erreur mise à jour fiche question:', err);
     res.status(500).json({ error: 'Impossible de mettre à jour la fiche question' });
+  }
+});
+
+// Valider une fiche question
+router.put('/question/:id/validate', requireManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || !/^\d+$/.test(id)) {
+      return res.status(400).json({ error: 'ID invalide' });
+    }
+
+    const questionId = Number(id);
+    const result = await query(
+      `UPDATE generated_questions
+       SET status = 'validated',
+           answered_at = COALESCE(answered_at, now())
+       WHERE id = $1
+       RETURNING *`,
+      [questionId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur validation fiche question:', err);
+    res.status(500).json({ error: 'Impossible de valider la fiche question' });
+  }
+});
+
+// Désactiver la validation d'une fiche question
+router.put('/question/:id/unvalidate', requireManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || !/^\d+$/.test(id)) {
+      return res.status(400).json({ error: 'ID invalide' });
+    }
+
+    const questionId = Number(id);
+    const result = await query(
+      `UPDATE generated_questions
+       SET status = 'pending'
+       WHERE id = $1
+       RETURNING *`,
+      [questionId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur désactivation validation fiche question:', err);
+    res.status(500).json({ error: 'Impossible de désactiver la validation de la fiche question' });
+  }
+});
+
+// Validation globale des fiches questions d'un lot/tour (optionnellement filtrée par entreprise)
+router.put('/lot/:lotId/validate', requireManager, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const roundId = req.query.round_id || req.body?.round_id;
+    const companyId = req.query.company_id || req.body?.company_id;
+
+    if (!roundId) {
+      return res.status(400).json({ error: 'round_id requis' });
+    }
+    if (!/^\d+$/.test(String(lotId)) || !/^\d+$/.test(String(roundId))) {
+      return res.status(400).json({ error: 'Paramètres invalides' });
+    }
+    if (companyId != null && companyId !== '' && !/^\d+$/.test(String(companyId))) {
+      return res.status(400).json({ error: 'company_id invalide' });
+    }
+
+    const params = [Number(lotId), Number(roundId)];
+    let sql = `
+      UPDATE generated_questions
+      SET status = 'validated',
+          answered_at = COALESCE(answered_at, now())
+      WHERE lot_id = $1
+        AND round_id = $2
+    `;
+
+    if (companyId != null && companyId !== '') {
+      params.push(Number(companyId));
+      sql += ` AND company_id = $${params.length}`;
+    }
+
+    sql += ' RETURNING id';
+    const result = await query(sql, params);
+    res.json({ ok: true, updated: result.rowCount });
+  } catch (err) {
+    console.error('Erreur validation globale fiches questions:', err);
+    res.status(500).json({ error: 'Impossible de valider les fiches questions' });
   }
 });
 

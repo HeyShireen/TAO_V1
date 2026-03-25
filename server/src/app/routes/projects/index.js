@@ -1,9 +1,19 @@
 import express from 'express';
+import multer from 'multer';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { validateRequired, validateMaxLength, ValidationError } from '../../utils/validation.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject, canDeleteProject, getVisibleProjects } from '../../utils/permissions.js';
+import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
+
+const uploadDpgf = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+
+function isPdfFileDpgf({ mime, name }) {
+  if (mime && mime.toLowerCase() === 'application/pdf') return true;
+  if (name && name.toLowerCase().endsWith('.pdf')) return true;
+  return false;
+}
 
 const router = express.Router();
 
@@ -141,7 +151,7 @@ router.put('/:id', isResponsableOrAdmin, async (req, res) => {
 router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const { code, name } = req.body;
+    const { code, name, macro_lot } = req.body;
     
     // Vérifier que l'utilisateur peut éditer ce projet
     const canEdit = await canEditProject(req.user.id, id, req.user.role);
@@ -152,6 +162,7 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
     validateRequired(name, 'Le nom du lot');
     validateMaxLength(name, 200, 'Le nom du lot');
     if (code) validateMaxLength(code, 50, 'Le code du lot');
+    if (macro_lot) validateMaxLength(macro_lot, 100, 'Le macrolot');
     
     // Vérifier que le projet existe
     const projectExists = await query('SELECT id FROM projects WHERE id=$1', [id]);
@@ -160,8 +171,8 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
     }
     
     const r = await query(
-      'INSERT INTO lots (project_id, code, name) VALUES ($1,$2,$3) RETURNING *',
-      [id, code ? code.trim() : null, name.trim()]
+      'INSERT INTO lots (project_id, code, name, macro_lot) VALUES ($1,$2,$3,$4) RETURNING *',
+      [id, code ? code.trim() : null, name.trim(), macro_lot ? macro_lot.trim() : null]
     );
     res.json(r.rows[0]);
   } catch (err) {
@@ -175,7 +186,7 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
 router.put('/lots/:lotId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { lotId } = req.params;
-    const { code, name } = req.body;
+    const { code, name, macro_lot } = req.body;
 
     // Vérifier que le lot existe et droits via projet
     const lotRes = await query('SELECT id, project_id FROM lots WHERE id = $1', [lotId]);
@@ -186,16 +197,43 @@ router.put('/lots/:lotId', isResponsableOrAdmin, async (req, res) => {
 
     if (name !== undefined) validateMaxLength(name, 200, 'Le nom du lot');
     if (code !== undefined && code !== null) validateMaxLength(code, 50, 'Le code du lot');
+    if (macro_lot !== undefined && macro_lot !== null && macro_lot !== '') validateMaxLength(macro_lot, 100, 'Le macrolot');
 
     const result = await query(
-      'UPDATE lots SET code = $1, name = $2 WHERE id = $3 RETURNING *',
-      [code ? code.trim() : null, name ? name.trim() : null, lotId]
+      'UPDATE lots SET code = $1, name = $2, macro_lot = $3 WHERE id = $4 RETURNING *',
+      [code ? code.trim() : null, name ? name.trim() : null, macro_lot ? macro_lot.trim() : null, lotId]
     );
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Erreur mise à jour lot:', err);
     const statusCode = err instanceof ValidationError ? 400 : 500;
     res.status(statusCode).json({ error: err.message || 'Impossible de mettre à jour le lot' });
+  }
+});
+
+// Delete a lot
+router.delete('/lots/:lotId', isResponsableOrAdmin, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+
+    // Vérifier que le lot existe et droits via projet
+    const lotRes = await query('SELECT id, project_id, name FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+
+    const projectId = lotRes.rows[0].project_id;
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas supprimer ce lot' });
+
+    await query('DELETE FROM lots WHERE id = $1', [lotId]);
+
+    res.json({
+      success: true,
+      message: 'Lot supprimé avec succès',
+      lotId: parseInt(lotId, 10),
+    });
+  } catch (err) {
+    console.error('Erreur suppression lot:', err);
+    res.status(500).json({ error: 'Impossible de supprimer le lot' });
   }
 });
 
@@ -297,6 +335,72 @@ router.delete('/:id', isResponsableOrAdmin, async (req, res) => {
   } catch (err) {
     console.error('Erreur suppression projet:', err);
     res.status(500).json({ error: 'Impossible de supprimer le projet' });
+  }
+});
+
+// Prévisualiser un fichier DPGF sans lot (pour créer des lots depuis un tour)
+router.post('/:id/import-dpgf-preview', isResponsableOrAdmin, uploadDpgf.single('file'), async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
+
+    const sheetName = req.body?.sheetName || null;
+    const headerRow = req.body?.headerRow ? Number(req.body.headerRow) : null;
+    const isPdf = isPdfFileDpgf({ mime: req.file.mimetype, name: req.file.originalname });
+    const buffer = isPdf
+      ? await convertPdfToExcelBuffer({ buffer: req.file.buffer, headerRow })
+      : req.file.buffer;
+    const result = await previewExcel({ buffer, sheetName: isPdf ? 'PDF' : sheetName, headerRow: isPdf ? 1 : headerRow });
+    res.json(result);
+  } catch (e) {
+    console.error('Preview DPGF lots error:', e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Créer un lot et importer sa DPGF (depuis la vue tour)
+router.post('/:id/import-dpgf', isResponsableOrAdmin, uploadDpgf.single('file'), async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
+
+    const { lotName, lotCode, mapping, headerRow, sheetName, excludedRows } = JSON.parse(req.body.params || '{}');
+    if (!lotName || !String(lotName).trim()) return res.status(400).json({ error: 'Nom du lot requis' });
+    if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
+
+    const projectCheck = await query('SELECT id FROM projects WHERE id=$1', [projectId]);
+    if (projectCheck.rowCount === 0) return res.status(404).json({ error: 'Projet introuvable' });
+
+    // Créer le lot
+    const lotRes = await query(
+      'INSERT INTO lots (project_id, code, name) VALUES ($1, $2, $3) RETURNING *',
+      [projectId, lotCode ? String(lotCode).trim() : null, String(lotName).trim()]
+    );
+    const lot = lotRes.rows[0];
+
+    // Importer la DPGF dans le lot
+    const isPdf = isPdfFileDpgf({ mime: req.file.mimetype, name: req.file.originalname });
+    let buffer = req.file.buffer;
+    if (isPdf) buffer = await convertPdfToExcelBuffer({ buffer, headerRow: Number(headerRow) || null });
+
+    const result = await applyImport({
+      buffer,
+      mode: 'dpgf',
+      lotId: lot.id,
+      sheetName: isPdf ? 'PDF' : (sheetName || null),
+      headerRow: isPdf ? 1 : (Number(headerRow) || 1),
+      mapping,
+      excludedRows: excludedRows || [],
+    });
+
+    res.json({ lot, itemsImported: result.itemsImported || 0, itemsUpdated: result.itemsUpdated || 0 });
+  } catch (e) {
+    console.error('Import DPGF create lot error:', e);
+    res.status(400).json({ error: e.message });
   }
 });
 

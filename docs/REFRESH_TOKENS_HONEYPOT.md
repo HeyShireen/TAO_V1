@@ -1,6 +1,6 @@
 # Refresh Tokens & Honeypot Fields - Documentation de mise en œuvre
 
-**Deux nouvelles couches de sécurité avancée pour TAO V1**
+**Deux nouvelles couches de sécurité avancée pour AO Link**
 
 ---
 

@@ -1,6 +1,6 @@
 # 🔒 AUDIT DE SÉCURITÉ - STRUCTURE
 
-Ce dossier contient l'audit de sécurité complet de l'application TAO V1.
+Ce dossier contient l'audit de sécurité complet de l'application AO Link.
 
 ---
 

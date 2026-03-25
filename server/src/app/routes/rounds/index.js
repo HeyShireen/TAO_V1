@@ -132,7 +132,7 @@ router.get('/project/:projectId/with-stats', async (req, res) => {
         const qRes = await query(
           `SELECT COUNT(*) as total,
                   COUNT(CASE WHEN status='pending' THEN 1 END) as pending,
-                  COUNT(CASE WHEN status='answered' THEN 1 END) as answered
+                  COUNT(CASE WHEN status IN ('answered', 'validated') THEN 1 END) as answered
            FROM generated_questions WHERE round_id = $1`,
           [r.id]
         );
@@ -392,7 +392,7 @@ router.get('/:roundId/stats', async (req, res) => {
         `SELECT 
           COUNT(*) as total,
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
-          COUNT(CASE WHEN status = 'answered' THEN 1 END) as answered
+          COUNT(CASE WHEN status IN ('answered', 'validated') THEN 1 END) as answered
          FROM generated_questions WHERE round_id = $1`,
         [roundId]
       );
@@ -438,7 +438,7 @@ router.get('/:roundId/summary', async (req, res) => {
     
     // Récupérer tous les lots du projet
     const lotsResult = await query(
-      'SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY code, name',
+      'SELECT id, code, name, macro_lot FROM lots WHERE project_id = $1 ORDER BY code, name',
       [projectId]
     );
     const lots = lotsResult.rows;
@@ -494,6 +494,7 @@ router.get('/:roundId/summary', async (req, res) => {
         lot_id: lot.id,
         lot_code: lot.code,
         lot_name: lot.name,
+        macro_lot: lot.macro_lot,
         moe_total: isEntreprise ? null : moeTotal,
         companies: companyTotals
       });
@@ -530,7 +531,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
     
     // Récupérer tous les lots du projet
     const lotsResult = await query(
-      'SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY code, name',
+      'SELECT id, code, name, macro_lot FROM lots WHERE project_id = $1 ORDER BY code, name',
       [projectId]
     );
     const lots = lotsResult.rows;
@@ -567,7 +568,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
           `SELECT 
              c.id as company_id,
              c.name as company_name,
-             COALESCE(SUM(o.qty * o.unit_price), 0) as total
+             COALESCE(SUM(CASE WHEN i.id IS NOT NULL THEN (o.qty * o.unit_price) ELSE 0 END), 0) as total
            FROM lot_companies lc
            JOIN companies c ON c.id = lc.company_id
            LEFT JOIN offers o ON o.company_id = c.id AND o.round_id = $2
@@ -585,12 +586,29 @@ router.get('/project/:projectId/compare', async (req, res) => {
           company_name: row.company_name,
           total: parseFloat(row.total)
         }));
+
+        const companiesSum = companiesByRound[round.id].reduce((acc, company) => acc + Number(company.total || 0), 0);
+        const roundTotal = Number(roundTotals[round.id] || 0);
+        const diff = Math.abs(roundTotal - companiesSum);
+        if (diff > 0.01) {
+          console.warn('[AMOUNT-DIAG][rounds.compare] Incohérence total lot/tour vs somme entreprises', {
+            projectId: Number(projectId),
+            lotId: Number(lot.id),
+            roundId: Number(round.id),
+            roundTotal,
+            companiesSum,
+            diff,
+            companiesCount: companiesByRound[round.id].length,
+            companies: companiesByRound[round.id].map(c => ({ id: Number(c.company_id), total: Number(c.total || 0) }))
+          });
+        }
       }
       
       summary.push({
         lot_id: lot.id,
         lot_code: lot.code,
         lot_name: lot.name,
+        macro_lot: lot.macro_lot,
         moe_total: isEntreprise ? null : moeTotal,
         round_totals: roundTotals,
         companies_by_round: companiesByRound

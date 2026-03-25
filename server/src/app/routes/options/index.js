@@ -1,6 +1,6 @@
 // server/src/routes/options.js
 import express from 'express';
-import { query } from '../../db.js';
+import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
@@ -389,6 +389,106 @@ router.delete('/items/:itemId/offers/:company_id', isResponsableOrAdmin, async (
   } catch (err) {
     console.error('Erreur suppression offre item option:', err);
     res.status(500).json({ error: 'Impossible de supprimer l\'offre' });
+  }
+});
+
+// ===== Sauvegarde groupée (bulk) des options =====
+router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
+  const lotId = Number(req.params.lotId);
+  const { rows, round_id } = req.body || {};
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] requis' });
+  if (!round_id) return res.status(400).json({ error: 'round_id requis' });
+
+  const projectId = await getProjectIdForLot(lotId);
+  if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+  const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+  if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
+  const roundId = Number(round_id);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const resultItems = [];
+
+    for (const r of rows) {
+      const optionId = r.option_id ? Number(r.option_id) : null;
+      let itemId = r.item_id ? Number(r.item_id) : null;
+      const num = r.num ?? '';
+      const designation = (r.designation ?? '').trim();
+      const unit = r.unit ?? '';
+
+      // Update or insert item
+      if (itemId) {
+        await client.query(
+          'UPDATE option_items SET num=$1, designation=$2, unit=$3 WHERE id=$4',
+          [num, designation, unit, itemId]
+        );
+      } else if (optionId) {
+        const ins = await client.query(
+          'INSERT INTO option_items (option_id, num, designation, unit) VALUES ($1,$2,$3,$4) RETURNING id',
+          [optionId, num, designation, unit]
+        );
+        itemId = ins.rows[0].id;
+      } else {
+        continue;
+      }
+
+      // MOE
+      let moeQty = null, moePu = null;
+      if (r.moe?.qty != null && r.moe.qty !== '' && !isNaN(Number(r.moe.qty))) moeQty = Number(r.moe.qty);
+      if (r.moe?.pu != null && r.moe.pu !== '' && !isNaN(Number(r.moe.pu))) moePu = Number(r.moe.pu);
+
+      const moeExists = await client.query('SELECT id FROM option_item_moe WHERE option_item_id = $1', [itemId]);
+      if (moeExists.rowCount > 0) {
+        await client.query(
+          'UPDATE option_item_moe SET qty=$1, unit_price=$2 WHERE option_item_id=$3',
+          [moeQty, moePu, itemId]
+        );
+      } else if (moeQty != null || moePu != null) {
+        await client.query(
+          'INSERT INTO option_item_moe (option_item_id, qty, unit_price) VALUES ($1,$2,$3)',
+          [itemId, moeQty, moePu]
+        );
+      }
+
+      // Offers
+      if (r.offers && typeof r.offers === 'object') {
+        for (const [cid, val] of Object.entries(r.offers)) {
+          const companyId = Number(cid);
+          let oq = null, op = null;
+          if (val?.qty != null && val.qty !== '' && !isNaN(Number(val.qty))) oq = Number(val.qty);
+          if (val?.pu != null && val.pu !== '' && !isNaN(Number(val.pu))) op = Number(val.pu);
+
+          const exists = await client.query(
+            'SELECT id FROM option_item_offers WHERE option_item_id=$1 AND company_id=$2 AND round_id=$3',
+            [itemId, companyId, roundId]
+          );
+          if (exists.rowCount > 0) {
+            await client.query(
+              'UPDATE option_item_offers SET qty=$1, unit_price=$2 WHERE option_item_id=$3 AND company_id=$4 AND round_id=$5',
+              [oq, op, itemId, companyId, roundId]
+            );
+          } else {
+            await client.query(
+              'INSERT INTO option_item_offers (option_item_id, company_id, qty, unit_price, round_id) VALUES ($1,$2,$3,$4,$5)',
+              [itemId, companyId, oq, op, roundId]
+            );
+          }
+        }
+      }
+
+      resultItems.push({ id: itemId, option_id: optionId });
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, items: resultItems });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Erreur options save-grid:', e);
+    res.status(500).json({ error: 'Erreur lors de la sauvegarde des options' });
+  } finally {
+    client.release();
   }
 });
 
