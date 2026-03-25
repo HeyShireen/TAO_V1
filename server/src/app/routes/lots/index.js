@@ -80,6 +80,7 @@ router.get('/:id', async (req, res) => {
           'qty', o.qty,
           'unit_price', o.unit_price,
           'amount', o.amount,
+          'offer_designation', o.offer_designation,
           'comment', o.comment
         )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
       FROM lots l
@@ -272,6 +273,7 @@ router.get('/:id/table', async (req, res) => {
         mt: off.amount ?? (off.qty != null && off.unit_price != null ? off.qty * off.unit_price : null),
         delta_qty_pct: dQty,
         delta_pu_pct: dPu,
+        offer_designation: off.offer_designation ?? null,
         comment: off.comment ?? null
       });
     }

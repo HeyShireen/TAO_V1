@@ -539,6 +539,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     function normalizeDesig(d) {
       if (!d) return '';
       return String(d).trim().toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')  // espaces spéciaux → espace normal
         .replace(/\s+/g, ' ')            // compresser espaces multiples
         .replace(/[''`]/g, "'")           // normaliser apostrophes
@@ -546,11 +547,94 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         .trim();
     }
 
+      function compactDesigForTolerance(d) {
+        return normalizeDesig(d)
+          .replace(/[^a-z0-9]/g, '');
+      }
+
+      function levenshteinDistance(a, b, maxDistance = Infinity) {
+        if (a === b) return 0;
+        if (!a.length) return b.length;
+        if (!b.length) return a.length;
+        if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+        let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+        for (let i = 1; i <= a.length; i++) {
+          const current = [i];
+          let minInRow = current[0];
+          for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            const value = Math.min(
+              previous[j] + 1,
+              current[j - 1] + 1,
+              previous[j - 1] + cost
+            );
+            current[j] = value;
+            if (value < minInRow) minInRow = value;
+          }
+          if (minInRow > maxDistance) return maxDistance + 1;
+          previous = current;
+        }
+        return previous[b.length];
+      }
+
+      function isSameDesignationWithinTolerance(dpgfDesig, importDesig) {
+        const normalizedA = normalizeDesig(dpgfDesig);
+        const normalizedB = normalizeDesig(importDesig);
+        if (!normalizedA || !normalizedB) return normalizedA === normalizedB;
+        if (normalizedA === normalizedB) return true;
+
+        const compactA = compactDesigForTolerance(dpgfDesig);
+        const compactB = compactDesigForTolerance(importDesig);
+        if (!compactA || !compactB) return compactA === compactB;
+        if (compactA === compactB) return true;
+
+        const maxDistance = compactA.length <= 12 && compactB.length <= 12 ? 1 : 2;
+        const distance = levenshteinDistance(compactA, compactB, maxDistance);
+        const longestLength = Math.max(compactA.length, compactB.length);
+        return distance <= maxDistance && distance / longestLength <= 0.12;
+      }
+
+      function extractDesignationSeriesMarker(designation) {
+        const normalized = normalizeDesig(designation);
+        if (!normalized) return null;
+        const match = normalized.match(/^(.*?)(?:[\s\-_/().]+)(\d+|[a-z])$/i);
+        if (!match) return null;
+        const stem = match[1].trim();
+        const token = match[2].trim().toLowerCase();
+        if (!stem || !token) return null;
+        return {
+          stem,
+          token,
+          compactStem: stem.replace(/[^a-z0-9]/g, ''),
+          tokenType: /^\d+$/.test(token) ? 'number' : 'letter',
+        };
+      }
+
+      function hasConflictingSeriesMarker(dpgfDesig, importDesig) {
+        const markerA = extractDesignationSeriesMarker(dpgfDesig);
+        const markerB = extractDesignationSeriesMarker(importDesig);
+        if (!markerA || !markerB) return false;
+        if (markerA.tokenType !== markerB.tokenType) return false;
+        if (markerA.token === markerB.token) return false;
+        if (!markerA.compactStem || !markerB.compactStem) return false;
+
+        if (markerA.compactStem === markerB.compactStem) return true;
+
+        const longestStem = Math.max(markerA.compactStem.length, markerB.compactStem.length);
+        const stemMaxDistance = longestStem <= 12 ? 1 : 2;
+        const stemDistance = levenshteinDistance(markerA.compactStem, markerB.compactStem, stemMaxDistance);
+        return stemDistance <= stemMaxDistance && stemDistance / longestStem <= 0.12;
+      }
+
     /** Compare deux désignations. Retourne un score de 0 (aucun match) à 100 (identique) */
     function designationMatch(dpgfDesig, importDesig) {
       const a = normalizeDesig(dpgfDesig);
       const b = normalizeDesig(importDesig);
       if (!a || !b) return 0;
+      // Si deux lignes ont la même base mais finissent par des marqueurs de série différents
+      // (1/2/3 ou A/B/C), on interdit le match pour éviter les permutations.
+      if (hasConflictingSeriesMarker(dpgfDesig, importDesig)) return 0;
       // Match exact
       if (a === b) return 100;
       // L'import commence par la DPGF (l'entreprise a ajouté du texte après)
@@ -647,45 +731,75 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         continue;
       }
 
-      // --- Tentative de match avec l'article DPGF courant ---
+      // --- Tentative de match avec l'article DPGF courant (+ lookahead) ---
+      // Si l'item DPGF au curseur courant ne matche pas, on cherche dans les N suivants.
+      // Cela permet de passer par-dessus des titres/en-têtes DPGF que l'entreprise n'a pas
+      // inclus dans son fichier (lignes sans valeurs chiffrées).
       let isMatch = false;
       let matchScore = 0;
       let matchMethod = '';
+      let matchLookaheadOffset = 0;
 
-      if (dpgfCursor < dpgfItems.length) {
-        const dpgfItem = dpgfItems[dpgfCursor];
+      // Fenêtre de lookahead (par numéro uniquement pour limiter les faux positifs)
+      const LOOKAHEAD_LIMIT = 15;
+
+      for (let look = 0; look < LOOKAHEAD_LIMIT && dpgfCursor + look < dpgfItems.length; look++) {
+        const dpgfItem = dpgfItems[dpgfCursor + look];
+
+        let candidateMatch = false;
+        let candidateScore = 0;
+        let candidateMethod = '';
 
         // 1. Match par Num (si les deux ont un Num et qu'ils sont identiques)
         if (num && dpgfItem.num) {
           const normImport = normalizeNum(num);
           const normDpgf = normalizeNum(dpgfItem.num);
           if (normImport && normDpgf && normImport === normDpgf) {
-            isMatch = true;
-            matchScore = 100;
-            matchMethod = 'num';
+            candidateMatch = true;
+            candidateScore = 100;
+            candidateMethod = 'num';
           }
         }
 
         // 2. Match par désignation (si pas encore matché par Num)
-        if (!isMatch && importedDesignation) {
+        //    Pour le lookahead (look > 0), seuil relevé à 80 pour éviter les faux positifs
+        if (!candidateMatch && importedDesignation) {
           const score = designationMatch(dpgfItem.designation, importedDesignation);
-          if (score >= MATCH_THRESHOLD) {
-            isMatch = true;
-            matchScore = score;
-            matchMethod = 'designation';
+          const threshold = look === 0 ? MATCH_THRESHOLD : 80;
+          if (score >= threshold) {
+            candidateMatch = true;
+            candidateScore = score;
+            candidateMethod = 'designation';
           }
         }
 
         // 3. Si pas de Num dans l'import ni dans la DPGF, et pas de désignation →
-        //    match par position si le Num du DPGF est aussi vide
-        if (!isMatch && !num && !dpgfItem.num && !importedDesignation) {
-          isMatch = true;
-          matchScore = 30;
-          matchMethod = 'position';
+        //    match par position si le Num du DPGF est aussi vide (uniquement au curseur courant)
+        if (!candidateMatch && look === 0 && !num && !dpgfItem.num && !importedDesignation) {
+          candidateMatch = true;
+          candidateScore = 30;
+          candidateMethod = 'position';
         }
+
+        if (candidateMatch) {
+          isMatch = true;
+          matchScore = candidateScore;
+          matchMethod = candidateMethod;
+          matchLookaheadOffset = look;
+          break;
+        }
+
+        // Sans Num dans l'import, ne pas faire de lookahead au-delà du curseur courant :
+        // le risque de faux positif sur la désignation seule est trop élevé.
+        if (!num) break;
       }
 
       if (isMatch) {
+        // Si le match a été trouvé par lookahead, avancer le curseur jusqu'à l'article matché
+        // (les items DPGF intermédiaires n'ont pas été couverts par cette ligne entreprise)
+        if (matchLookaheadOffset > 0) {
+          dpgfCursor += matchLookaheadOffset;
+        }
         const dpgfItem = dpgfItems[dpgfCursor];
         // Extraire un commentaire si l'entreprise a ajouté du texte à la désignation
         let desigComment = null;
@@ -712,13 +826,21 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         }
         const offerComment = allComments.length > 0 ? allComments.join(' | ') : null;
 
+        // Sauvegarder la désignation entreprise si elle diffère de la désignation DPGF
+        const normDpgfDesig = normalizeDesig(dpgfItem.designation);
+        const normImportDesig = normalizeDesig(importedDesignation);
+        const offerDesignation = (normImportDesig && normDpgfDesig && !isSameDesignationWithinTolerance(dpgfItem.designation, importedDesignation))
+          ? String(importedDesignation).trim()
+          : null;
+
         await client.query(`
-          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount, comment, offer_designation)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           ON CONFLICT (item_id, company_id, round_id) DO UPDATE
           SET unit = EXCLUDED.unit, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount,
-              comment = COALESCE(EXCLUDED.comment, offers.comment)
-        `, [dpgfItem.id, resolvedCompanyId, roundId, unit, qty, pu, mt, offerComment]);
+              comment = COALESCE(EXCLUDED.comment, offers.comment),
+              offer_designation = EXCLUDED.offer_designation
+        `, [dpgfItem.id, resolvedCompanyId, roundId, unit, qty, pu, mt, offerComment, offerDesignation]);
 
         matched++;
         matchDetails.push({

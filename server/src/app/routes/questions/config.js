@@ -6,6 +6,56 @@ import { requireAuth } from '../../middleware/auth.js';
 const router = express.Router();
 router.use(requireAuth);
 
+function normalizeUnitLabel(value) {
+  if (!value) return '';
+  return String(value).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')
+    .replace(/[²]/g, '2')
+    .replace(/[³]/g, '3')
+    .replace(/[-\u2013\u2014]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function canonicalizeUnit(value) {
+  const normalized = normalizeUnitLabel(value);
+  if (!normalized) return '';
+  const compact = normalized.replace(/\s/g, '');
+  if (!compact) return '';
+  const strictAliases = new Map([
+    ['uni', 'u'],
+    ['u', 'u'],
+    ['ens', 'fft'],
+    ['fft', 'fft'],
+    ['ml', 'm'],
+    ['m', 'm'],
+    ['m2', 'm2'],
+    ['m3', 'm3'],
+  ]);
+  return strictAliases.get(compact) || compact;
+}
+
+function areUnitsEquivalent(expectedUnit, offeredUnit) {
+  const canonicalExpected = canonicalizeUnit(expectedUnit);
+  const canonicalOffered = canonicalizeUnit(offeredUnit);
+  if (!canonicalExpected || !canonicalOffered) return true;
+  return canonicalExpected === canonicalOffered;
+}
+
+function hasBlockingUnitMismatch(expectedUnit, offeredUnit, offeredAmount) {
+  const amount = Number.parseFloat(offeredAmount);
+  if (!Number.isFinite(amount) || amount === 0) return false;
+  if (!String(expectedUnit || '').trim() || !String(offeredUnit || '').trim()) return false;
+  return !areUnitsEquivalent(expectedUnit, offeredUnit);
+}
+
+function buildUnitMismatchComment(expectedUnit) {
+  const safeExpectedUnit = String(expectedUnit || '').trim();
+  if (!safeExpectedUnit) return '';
+  return `Ce poste doit être chiffré en ${safeExpectedUnit}.`;
+}
+
 // Autoriser uniquement admin ou responsable pour la configuration et la génération
 function requireManager(req, res, next) {
   const role = req.user?.role;
@@ -62,13 +112,14 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
       question_amount_very_high,
       unanswered_comment,
       unanswered_color,
-      offer_amount_mismatch_comment
+      offer_amount_mismatch_comment,
+      question_unit_mismatch
     } = req.body;
     
     const result = await query(
       `INSERT INTO project_question_config 
-        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now())
        ON CONFLICT (project_id) 
        DO UPDATE SET 
          question_qty_very_low = EXCLUDED.question_qty_very_low,
@@ -86,9 +137,10 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
          unanswered_comment = EXCLUDED.unanswered_comment,
          unanswered_color = EXCLUDED.unanswered_color,
          offer_amount_mismatch_comment = EXCLUDED.offer_amount_mismatch_comment,
+         question_unit_mismatch = EXCLUDED.question_unit_mismatch,
          updated_at = now()
        RETURNING *`,
-      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment]
+      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch]
     );
     
     res.json(result.rows[0]);
@@ -231,7 +283,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       question_amount_very_low: 'Pourquoi le montant est-il bien inférieur à la MOE ?',
       question_amount_low: 'Pourquoi le montant est-il inférieur à la MOE ?',
       question_amount_high: 'Pourquoi le montant est-il supérieur à la MOE ?',
-      question_amount_very_high: 'Pourquoi le montant est-il bien supérieur à la MOE ?'
+      question_amount_very_high: 'Pourquoi le montant est-il bien supérieur à la MOE ?',
+      question_unit_mismatch: 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?'
     };
     
     // 3. Récupérer les items, MOE et offres
@@ -240,6 +293,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       [lotId]
     );
     const items = itemsRes.rows;
+    const itemsById = new Map(items.map(item => [item.id, item]));
     
     const moeRes = await query(
       'SELECT * FROM moe_items WHERE item_id = ANY($1::int[])',
@@ -265,48 +319,106 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       return null;
     };
 
-    const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct }) => {
+    const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment = null }) => {
       if (itemId) {
         await query(
           `INSERT INTO generated_questions 
-            (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (lot_id, item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, comment, round_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (round_id, lot_id, item_id, company_id, question_type)
              WHERE item_id IS NOT NULL
            DO UPDATE SET 
              question_text = EXCLUDED.question_text,
              moe_value = EXCLUDED.moe_value,
              offer_value = EXCLUDED.offer_value,
-             deviation_pct = EXCLUDED.deviation_pct`,
-          [lotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, roundId]
+             deviation_pct = EXCLUDED.deviation_pct,
+             comment = EXCLUDED.comment`,
+          [lotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
         );
       } else if (optionItemId) {
         await query(
           `INSERT INTO generated_questions 
-            (lot_id, option_item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, round_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (lot_id, option_item_id, company_id, question_type, question_text, moe_value, offer_value, deviation_pct, comment, round_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (round_id, lot_id, option_item_id, company_id, question_type)
              WHERE option_item_id IS NOT NULL
            DO UPDATE SET 
              question_text = EXCLUDED.question_text,
              moe_value = EXCLUDED.moe_value,
              offer_value = EXCLUDED.offer_value,
-             deviation_pct = EXCLUDED.deviation_pct`,
-          [lotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, roundId]
+             deviation_pct = EXCLUDED.deviation_pct,
+             comment = EXCLUDED.comment`,
+          [lotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
         );
       }
     };
+
+    const nonUnitQuestionTypes = [
+      'qty_very_low', 'qty_low', 'qty_high', 'qty_very_high',
+      'price_very_low', 'price_low', 'price_high', 'price_very_high',
+      'amount_very_low', 'amount_low', 'amount_high', 'amount_very_high'
+    ];
+
+    const deleteCompetingQuestionsForUnitMismatch = async ({ itemId, optionItemId, companyId }) => {
+      if (itemId) {
+        await query(
+          `DELETE FROM generated_questions
+           WHERE lot_id = $1
+             AND round_id = $2
+             AND item_id = $3
+             AND company_id = $4
+             AND question_type = ANY($5::text[])`,
+          [lotId, roundId, itemId, companyId, nonUnitQuestionTypes]
+        );
+        return;
+      }
+      if (optionItemId) {
+        await query(
+          `DELETE FROM generated_questions
+           WHERE lot_id = $1
+             AND round_id = $2
+             AND option_item_id = $3
+             AND company_id = $4
+             AND question_type = ANY($5::text[])`,
+          [lotId, roundId, optionItemId, companyId, nonUnitQuestionTypes]
+        );
+      }
+    };
+
     for (const offer of offersRes.rows) {
       const moe = moeByItem.get(offer.item_id);
       if (!moe) continue;
+      const item = itemsById.get(offer.item_id);
       
       // Offre considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
       const offerQty = parseFloat(offer.qty) || 0;
       const offerPU  = parseFloat(offer.unit_price) || 0;
       if (offerQty === 0 && offerPU === 0) continue;
+      const offerAmount = getComparableAmount(offer);
+      const shouldSkipUnitAnalysis = hasBlockingUnitMismatch(item?.unit, offer.unit, offerAmount);
+      if (shouldSkipUnitAnalysis) {
+        const moeUnit = String(item?.unit || '').trim();
+        const unitMismatchText = (questions.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?')
+          .replace(/\{unit\}/g, moeUnit);
+        await deleteCompetingQuestionsForUnitMismatch({
+          itemId: offer.item_id,
+          companyId: offer.company_id
+        });
+        await upsertQuestion({
+          itemId: offer.item_id,
+          companyId: offer.company_id,
+          type: 'unit_mismatch',
+          text: unitMismatchText,
+          moeValue: null,
+          offerValue: offerAmount,
+          deviationPct: null,
+          comment: buildUnitMismatchComment(moeUnit)
+        });
+        generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'unit_mismatch' });
+      }
       
       // Vérifier écart quantité
-      if (moe.qty != null && offer.qty != null && moe.qty !== 0) {
+      if (!shouldSkipUnitAnalysis && moe.qty != null && offer.qty != null && moe.qty !== 0) {
         const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
         
         if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
@@ -361,7 +473,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       }
       
       // Vérifier écart prix
-      if (moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
+      if (!shouldSkipUnitAnalysis && moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
         const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
         
         if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
@@ -416,8 +528,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       }
 
       const moeAmount = getComparableAmount(moe);
-      const offerAmount = getComparableAmount(offer);
-      if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
+      if (!shouldSkipUnitAnalysis && moeAmount != null && offerAmount != null && moeAmount !== 0) {
         const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
 
         if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
@@ -470,13 +581,14 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
 
     // 5. Ajouter les options (items d'option)
     const optionItemsRes = await query(
-      `SELECT oi.id
+      `SELECT oi.id, oi.unit
        FROM option_items oi
        JOIN options o ON o.id = oi.option_id
        WHERE o.lot_id = $1 AND o.round_id = $2`,
       [lotId, roundId]
     );
     const optionItemIds = optionItemsRes.rows.map(r => r.id);
+    const optionUnitsById = new Map(optionItemsRes.rows.map(row => [Number(row.id), row.unit || '']));
 
     if (optionItemIds.length > 0) {
       const optionMoeRes = await query(
@@ -493,13 +605,36 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       for (const offer of optionOffersRes.rows) {
         const moe = moeByOptionItem.get(offer.option_item_id);
         if (!moe) continue;
+        const optionUnit = optionUnitsById.get(Number(offer.option_item_id)) || '';
 
         // Offre option considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
         const optOfferQty = parseFloat(offer.qty) || 0;
         const optOfferPU  = parseFloat(offer.unit_price) || 0;
         if (optOfferQty === 0 && optOfferPU === 0) continue;
+        const offerAmount = getComparableAmount(offer);
+        const shouldSkipUnitAnalysis = hasBlockingUnitMismatch(optionUnit, offer.unit, offerAmount);
 
-        if (moe.qty != null && offer.qty != null && moe.qty !== 0) {
+        if (shouldSkipUnitAnalysis) {
+          const unitMismatchText = (questions.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?')
+            .replace(/\{unit\}/g, optionUnit);
+          await deleteCompetingQuestionsForUnitMismatch({
+            optionItemId: offer.option_item_id,
+            companyId: offer.company_id
+          });
+          await upsertQuestion({
+            optionItemId: offer.option_item_id,
+            companyId: offer.company_id,
+            type: 'unit_mismatch',
+            text: unitMismatchText,
+            moeValue: null,
+            offerValue: offerAmount,
+            deviationPct: null,
+            comment: buildUnitMismatchComment(optionUnit)
+          });
+          generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'unit_mismatch' });
+        }
+
+        if (!shouldSkipUnitAnalysis && moe.qty != null && offer.qty != null && moe.qty !== 0) {
           const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
           if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
             await upsertQuestion({
@@ -548,7 +683,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
           }
         }
 
-        if (moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
+        if (!shouldSkipUnitAnalysis && moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
           const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
           if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
             await upsertQuestion({
@@ -598,8 +733,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         }
 
         const moeAmount = getComparableAmount(moe);
-        const offerAmount = getComparableAmount(offer);
-        if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
+        if (!shouldSkipUnitAnalysis && moeAmount != null && offerAmount != null && moeAmount !== 0) {
           const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
           if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
             await upsertQuestion({
@@ -1159,6 +1293,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       // Ajouter les données pour cette entreprise
       companyData.questions.forEach(q => {
         const typeLabel = {
+          'unit_mismatch': 'Unité à vérifier',
           'qty_very_low': 'Qté Très Basse',
           'qty_low': 'Qté Basse',
           'qty_high': 'Qté Haute',
@@ -1228,7 +1363,9 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         
         // Colonne Type - Coloration selon le type (mêmes couleurs que l'affichage)
         const typeCell = row.getCell(3);
-        if (q.question_type?.includes('very_low')) {
+        if (q.question_type === 'unit_mismatch') {
+          typeCell.font = { color: { argb: 'FF6F42C1' }, bold: true };
+        } else if (q.question_type?.includes('very_low')) {
           typeCell.font = { color: { argb: 'FF0D6EFD' }, bold: true };
         } else if (q.question_type?.includes('_low')) {
           typeCell.font = { color: { argb: 'FF0DCAF0' }, bold: true };

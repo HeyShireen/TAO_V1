@@ -165,6 +165,65 @@ function amountCellHtml(q, pu, comment){
   return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
 }
 
+const QUESTIONS_UNIT_MISMATCH_COMMENT_TEMPLATE = 'Ce poste doit etre chiffre en {unit}.';
+
+function normalizeUnitLabel(value) {
+  if (!value) return '';
+  return String(value).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')
+    .replace(/[²]/g, '2')
+    .replace(/[³]/g, '3')
+    .replace(/[-–—]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function canonicalizeUnit(value) {
+  const normalized = normalizeUnitLabel(value);
+  if (!normalized) return '';
+
+  const compact = normalized.replace(/\s/g, '');
+  const strictAliases = new Map([
+    ['uni', 'u'],
+    ['u', 'u'],
+    ['ens', 'fft'],
+    ['fft', 'fft'],
+    ['ml', 'm'],
+    ['m', 'm'],
+    ['m2', 'm2'],
+    ['m3', 'm3'],
+  ]);
+
+  return strictAliases.get(compact) || compact;
+}
+
+function areUnitsEquivalent(expectedUnit, offeredUnit) {
+  const canonicalExpected = canonicalizeUnit(expectedUnit);
+  const canonicalOffered = canonicalizeUnit(offeredUnit);
+  if (!canonicalExpected || !canonicalOffered) return true;
+  return canonicalExpected === canonicalOffered;
+}
+
+function getUnitMismatchInfo(expectedUnit, offeredUnit, offeredAmount) {
+  const safeExpectedUnit = String(expectedUnit || '').trim();
+  const safeOfferedUnit = String(offeredUnit || '').trim();
+  const amount = parseNum(offeredAmount);
+
+  if (!safeExpectedUnit || !safeOfferedUnit) return { hasMismatch: false };
+  if (!Number.isFinite(amount) || amount === 0) return { hasMismatch: false };
+  if (areUnitsEquivalent(safeExpectedUnit, safeOfferedUnit)) return { hasMismatch: false };
+
+  const comment = QUESTIONS_UNIT_MISMATCH_COMMENT_TEMPLATE.replace('{unit}', safeExpectedUnit);
+  return {
+    hasMismatch: true,
+    expectedUnit: safeExpectedUnit,
+    offeredUnit: safeOfferedUnit,
+    comment,
+    commentHtml: `<span class="unit-mismatch-note" title="Unite attendue: ${escapeHtml(safeExpectedUnit)} | Unite entreprise: ${escapeHtml(safeOfferedUnit)}">${escapeHtml(comment)}</span>`
+  };
+}
+
 /**
  * Génère un HTML pour afficher un commentaire d'offre sous forme de pastille colorée
  * @param {string} comment - Le texte du commentaire
@@ -180,6 +239,69 @@ function offerCommentBadgeHtml(comment, companyColor, companyName) {
   const style = `background-color: ${bgColor}; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 4px; display: inline-block; vertical-align: middle;`;
   
   return `<span class="offer-comment-badge" style="${style}" title="${escapeHtml(companyName || '')}: ${escapeHtml(comment)}">${escapeHtml(comment.substring(0, 50) || '💬')}</span>`;
+}
+/** Génère les puces cliquables pour les entreprises dont la désignation diffère de la DPGF */
+function offerDesigPillsHtml(companies) {
+  const diffCompanies = (companies || []).filter(c => c.offer_designation);
+  if (!diffCompanies.length) return '';
+  return diffCompanies.map(c => {
+    const bg = c.color || '#888';
+    const safeName = escapeHtml(c.name || '');
+    const safeDesig = escapeHtml(c.offer_designation || '');
+    return `<span class="offer-desig-pill" data-company="${safeName}" data-desig="${safeDesig}" style="display:inline-flex;align-items:center;cursor:pointer;background:${bg};color:#fff;padding:1px 7px;border-radius:10px;font-size:10px;margin-left:5px;vertical-align:middle;opacity:0.9" title="Désignation différente : cliquez pour voir">🏢 ${safeName}</span>`;
+  }).join('');
+}
+/** Affiche le popover de désignation entreprise sous la puce cliquée */
+function showOfferDesigPopover(pill) {
+  closeOfferDesigPopover();
+  const companyName = pill.dataset.company || '';
+  const designation = pill.dataset.desig || '';
+  const pop = document.createElement('div');
+  pop.id = 'offer-desig-popover';
+  pop.dataset.for = companyName + '|' + designation;
+  pop.style.cssText = 'position:fixed;z-index:9999;background:var(--card,#fff);border:1px solid var(--border,#ddd);border-radius:8px;padding:12px 16px;max-width:440px;min-width:180px;box-shadow:0 4px 24px rgba(0,0,0,0.18);font-size:0.88em;line-height:1.5';
+  pop.innerHTML = `<div style="font-weight:700;font-size:0.82em;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted,#888);margin-bottom:6px">${escapeHtml(companyName)}</div><div style="color:var(--fg)">${escapeHtml(designation)}</div>`;
+  document.body.appendChild(pop);
+  const rect = pill.getBoundingClientRect();
+  const pw = pop.offsetWidth || 300;
+  const ph = pop.offsetHeight || 80;
+  let left = rect.left;
+  let top = rect.bottom + 6;
+  if (left + pw > window.innerWidth - 16) left = window.innerWidth - pw - 16;
+  if (top + ph > window.innerHeight - 16) top = rect.top - ph - 6;
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
+}
+/** Ferme le popover de désignation entreprise */
+function closeOfferDesigPopover() {
+  const pop = document.getElementById('offer-desig-popover');
+  if (pop) pop.remove();
+}
+
+function attachOfferDesigPillDelegates(container) {
+  if (!container || container.dataset.desigPillListenerAttached) return;
+  container.dataset.desigPillListenerAttached = 'true';
+
+  container.addEventListener('click', (e) => {
+    const pill = e.target.closest('.offer-desig-pill');
+    if (!pill) {
+      closeOfferDesigPopover();
+      return;
+    }
+    e.stopPropagation();
+    const forId = (pill.dataset.company || '') + '|' + (pill.dataset.desig || '');
+    const existing = document.getElementById('offer-desig-popover');
+    if (existing && existing.dataset.for === forId) {
+      closeOfferDesigPopover();
+      return;
+    }
+    showOfferDesigPopover(pill);
+  });
+
+  if (!document.body.dataset.offerDesigPopoverGlobalCloseAttached) {
+    document.body.dataset.offerDesigPopoverGlobalCloseAttached = 'true';
+    document.addEventListener('click', closeOfferDesigPopover);
+  }
 }
 /** Returns true when a company has not answered an item (empty or zero for both qty and pu) */
 function isOfferUnanswered(qty, pu) {
@@ -3115,7 +3237,8 @@ async function autoSaveProjectQuestionConfig() {
       question_amount_very_high: qs('#q-amount-very-high').value.trim(),
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
-      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim()
+      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
+      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
     };
     await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
     unansweredConfig.comment = body.unanswered_comment;
@@ -3150,6 +3273,7 @@ async function loadProjectQuestionConfig(){
     qs('#q-unanswered-comment').value = config.unanswered_comment || 'Article sans réponse';
     qs('#q-unanswered-color').value = config.unanswered_color || '#fff3cd';
     qs('#q-offer-amount-mismatch-comment').value = config.offer_amount_mismatch_comment || 'Montant total incohérent dans la DPGF : le montant importé est conservé.';
+    if (qs('#q-unit-mismatch')) qs('#q-unit-mismatch').value = config.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?';
     unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
     unansweredConfig.color = config.unanswered_color || '#fff3cd';
     attachProjectQuestionsListeners();
@@ -3225,7 +3349,8 @@ async function saveProjectQuestionConfig(){
       question_amount_very_high: qs('#q-amount-very-high').value.trim(),
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
-      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim()
+      offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
+      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
     };
     await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body, showLoader: false });
     unansweredConfig.comment = body.unanswered_comment;
@@ -4082,6 +4207,15 @@ async function refreshQuestions({ silent = false } = {}){
     if (status) url += `&status=${status}`;
     
     let questions = await api(url, { showLoader: !silent });
+    const lotData = await api(`/lots/${currentLot.id}?round_id=${currentRound.id}`, { showLoader: false });
+
+    const companiesById = new Map((lotData?.companies || []).map(c => [Number(c.id), c]));
+    const sourceCompanyByItemId = new Map((lotData?.items || []).map(item => [Number(item.id), Number(item.source_company_id)]));
+    const offerByItemCompany = new Map();
+    for (const offer of (lotData?.offers || [])) {
+      const key = `${Number(offer.item_id)}_${Number(offer.company_id)}`;
+      offerByItemCompany.set(key, offer);
+    }
     // Filtrage combiné avancé
     const type = qs('#filter-type')?.value;
     const deviation = parseFloat(qs('#filter-deviation')?.value);
@@ -4150,6 +4284,7 @@ async function refreshQuestions({ silent = false } = {}){
     
     for (const q of questions) {
       const typeLabel = {
+        'unit_mismatch': `<span style="color:#6f42c1;font-weight:600">${icon('alert-triangle')}Unité à vérifier</span>`,
         'qty_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('trending-down')}Qté Très Basse</span>`,
         'qty_low': `<span style="color:#0dcaf0;font-weight:600">${icon('trending-down')}Qté Basse</span>`,
         'qty_high': `<span style="color:#fd7e14;font-weight:600">${icon('trending-up')}Qté Haute</span>`,
@@ -4175,17 +4310,28 @@ async function refreshQuestions({ silent = false } = {}){
       const deviationPct = q.deviation_pct != null ? Number(q.deviation_pct).toFixed(1) + '%' : '';
       const moeVal = q.moe_value != null ? fmtNum(q.moe_value) : '';
       const offerVal = q.offer_value != null ? fmtNum(q.offer_value) : '';
-      
+
+      const sourceCompanyId = sourceCompanyByItemId.get(Number(q.item_id));
+      const sourceCompany = Number.isFinite(sourceCompanyId) ? companiesById.get(Number(sourceCompanyId)) : null;
+      const sourceBadge = sourceCompany
+        ? `<span style="display:inline-flex;align-items:center;font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceCompany.color ? `background:${sourceCompany.color};color:#fff;` : 'background:var(--warning);color:#fff;'}margin-right:6px" title="Poste ajouté par ${escapeHtml(sourceCompany.name || '')}">${escapeHtml(sourceCompany.name || '')}</span>`
+        : '';
+
+      const offerKey = `${Number(q.item_id)}_${Number(q.company_id)}`;
+      const offerComment = offerByItemCompany.get(offerKey)?.comment || null;
+      const companyColor = companiesById.get(Number(q.company_id))?.color || null;
+      const offerValWithBadge = `${offerVal}${offerCommentBadgeHtml(offerComment, companyColor, q.company_name)}`;
+
       const itemLabel = q.num ? `${q.num} - ${q.designation || ''}` : (q.designation || '');
       html += `
         <tr data-qid="${q.id}">
           <td>${q.company_name}</td>
-          <td>${itemLabel}</td>
+          <td>${sourceBadge}${itemLabel}</td>
           <td>${typeLabel}</td>
           <td style="max-width:300px">${q.question_text}</td>
           <td>${deviationPct}</td>
           <td>${moeVal}</td>
-          <td>${offerVal}</td>
+          <td>${offerValWithBadge}</td>
           <td>
             <textarea id="comment-${q.id}" name="comment-${q.id}" data-qid="${q.id}" style="width:200px;height:60px;padding:4px" placeholder="Commentaire..." autocomplete="off" ${isEntreprise() ? 'disabled' : ''}>${q.comment || ''}</textarea>
           </td>
@@ -4325,6 +4471,7 @@ async function refreshQuestions({ silent = false } = {}){
 }
 
 /* ================= Éditeur de Questions ================= */
+let questionsDesigCollapsed = false;
 
 // Démarrer l'auto-actualisation de l'éditeur de questions (chaque 10 secondes)
 function startQuestionsEditorAutoRefresh() {
@@ -4416,10 +4563,14 @@ async function loadQuestionsEditor({ silent = false } = {}){
 
 function renderQuestionsEditorTable(lotData, questionsData) {
   const viewFilter = qs('#questions-view-filter').value;
+  const analysisMode = qs('#questions-analysis-mode')?.dataset?.value || 'company';
+  const isComparisonMode = analysisMode === 'comparison';
   const targetCompany = qs('#questions-target-company').value;
   const amountFilter = qs('#questions-amount-filter')?.value || 'all';
   const thead = qs('#questions-editor-head');
   const tbody = qs('#questions-editor-body');
+
+  attachOfferDesigPillDelegates(tbody);
 
   const thresholds = {
     qty: {
@@ -4457,6 +4608,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   
   // Afficher toutes les entreprises dans les colonnes de comparaison
   let companies = lotData.companies || [];
+  const companiesById = new Map(companies.map(c => [Number(c.id), c]));
 
   // Pré-calcul des offres par item + montant de référence pour filtrage/tri
   const offersByItemId = new Map();
@@ -4476,9 +4628,14 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         : (Number.isFinite(safeQty) && Number.isFinite(safePu) ? (safeQty * safePu) : null);
       return {
         company_id: company.id,
+        name: company.name,
+        color: company.color || null,
+        unit: offer?.unit || '',
         quantity: safeQty,
         unit_price: safePu,
-        total: safeTotal
+        total: safeTotal,
+        offer_designation: offer?.offer_designation || null,
+        comment: offer?.comment || null
       };
     });
 
@@ -4507,63 +4664,121 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     moeByItem.set(moe.item_id, moe);
   }
   
-  // Créer une map des questions par item_id + company_id
+  // Créer une map des questions par item_id + company_id (plusieurs questions possibles)
   const questionsMap = new Map();
   for (const q of questionsData || []) {
     const key = `${q.item_id}_${q.company_id}`;
-    questionsMap.set(key, q);
+    if (!questionsMap.has(key)) questionsMap.set(key, []);
+    questionsMap.get(key).push(q);
   }
   const showQuantities = viewFilter === 'all' || viewFilter === 'quantities';
   const showUnitPrices = viewFilter === 'all' || viewFilter === 'unit_prices';
   const showTotals = viewFilter === 'all' || viewFilter === 'totals';
+  const showCompanyUnits = companies.length > 0;
+  const selectedCompanyId = Number(targetCompany || 0);
+  const selectedCompanyName = targetCompany
+    ? (companiesById.get(selectedCompanyId)?.name || 'Entreprise ciblée')
+    : 'Entreprise ciblée';
+  const metricsColCount =
+    (showCompanyUnits ? (isComparisonMode ? 1 : companies.length) : 0) +
+    (showQuantities ? (isComparisonMode ? 3 : (1 + companies.length)) : 0) +
+    (showUnitPrices ? (isComparisonMode ? 3 : (1 + companies.length)) : 0) +
+    (showTotals ? (isComparisonMode ? 3 : (1 + companies.length)) : 0);
+  const emptyColspan = 5 + metricsColCount;
+
+  const formatDeltaPct = (referenceValue, comparedValue) => {
+    const reference = parseNum(referenceValue);
+    const compared = parseNum(comparedValue);
+    if (!Number.isFinite(reference) || !Number.isFinite(compared) || reference === 0) {
+      return null;
+    }
+    return ((compared - reference) / reference) * 100;
+  };
+
+  const deltaCellHtml = (deviation, metricThresholds, highlightClass = '') => {
+    if (!Number.isFinite(deviation)) {
+      return `<td class="${highlightClass}">—</td>`;
+    }
+    const deviationClass = getDeviationClass(deviation, metricThresholds);
+    const sign = deviation > 0 ? '+' : '';
+    return `<td class="${deviationClass}${highlightClass}">${sign}${deviation.toFixed(1)}%</td>`;
+  };
 
   let headerTop = '<tr class="head-row-1">';
   headerTop += '<th rowspan="2" class="sticky-col question-num-col">Num</th>';
-  headerTop += '<th rowspan="2" class="sticky-col2 question-designation-col">Désignation</th>';
+  headerTop += '<th rowspan="2" class="sticky-actions question-actions-col">Actions</th>';
+  headerTop += '<th rowspan="2" class="sticky-col2 question-designation-col"><button class="desig-toggle-btn" id="questions-desig-toggle" title="Afficher / masquer la désignation"></button><span class="desig-toggle-label">Désignation</span></th>';
+  headerTop += '<th rowspan="2" class="sticky-question questions-group-start question-text-col">Question</th>';
   headerTop += '<th rowspan="2" class="question-unit-col">Unité</th>';
 
-  if (showQuantities) {
-    headerTop += `<th colspan="${1 + companies.length}" class="moe-col">Quantités</th>`;
-  }
-  if (showUnitPrices) {
-    headerTop += `<th colspan="${1 + companies.length}" class="company-col">Prix Unitaires</th>`;
-  }
-  if (showTotals) {
-    headerTop += `<th colspan="${1 + companies.length}" class="company-col">Montants</th>`;
-  }
+  if (showCompanyUnits) headerTop += `<th colspan="${isComparisonMode ? 1 : companies.length}" class="company-unit-group">Unités entreprise</th>`;
+  if (showQuantities) headerTop += `<th colspan="${isComparisonMode ? 3 : (1 + companies.length)}" class="moe-col">Quantités</th>`;
+  if (showUnitPrices) headerTop += `<th colspan="${isComparisonMode ? 3 : (1 + companies.length)}" class="company-col">Prix Unitaires</th>`;
+  if (showTotals) headerTop += `<th colspan="${isComparisonMode ? 3 : (1 + companies.length)}" class="company-col">Montants</th>`;
 
-  headerTop += '<th rowspan="2" class="questions-group-start question-text-col">Question</th>';
-  headerTop += '<th rowspan="2" class="question-validation-col">Validation</th>';
-  headerTop += '<th rowspan="2" class="question-actions-col">Actions</th>';
   headerTop += '</tr>';
 
   let headerSub = '<tr class="head-row-2">';
-  if (showQuantities) {
-    headerSub += '<th class="moe-border moe-highlight">Qté MOE</th>';
-    for (const c of companies) {
-      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerSub += `<th class="${highlightClass}">Qté ${c.name}</th>`;
+  if (isComparisonMode) {
+    if (showCompanyUnits) {
+      headerSub += `<th class="questions-group-start target-company-highlight question-company-unit-col">Unité ${escapeHtml(selectedCompanyName)}</th>`;
     }
-  }
-  if (showUnitPrices) {
-    headerSub += '<th class="questions-group-start moe-highlight">PU MOE</th>';
-    for (const c of companies) {
-      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerSub += `<th class="${highlightClass}">PU ${c.name}</th>`;
+    if (showQuantities) {
+      headerSub += `<th class="${showCompanyUnits ? '' : 'questions-group-start '}moe-border moe-highlight">Qté MOE</th>`;
+      headerSub += `<th class="target-company-highlight">Qté ${escapeHtml(selectedCompanyName)}</th>`;
+      headerSub += '<th>Δ Qté</th>';
     }
-  }
-  if (showTotals) {
-    headerSub += '<th class="questions-group-start moe-highlight">Total MOE</th>';
-    for (const c of companies) {
-      const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-      headerSub += `<th class="${highlightClass}">Total ${c.name}</th>`;
+    if (showUnitPrices) {
+      headerSub += '<th class="questions-group-start moe-highlight">PU MOE</th>';
+      headerSub += `<th class="target-company-highlight">PU ${escapeHtml(selectedCompanyName)}</th>`;
+      headerSub += '<th>Δ PU</th>';
+    }
+    if (showTotals) {
+      headerSub += '<th class="questions-group-start moe-highlight">Montant MOE</th>';
+      headerSub += `<th class="target-company-highlight">Montant ${escapeHtml(selectedCompanyName)}</th>`;
+      headerSub += '<th>Δ Montant</th>';
+    }
+  } else {
+    if (showCompanyUnits) {
+      for (const c of companies) {
+        const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+        headerSub += `<th class="questions-group-start question-company-unit-col${highlightClass}">Unité ${c.name}</th>`;
+      }
+    }
+    if (showQuantities) {
+      headerSub += `<th class="${showCompanyUnits ? '' : 'questions-group-start '}moe-border moe-highlight">Qté MOE</th>`;
+      for (const c of companies) {
+        const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+        headerSub += `<th class="${highlightClass}">Qté ${c.name}</th>`;
+      }
+    }
+    if (showUnitPrices) {
+      headerSub += '<th class="questions-group-start moe-highlight">PU MOE</th>';
+      for (const c of companies) {
+        const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+        headerSub += `<th class="${highlightClass}">PU ${c.name}</th>`;
+      }
+    }
+    if (showTotals) {
+      headerSub += '<th class="questions-group-start moe-highlight">Montant MOE</th>';
+      for (const c of companies) {
+        const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
+        headerSub += `<th class="${highlightClass}">Montant ${c.name}</th>`;
+      }
     }
   }
   headerSub += '</tr>';
 
   thead.innerHTML = headerTop + headerSub;
   recalcQuestionsHeaderOffsets();
-  
+  // Restaurer l'état rétracté et lier le bouton toggle
+  qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
+  qs('#questions-desig-toggle')?.addEventListener('click', () => {
+    questionsDesigCollapsed = !questionsDesigCollapsed;
+    qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
+    recalcQuestionsHeaderOffsets();
+  });
+
   let html = '';
   
   // Pour chaque ligne du lot (une ligne par item, pas par entreprise)
@@ -4586,129 +4801,224 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       const hasAnyValue = hasQty || hasPu;
       return {
         ...offer,
-        isUnanswered: moeHasTotal && !hasAnyValue
+        isUnanswered: moeHasTotal && !hasAnyValue,
+        unitMismatchInfo: getUnitMismatchInfo(item.unit, offer.unit, offer.total)
       };
     });
     
-    // Trouver la question pour cette entreprise ciblée
-    let existingQuestion = null;
+    // Trouver les questions pour cette entreprise ciblée
+    let existingQuestions = [];
+    let selectedOfferForQuestion = null;
     if (targetCompany) {
       const questionKey = `${item.id}_${targetCompany}`;
-      existingQuestion = questionsMap.get(questionKey);
+      existingQuestions = questionsMap.get(questionKey) || [];
+      selectedOfferForQuestion = itemOffers.find(o => Number(o.company_id) === selectedCompanyId) || null;
     }
+
+    // Cas métier:
+    // - Par défaut: afficher toutes les questions du poste
+    // - Exception "unité incohérente": n'afficher que la question d'unité
+    // - Exception "réponse oubliée": n'afficher que la première question (si présente)
+    let displayQuestions = existingQuestions.slice();
+    if (displayQuestions.length > 1 && selectedOfferForQuestion?.unitMismatchInfo?.hasMismatch) {
+      const mismatchOnly = displayQuestions.filter(q => q.question_type === 'unit_mismatch');
+      if (mismatchOnly.length > 0) displayQuestions = mismatchOnly;
+    }
+    if (displayQuestions.length > 1 && selectedOfferForQuestion?.isUnanswered) {
+      displayQuestions = [displayQuestions[0]];
+    }
+
+    const existingQuestion = displayQuestions[0] || null;
     
     const questionId = existingQuestion?.id || '';
-    const questionText = existingQuestion?.question_text || '';
+    const questionText = displayQuestions.map(q => q.question_text || '').filter(Boolean).join('\n• ');
     const questionStatus = existingQuestion?.status || 'pending';
     const questionCompanyId = existingQuestion?.company_id || '';
+    const sourceCompany = Number.isFinite(Number(item.source_company_id))
+      ? companiesById.get(Number(item.source_company_id))
+      : null;
+    const sourceCompanyBadge = sourceCompany
+      ? `<span style="display:inline-flex;align-items:center;font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceCompany.color ? `background:${sourceCompany.color};color:#fff;` : 'background:var(--warning);color:#fff;'}margin-right:6px" title="Poste ajouté par ${escapeHtml(sourceCompany.name || '')}">${escapeHtml(sourceCompany.name || '')}</span>`
+      : '';
     
     const isValidated = questionStatus === 'validated';
-    const validationBadge = isValidated
-      ? `${icon('check-circle')}Validée`
-      : `${icon('clock')}À valider`;
-    
-    const hierarchyClass = getQuestionHierarchyClass(item.num);
-
-    html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}">`;
-    html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
-    html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}">${item.designation || ''}</td>`;
-    html += `<td>${item.unit || ''}</td>`;
-    
-    // Colonnes quantités
-    if (showQuantities) {
-      html += `<td class="moe-cell moe-border">${fmtNum(moeQty)}</td>`;
-      for (const offer of itemOffers) {
-        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
-        if (isValidatedTarget) {
-          html += `<td class="validated-question-cell${highlightClass}">${fmtNum(offer.quantity)}</td>`;
-        } else if (offer.isUnanswered) {
-          const sty = unansweredStyleStr(unansweredConfig.color);
-          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
-          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtNum(offer.quantity)}</td>`;
-        } else {
-          const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
-          const deviationClass = getDeviationClass(deviation, thresholds.qty);
-          html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}</td>`;
-        }
-      }
-    }
-    
-    // Colonnes prix unitaires
-    if (showUnitPrices) {
-      html += `<td class="moe-cell questions-group-start">${fmtEuro(moePU)}</td>`;
-      for (const offer of itemOffers) {
-        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
-        if (isValidatedTarget) {
-          html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
-        } else if (offer.isUnanswered) {
-          const sty = unansweredStyleStr(unansweredConfig.color);
-          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
-          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.unit_price)}</td>`;
-        } else {
-          const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
-          const deviationClass = getDeviationClass(deviation, thresholds.price);
-          html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}</td>`;
-        }
-      }
-    }
-    
-    // Colonnes totaux
-    if (showTotals) {
-      html += `<td class="moe-cell questions-group-start">${fmtEuro(moeTotal)}</td>`;
-      for (const offer of itemOffers) {
-        const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-        const isValidatedTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
-        if (isValidatedTarget) {
-          html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.total)}</td>`;
-        } else if (offer.isUnanswered) {
-          const sty = unansweredStyleStr(unansweredConfig.color);
-          const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
-          html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.total)}</td>`;
-        } else {
-          const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
-          const deviationClass = getDeviationClass(deviation, thresholds.amount);
-          html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}</td>`;
-        }
-      }
-    }
-    
-    
-    // Question avec statut sauvegarde
-    html += '<td class="questions-group-start" style="position:relative">';
-    html += `<textarea 
-      id="question-${item.id}"
-      name="question-${item.id}"
-      class="question-text-editor" 
-      data-item-id="${item.id}"
-      data-question-id="${questionId}"
-      rows="2" 
-      style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)"
-      placeholder="Saisir une question..."
-      ${isVisionneur() || isEntreprise() ? 'disabled' : ''}
-    >${questionText}</textarea>`;
-    html += `<div class="save-status" data-item-id="${item.id}" style="position:absolute;top:6px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
-    html += '</td>';
-    
-    // Validation
-    html += `<td class="validation-status ${isValidated ? 'validated-question-status' : 'pending-question-status'}">${validationBadge}</td>`;
-    
-    // Actions
-    html += '<td>';
     const validateTitle = isValidated
       ? 'Désactiver la validation'
       : (questionId ? 'Valider' : 'Créer et valider');
-    html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" style="padding:4px 8px;font-size:12px;color:var(--success)" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+    const hierarchyClass = getQuestionHierarchyClass(item.num);
+    const desigPills = offerDesigPillsHtml(itemOffers);
+
+    html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}">`;
+    html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
+    // Actions (déplacées à gauche)
+    html += '<td class="sticky-actions">';
+    html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
     if (questionId) {
-      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" style="padding:4px 8px;font-size:12px" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" title="Supprimer">${icon('trash','icon-only')}</button>`;
     }
     html += '</td>';
+    html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}"><span class="desig-text">${sourceCompanyBadge}${item.designation || ''}${desigPills}</span></td>`;
+    // Question (figée, après Désignation)
+    html += '<td class="sticky-question questions-group-start">';
+    html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-item-id="${item.id}" data-question-id="${questionId}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
+    if (displayQuestions.length > 1) {
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:4px">${displayQuestions.length} questions affichées</div>`;
+    }
+    html += `<div class="save-status" data-item-id="${item.id}" style="position:absolute;top:4px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
+    html += '</td>';
+    html += `<td>${item.unit || ''}</td>`;
+    
+    if (isComparisonMode) {
+      const selectedOffer = targetCompany
+        ? itemOffers.find(o => Number(o.company_id) === selectedCompanyId)
+        : null;
+      const targetHighlightClass = targetCompany ? ' target-company-highlight' : '';
+      const isValidatedTarget = isValidated && targetCompany;
+      const unansweredStyle = unansweredStyleStr(unansweredConfig.color);
+      const unansweredTitle = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+      const selectedCommentBadge = selectedOffer
+        ? offerCommentBadgeHtml(selectedOffer.comment, selectedOffer.color, selectedOffer.name)
+        : '';
+
+      if (showCompanyUnits) {
+        const unitCellClass = selectedOffer?.unitMismatchInfo?.hasMismatch
+          ? `unit-mismatch-cell questions-group-start${targetHighlightClass}`
+          : `questions-group-start question-company-unit-cell${targetHighlightClass}`;
+        html += `<td class="${unitCellClass}">${escapeHtml(selectedOffer?.unit || '') || '—'}${selectedCommentBadge}</td>`;
+      }
+
+      if (showQuantities) {
+        html += `<td class="moe-cell ${showCompanyUnits ? '' : 'questions-group-start '}moe-border">${fmtNum(moeQty)}</td>`;
+        if (selectedOffer?.unitMismatchInfo?.hasMismatch) {
+          html += `<td class="unit-mismatch-cell${targetHighlightClass}">${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
+          html += '<td class="unit-mismatch-cell">—</td>';
+        } else if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${targetHighlightClass}">${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
+        } else if (selectedOffer?.isUnanswered) {
+          html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
+        } else {
+          const qtyDeviation = formatDeltaPct(moeQty, selectedOffer?.quantity);
+          const qtyDeviationClass = Number.isFinite(qtyDeviation) ? getDeviationClass(qtyDeviation, thresholds.qty) : '';
+          html += `<td class="${qtyDeviationClass}${targetHighlightClass}">${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
+        }
+        html += deltaCellHtml(formatDeltaPct(moeQty, selectedOffer?.quantity), thresholds.qty);
+      }
+
+      if (showUnitPrices) {
+        html += `<td class="moe-cell questions-group-start">${fmtEuro(moePU)}</td>`;
+        if (selectedOffer?.unitMismatchInfo?.hasMismatch) {
+          html += `<td class="unit-mismatch-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
+          html += '<td class="unit-mismatch-cell">—</td>';
+        } else if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
+        } else if (selectedOffer?.isUnanswered) {
+          html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
+        } else {
+          const puDeviation = formatDeltaPct(moePU, selectedOffer?.unit_price);
+          const puDeviationClass = Number.isFinite(puDeviation) ? getDeviationClass(puDeviation, thresholds.price) : '';
+          html += `<td class="${puDeviationClass}${targetHighlightClass}">${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
+        }
+        html += deltaCellHtml(formatDeltaPct(moePU, selectedOffer?.unit_price), thresholds.price);
+      }
+
+      if (showTotals) {
+        html += `<td class="moe-cell questions-group-start">${fmtEuro(moeTotal)}</td>`;
+        if (isValidatedTarget) {
+          html += `<td class="validated-question-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.total)}${selectedCommentBadge}</td>`;
+        } else if (selectedOffer?.isUnanswered) {
+          html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtEuro(selectedOffer?.total)}${selectedCommentBadge}</td>`;
+        } else {
+          const amountDeviation = formatDeltaPct(moeTotal, selectedOffer?.total);
+          const amountDeviationClass = Number.isFinite(amountDeviation) ? getDeviationClass(amountDeviation, thresholds.amount) : '';
+          html += `<td class="${amountDeviationClass}${targetHighlightClass}">${fmtEuro(selectedOffer?.total)}${selectedCommentBadge}</td>`;
+        }
+        html += deltaCellHtml(formatDeltaPct(moeTotal, selectedOffer?.total), thresholds.amount);
+      }
+    } else {
+      if (showCompanyUnits) {
+        for (const offer of itemOffers) {
+          const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
+          const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+          const unitCellClass = offer.unitMismatchInfo?.hasMismatch
+            ? `unit-mismatch-cell questions-group-start${highlightClass}`
+            : `questions-group-start question-company-unit-cell${highlightClass}`;
+          html += `<td class="${unitCellClass}">${escapeHtml(offer.unit || '') || '—'}${commentBadge}</td>`;
+        }
+      }
+
+      // Colonnes quantités
+      if (showQuantities) {
+        html += `<td class="moe-cell ${showCompanyUnits ? '' : 'questions-group-start '}moe-border">${fmtNum(moeQty)}</td>`;
+        for (const offer of itemOffers) {
+          const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
+          const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+          if (offer.unitMismatchInfo?.hasMismatch) {
+            html += `<td class="unit-mismatch-cell${highlightClass}">${fmtNum(offer.quantity)}${commentBadge}</td>`;
+          } else if (isValidatedOfferTarget) {
+            html += `<td class="validated-question-cell${highlightClass}">${fmtNum(offer.quantity)}${commentBadge}</td>`;
+          } else if (offer.isUnanswered) {
+            const sty = unansweredStyleStr(unansweredConfig.color);
+            const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+            html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtNum(offer.quantity)}${commentBadge}</td>`;
+          } else {
+            const deviation = moeQty > 0 ? ((offer.quantity - moeQty) / moeQty) * 100 : 0;
+            const deviationClass = getDeviationClass(deviation, thresholds.qty);
+            html += `<td class="${deviationClass}${highlightClass}">${fmtNum(offer.quantity)}${commentBadge}</td>`;
+          }
+        }
+      }
+
+      // Colonnes prix unitaires
+      if (showUnitPrices) {
+        html += `<td class="moe-cell questions-group-start">${fmtEuro(moePU)}</td>`;
+        for (const offer of itemOffers) {
+          const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
+          const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+          if (offer.unitMismatchInfo?.hasMismatch) {
+            html += `<td class="unit-mismatch-cell${highlightClass}">${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
+          } else if (isValidatedOfferTarget) {
+            html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
+          } else if (offer.isUnanswered) {
+            const sty = unansweredStyleStr(unansweredConfig.color);
+            const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+            html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
+          } else {
+            const deviation = moePU > 0 ? ((offer.unit_price - moePU) / moePU) * 100 : 0;
+            const deviationClass = getDeviationClass(deviation, thresholds.price);
+            html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
+          }
+        }
+      }
+
+      // Colonnes totaux
+      if (showTotals) {
+        html += `<td class="moe-cell questions-group-start">${fmtEuro(moeTotal)}</td>`;
+        for (const offer of itemOffers) {
+          const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
+          const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
+          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+          if (isValidatedOfferTarget) {
+            html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.total)}${commentBadge}</td>`;
+          } else if (offer.isUnanswered) {
+            const sty = unansweredStyleStr(unansweredConfig.color);
+            const titleA = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
+            html += `<td class="ecart-unanswered${highlightClass}" style="${sty}"${titleA}>${fmtEuro(offer.total)}${commentBadge}</td>`;
+          } else {
+            const deviation = moeTotal > 0 ? ((offer.total - moeTotal) / moeTotal) * 100 : 0;
+            const deviationClass = getDeviationClass(deviation, thresholds.amount);
+            html += `<td class="${deviationClass}${highlightClass}">${fmtEuro(offer.total)}${commentBadge}</td>`;
+          }
+        }
+      }
+    }
+    
     
     html += '</tr>';
   }
   
-  tbody.innerHTML = html || '<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Aucune ligne correspondante</td></tr>';
+  tbody.innerHTML = html || `<tr><td colspan="${emptyColspan}" style="text-align:center;padding:40px;color:var(--muted)">Aucune ligne correspondante</td></tr>`;
   
   // Bind events
   if (!isVisionneur() && !isEntreprise()) {
@@ -5116,7 +5426,9 @@ async function refreshCompare({ silent = false } = {}){
     }
     
     const head = qs('#compare-head'), body = qs('#compare-body'); head.innerHTML=''; body.innerHTML='';
-  
+
+  attachOfferDesigPillDelegates(body);
+
   // En-tête ligne 1
   let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th>`;
   if (!entrepriseMode) {
@@ -5158,7 +5470,8 @@ async function refreshCompare({ silent = false } = {}){
   const addedRows = data.rows.filter(r => r.source_company_id);
   
   for (const r of dpgfRows){
-    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}</td><td>${r.unit||''}</td>`;
+    const desigPills = offerDesigPillsHtml(r.companies);
+    let tr = `<tr><td class="sticky-col">${r.num||''}</td><td class="sticky-col2">${r.designation||''}${desigPills}</td><td>${r.unit||''}</td>`;
     
     // Colonnes MOE (seulement si pas entreprise)
     if (!entrepriseMode) {
@@ -5913,6 +6226,13 @@ function renderSheetInitial(){
   // top header: base (rowSpan=2) + groupes
   const tr1 = document.createElement('tr');
   
+  // En-tête pour la colonne de suppression
+  const thDelete = document.createElement('th');
+  thDelete.textContent = '';
+  thDelete.rowSpan = 2;
+  thDelete.style.cssText = 'text-align:center;width:40px';
+  tr1.appendChild(thDelete);
+  
   // Trouver le nombre de colonnes de base (avant les colonnes entreprises)
   // Colonnes de base : num, designation, unit, [moe.qty, moe.pu, moe.mt si pas entreprise]
   const baseCount = colModel.findIndex(col => col.key.startsWith('c.'));
@@ -5963,6 +6283,20 @@ function renderSheetInitial(){
 /** appendRowDOM : ne rerend PAS tout */
 function appendRowDOM(rIndex, data){
   const tr = document.createElement('tr');
+  
+  // Colonne de suppression (première colonne)
+  const tdDelete = document.createElement('td');
+  tdDelete.style.cssText = 'text-align:center;padding:4px 8px;width:40px;flex-shrink:0';
+  tdDelete.classList.add('cell-readonly');
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'btn ghost btn-delete-row';
+  deleteBtn.style.cssText = 'padding:4px 6px;font-size:0.9rem';
+  deleteBtn.innerHTML = `<svg class="icon" aria-hidden="true" style="width:16px;height:16px"><use href="./assets/icons.svg#icon-trash"></use></svg>`;
+  deleteBtn.title = 'Supprimer cette ligne';
+  tdDelete.appendChild(deleteBtn);
+  tr.appendChild(tdDelete);
+  
   for (let c=0;c<colModel.length;c++){
     const col = colModel[c];
     const td = document.createElement('td');
@@ -6263,6 +6597,22 @@ function attachSheetDelegates(){
     markAsChanged();
   }, true);
 
+  // Suppression de lignes (boutons de suppression)
+  body.addEventListener('click', (e) => {
+    const deleteBtn = e.target.closest('.btn-delete-row');
+    if (!deleteBtn) return;
+    
+    // Calculer l'indice de la ligne dynamiquement
+    const tr = deleteBtn.closest('tr');
+    if (!tr) return;
+    
+    const rows = qsa('#sheet-body tr');
+    const rIndex = Array.from(rows).indexOf(tr);
+    if (rIndex === -1) return;
+    
+    deleteRow(rIndex);
+  });
+
   delegatesAttached = true;
 }
 
@@ -6390,6 +6740,37 @@ function addRow(){
   const r = qsa('#sheet-body tr').length - 1;
   const firstEditable = colModel.findIndex(c => c.editable);
   if (firstEditable >= 0) focusCell(r, firstEditable);
+}
+
+function deleteRow(rIndex){
+  const designation = sheetRows[rIndex]?.designation || '(sans désignation)';
+  
+  showDeleteConfirmation({
+    title: 'Supprimer cette ligne',
+    message: `Êtes-vous sûr de vouloir supprimer la ligne "${escapeHtml(designation)}" ?`,
+    extra: '<strong>⚠️ Attention:</strong> Cette ligne sera supprimée du lot. Cette action sera enregistrée lors de la sauvegarde.',
+    onConfirm: async () => {
+      try {
+        // Supprimer du modèle
+        sheetRows.splice(rIndex, 1);
+        
+        // Si plus de lignes, ajouter une ligne vide
+        if (sheetRows.length === 0) {
+          const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+          for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+          sheetRows.push(blank);
+        }
+        
+        // Redessiner le tableau (met à jour les indices data-r)
+        renderSheetInitial();
+        
+        markAsChanged();
+        showNotify({ title: 'Succès', message: 'Ligne supprimée', type: 'success' });
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    }
+  });
 }
 
 async function autoSaveGrid(){
@@ -6703,6 +7084,9 @@ let importState = {
   excludedRows: new Set(),
   autoExcludedRows: new Set(),
   fileId: null,
+  selectedSheetsDpgf: [],
+  sheetConfigsDpgf: {},
+  dpgfBaseMapping: null,
 };
 
 function bindSmartImport() {
@@ -6722,6 +7106,9 @@ function bindSmartImport() {
   const goStep2Btn  = qs('#import-go-step2');
   const sheetSelect = qs('#import-sheet-select');
   const headerRowInput = qs('#import-header-row');
+  const dpgfSheetsToggle = qs('#import-dpgf-sheets-toggle');
+  const dpgfSheetsDropdown = qs('#import-dpgf-sheets-dropdown');
+  const dpgfSheetsSummary = qs('#import-dpgf-sheets-summary');
   const fileNavWrap = qs('#import-file-nav');
   const prevFileBtn = qs('#import-prev-file');
   const nextFileBtn = qs('#import-next-file');
@@ -6743,6 +7130,85 @@ function bindSmartImport() {
 
   function isBatchOfferImport() {
     return importState.mode === 'offer' && getSelectedImportFiles().length > 1;
+  }
+
+  function canUseDpgfMultiSheets() {
+    const files = getSelectedImportFiles();
+    return importState.mode === 'dpgf'
+      && files.length === 1
+      && /\.(xlsx?|xlsm)$/i.test(files[0]?.name || '')
+      && Array.isArray(importState.preview?.sheets)
+      && importState.preview.sheets.length > 1;
+  }
+
+  function hasUsableDpgfMapping(mapping) {
+    const designation = mapping?.designation;
+    if (Array.isArray(designation)) return designation.length > 0;
+    return designation != null;
+  }
+
+  function setDpgfSheetsDropdownOpen(isOpen) {
+    if (!dpgfSheetsDropdown) return;
+    dpgfSheetsDropdown.classList.toggle('hidden', !isOpen);
+  }
+
+  function updateDpgfSheetsSummary(availableSheets = []) {
+    if (!dpgfSheetsSummary) return;
+    const selectedCount = Array.isArray(importState.selectedSheetsDpgf) ? importState.selectedSheetsDpgf.length : 0;
+    const total = availableSheets.length;
+    if (total <= 0) {
+      dpgfSheetsSummary.textContent = 'Aucun onglet';
+      return;
+    }
+    if (selectedCount <= 0) {
+      dpgfSheetsSummary.textContent = 'Aucun onglet sélectionné';
+      return;
+    }
+    if (selectedCount === total) {
+      dpgfSheetsSummary.textContent = `Tous les onglets (${total})`;
+      return;
+    }
+    dpgfSheetsSummary.textContent = `${selectedCount} onglet(s) sélectionné(s)`;
+  }
+
+  function saveDpgfSheetConfig(sheetName) {
+    if (!sheetName) return;
+    if (!importState.sheetConfigsDpgf || typeof importState.sheetConfigsDpgf !== 'object') {
+      importState.sheetConfigsDpgf = {};
+    }
+    const mapping = normalizeMappingShape(importState.mapping);
+    importState.sheetConfigsDpgf[sheetName] = {
+      mapping,
+      excludedRows: [...(importState.excludedRows instanceof Set ? importState.excludedRows : new Set())].filter(v => typeof v === 'number'),
+    };
+    // Le mapping de base vient du premier onglet réellement configuré, quel que soit son ordre.
+    if (!importState.dpgfBaseMapping && hasUsableDpgfMapping(mapping)) {
+      importState.dpgfBaseMapping = cloneMapping(mapping);
+      const allSheets = Array.isArray(importState.preview?.sheets) ? importState.preview.sheets : [];
+      for (const sheet of allSheets) {
+        if (sheet !== sheetName && !importState.sheetConfigsDpgf[sheet]) {
+          importState.sheetConfigsDpgf[sheet] = {
+            mapping: cloneMapping(importState.dpgfBaseMapping),
+            excludedRows: [],
+          };
+        }
+      }
+    }
+  }
+
+  function loadDpgfSheetConfig(sheetName, data) {
+    const cfg = importState.sheetConfigsDpgf?.[sheetName];
+    if (cfg) {
+      importState.mapping = normalizeMappingShape(cfg.mapping || {});
+      importState.excludedRows = new Set((cfg.excludedRows || []).filter(v => typeof v === 'number'));
+    } else {
+      // Utiliser le mapping du premier onglet configuré, ou le mapping suggéré si aucun n'existe encore.
+      const fallback = importState.dpgfBaseMapping || data?.suggestedMapping || {};
+      importState.mapping = normalizeMappingShape(fallback);
+      importState.excludedRows = new Set();
+    }
+    importState.autoExcludedRows = new Set();
+    applyAutoExcludeRowsBeforeFirstArticle();
   }
 
   function deriveCompanyNameFromFile(fileName) {
@@ -6898,8 +7364,8 @@ function bindSmartImport() {
 
     if (files.length === 0) {
       label.textContent = importState.mode === 'offer'
-        ? 'Cliquez pour sélectionner un ou plusieurs fichiers Excel (.xlsx, .xls)'
-        : 'Cliquez pour sélectionner un fichier Excel (.xlsx, .xls)';
+        ? 'Cliquez pour sélectionner un ou plusieurs fichiers Excel (.xlsx, .xls, .xlsm)'
+        : 'Cliquez pour sélectionner un fichier Excel (.xlsx, .xls, .xlsm)';
       info.classList.add('hidden');
       if (list) {
         list.classList.add('hidden');
@@ -7057,7 +7523,8 @@ function bindSmartImport() {
   }
 
   function openModal() {
-    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null };
+    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
+    setDpgfSheetsDropdownOpen(false);
     setImportMode('dpgf');
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
@@ -7073,9 +7540,10 @@ function bindSmartImport() {
   }
 
   function closeModal() {
+    setDpgfSheetsDropdownOpen(false);
     modal.classList.add('hidden');
     modal.style.display = 'none';
-    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null };
+    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
   }
 
   openBtn.addEventListener('click', openModal);
@@ -7085,10 +7553,33 @@ function bindSmartImport() {
   // Mode toggle
   modeDpgf?.addEventListener('click', () => setImportMode('dpgf'));
   modeOffer?.addEventListener('click', () => setImportMode('offer'));
+  dpgfSheetsToggle?.addEventListener('click', (e) => {
+    e.preventDefault();
+    setDpgfSheetsDropdownOpen(dpgfSheetsDropdown?.classList.contains('hidden'));
+  });
+  document.addEventListener('click', (e) => {
+    if (!dpgfSheetsDropdown || !dpgfSheetsToggle) return;
+    if (dpgfSheetsDropdown.classList.contains('hidden')) return;
+    const target = e.target;
+    if (target && (dpgfSheetsDropdown.contains(target) || dpgfSheetsToggle.contains(target))) return;
+    setDpgfSheetsDropdownOpen(false);
+  });
 
   function setImportMode(mode) {
     importState.mode = mode;
     if (fileInput) fileInput.multiple = mode === 'offer';
+
+    // Réinitialiser l'état multi-onglets DPGF lors du changement de mode
+    importState.selectedSheetsDpgf = [];
+      importState.dpgfBaseMapping = null;
+    importState.sheetConfigsDpgf = {};
+    const dpgfMultiWrap = qs('#import-dpgf-multi-sheets');
+    if (dpgfMultiWrap) dpgfMultiWrap.classList.add('hidden');
+    if (dpgfSheetsDropdown) {
+      dpgfSheetsDropdown.innerHTML = '';
+      setDpgfSheetsDropdownOpen(false);
+    }
+    updateDpgfSheetsSummary([]);
 
     // En mode DPGF, garder seulement le premier fichier si plusieurs sont déjà sélectionnés
     if (mode === 'dpgf' && getSelectedImportFiles().length > 1) {
@@ -7252,8 +7743,11 @@ function bindSmartImport() {
 
   // Sheet selector change
   sheetSelect?.addEventListener('change', () => {
+    if (canUseDpgfMultiSheets()) {
+      saveDpgfSheetConfig(importState.preview?.selectedSheet);
+    }
     persistActiveFileConfig(false);
-    doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: true, switchToStep2: false });
+    doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: !canUseDpgfMultiSheets(), switchToStep2: false });
   });
 
   // Header row manual override
@@ -7294,6 +7788,11 @@ function bindSmartImport() {
 
     updateOfferImportUI();
 
+    // En mode DPGF multi-onglets : charger la config de l'onglet actif
+    if (canUseDpgfMultiSheets() && data.selectedSheet) {
+      loadDpgfSheetConfig(data.selectedSheet, data);
+    }
+
     // Remplir le sélecteur d'onglets
     sheetSelect.innerHTML = '';
     for (const s of data.sheets) {
@@ -7302,6 +7801,51 @@ function bindSmartImport() {
       opt.textContent = s;
       if (s === data.selectedSheet) opt.selected = true;
       sheetSelect.appendChild(opt);
+    }
+
+    // Multi-onglets DPGF : afficher les chips de sélection
+    const dpgfMultiWrap = qs('#import-dpgf-multi-sheets');
+    const dpgfSheetsList = qs('#import-dpgf-sheets-list');
+    if (dpgfMultiWrap && dpgfSheetsList && dpgfSheetsDropdown) {
+      if (canUseDpgfMultiSheets()) {
+        dpgfMultiWrap.classList.remove('hidden');
+        dpgfSheetsList.innerHTML = '';
+        dpgfSheetsDropdown.innerHTML = '';
+        const available = Array.isArray(data.sheets) ? data.sheets : [];
+        if (!Array.isArray(importState.selectedSheetsDpgf) || importState.selectedSheetsDpgf.length === 0) {
+          importState.selectedSheetsDpgf = [...available];
+        } else {
+          importState.selectedSheetsDpgf = importState.selectedSheetsDpgf.filter(s => available.includes(s));
+          if (importState.selectedSheetsDpgf.length === 0) importState.selectedSheetsDpgf = [...available];
+        }
+        const selected = new Set(importState.selectedSheetsDpgf);
+        updateDpgfSheetsSummary(available);
+        for (const s of available) {
+          const chip = document.createElement('label');
+          chip.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:0.82em;user-select:none';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = s;
+          cb.checked = selected.has(s);
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.add(s);
+            else selected.delete(s);
+            importState.selectedSheetsDpgf = [...selected];
+            updateDpgfSheetsSummary(available);
+          });
+          const txt = document.createElement('span');
+          txt.textContent = s;
+          chip.appendChild(cb);
+          chip.appendChild(txt);
+          dpgfSheetsDropdown.appendChild(chip);
+        }
+      } else {
+        dpgfMultiWrap.classList.add('hidden');
+        dpgfSheetsList.innerHTML = '';
+        dpgfSheetsDropdown.innerHTML = '';
+        setDpgfSheetsDropdownOpen(false);
+        updateDpgfSheetsSummary([]);
+      }
     }
 
     // Total rows
@@ -7492,10 +8036,33 @@ function bindSmartImport() {
 
     // Validation
     if (importState.mode === 'dpgf') {
-      const desigArr = importState.mapping.designation;
-      if (!desigArr || (Array.isArray(desigArr) && desigArr.length === 0)) {
-        showNotify({ title: 'Mapping incomplet', message: 'Cochez au moins une colonne "Désignation" pour l\'import DPGF.', type: 'error' });
-        return;
+      if (canUseDpgfMultiSheets()) {
+        // Validation multi-onglets
+        if (!Array.isArray(importState.selectedSheetsDpgf) || importState.selectedSheetsDpgf.length === 0) {
+          showNotify({ title: 'Aucun onglet sélectionné', message: 'Sélectionnez au moins un onglet à importer.', type: 'error' });
+          return;
+        }
+        if (!currentProject?.id) {
+          showNotify({ title: 'Projet introuvable', message: 'Aucun projet sélectionné.', type: 'error' });
+          return;
+        }
+        // Sauvegarder la config de l'onglet actif avant de valider tous les onglets
+        saveDpgfSheetConfig(importState.preview?.selectedSheet);
+        const invalidSheet = importState.selectedSheetsDpgf.find(sheet => {
+          const cfg = importState.sheetConfigsDpgf?.[sheet];
+          const d = cfg?.mapping?.designation;
+          return !d || (Array.isArray(d) && d.length === 0);
+        });
+        if (invalidSheet) {
+          showNotify({ title: 'Mapping incomplet', message: `L'onglet "${invalidSheet}" n'a pas de colonne Désignation mappée. Utilisez le sélecteur d'onglet pour configurer chaque onglet.`, type: 'error' });
+          return;
+        }
+      } else {
+        const desigArr = importState.mapping.designation;
+        if (!desigArr || (Array.isArray(desigArr) && desigArr.length === 0)) {
+          showNotify({ title: 'Mapping incomplet', message: 'Cochez au moins une colonne "Désignation" pour l\'import DPGF.', type: 'error' });
+          return;
+        }
       }
     }
     if (importState.mode === 'offer') {
@@ -7556,7 +8123,40 @@ function bindSmartImport() {
       showLoader();
       let finalResult;
 
-      if (importState.mode === 'offer' && selectedFiles.length > 1) {
+      if (importState.mode === 'dpgf' && canUseDpgfMultiSheets()) {
+        // Import DPGF multi-onglets : un lot créé par onglet
+        const agg = { mode: 'dpgf-multi', lotsCreated: 0, itemsImported: 0, itemsUpdated: 0 };
+        const file = selectedFiles[0];
+        const selectedSheets = [...importState.selectedSheetsDpgf];
+        for (let i = 0; i < selectedSheets.length; i++) {
+          const sheetName = selectedSheets[i];
+          const sheetCfg = importState.sheetConfigsDpgf?.[sheetName] || { mapping: normalizeMappingShape(importState.mapping), excludedRows: [] };
+          confirmBtn.innerHTML = `<span class="spinner-small"></span> Import onglet ${i + 1}/${selectedSheets.length}…`;
+          const sheetParams = {
+            lotName: sheetName,
+            lotCode: null,
+            mapping: normalizeMappingShape(sheetCfg.mapping || {}),
+            sheetName,
+            headerRow: importState.preview.headerRow,
+            excludedRows: Array.isArray(sheetCfg.excludedRows) ? sheetCfg.excludedRows.filter(v => typeof v === 'number') : [],
+          };
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('params', JSON.stringify(sheetParams));
+          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+            credentials: 'include',
+          });
+          const result = await resp.json();
+          if (!resp.ok) throw new Error(`Onglet "${sheetName}" : ${result.error || 'Erreur import'}`);
+          agg.lotsCreated += 1;
+          agg.itemsImported += Number(result.itemsImported || 0);
+          agg.itemsUpdated += Number(result.itemsUpdated || 0);
+        }
+        finalResult = agg;
+      } else if (importState.mode === 'offer' && selectedFiles.length > 1) {
         const aggregated = {
           mode: 'offer-batch',
           filesImported: 0,
@@ -7648,7 +8248,26 @@ function bindSmartImport() {
     const div = qs('#import-result');
     if (!div) return;
 
-    if (result.mode === 'dpgf') {
+    if (result.mode === 'dpgf-multi') {
+      div.innerHTML = `
+        <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
+        <h3 style="color:var(--success, #10b981);margin:0 0 12px 0">Import DPGF multi-onglets réussi</h3>
+        <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap">
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.lotsCreated || 0}</div>
+            <div class="muted" style="font-size:0.85em">lots créés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.itemsImported || 0}</div>
+            <div class="muted" style="font-size:0.85em">articles créés</div>
+          </div>
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${result.itemsUpdated || 0}</div>
+            <div class="muted" style="font-size:0.85em">articles mis à jour</div>
+          </div>
+        </div>
+      `;
+    } else if (result.mode === 'dpgf') {
       div.innerHTML = `
         <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
         <h3 style="color:var(--success, #10b981);margin:0 0 12px 0">Import DPGF réussi</h3>
@@ -7827,6 +8446,10 @@ function bindImportDpgfLots() {
   const backBtn     = qs('#idl-back-step1');
   const headerRowInput = qs('#idl-header-row');
   const sheetSelect = qs('#idl-sheet-select');
+  const fileNavWrap = qs('#idl-file-nav');
+  const prevFileBtn = qs('#idl-prev-file');
+  const nextFileBtn = qs('#idl-next-file');
+  const currentFileLabel = qs('#idl-current-file');
   const multiSheetsWrap = qs('#idl-multi-sheets');
   const multiSheetsAll = qs('#idl-sheets-all');
   const multiSheetsList = qs('#idl-sheets-list');
@@ -7838,6 +8461,8 @@ function bindImportDpgfLots() {
   let idlState = {
     files: [],
     lotNames: [],
+    fileConfigs: [],
+    activeFileIndex: 0,
     preview: null,
     mapping: {},
     sheetName: null,
@@ -7853,6 +8478,8 @@ function bindImportDpgfLots() {
     idlState = {
       files: [],
       lotNames: [],
+      fileConfigs: [],
+      activeFileIndex: 0,
       preview: null,
       mapping: {},
       sheetName: null,
@@ -7870,6 +8497,7 @@ function bindImportDpgfLots() {
     filesList.innerHTML = '';
     if (multiSheetsList) multiSheetsList.innerHTML = '';
     if (multiSheetsWrap) multiSheetsWrap.classList.add('hidden');
+    if (fileNavWrap) fileNavWrap.classList.add('hidden');
     if (multiSheetsAll) multiSheetsAll.checked = true;
     goStep2Btn.disabled = true;
     modal.classList.remove('hidden');
@@ -7884,18 +8512,25 @@ function bindImportDpgfLots() {
   }
 
   function deriveLotName(filename) {
-    return filename.replace(/\.(xlsx?|xls|pdf)$/i, '').replace(/[_-]+/g, ' ').trim();
+    return filename.replace(/\.(xlsx?|xlsm|pdf)$/i, '').replace(/[_-]+/g, ' ').trim();
   }
 
   function isExcelFile(file) {
-    return !!file?.name && /\.(xlsx?|xls)$/i.test(file.name);
+    return !!file?.name && /\.(xlsx?|xlsm)$/i.test(file.name);
   }
 
   function canUseMultiSheets() {
-    return idlState.files.length === 1
-      && isExcelFile(idlState.files[0])
+    const activeFile = idlState.files[idlState.activeFileIndex] || idlState.files[0];
+    return !!activeFile
+      && isExcelFile(activeFile)
       && Array.isArray(idlState.preview?.sheets)
       && idlState.preview.sheets.length > 1;
+  }
+
+  function hasUsableIdlMapping(mapping) {
+    const designation = mapping?.designation;
+    if (Array.isArray(designation)) return designation.length > 0;
+    return designation != null;
   }
 
   function cloneSheetConfig(cfg) {
@@ -7906,13 +8541,88 @@ function bindImportDpgfLots() {
     };
   }
 
+  function createIdlFileConfig() {
+    return {
+      preview: null,
+      mapping: null,
+      sheetName: null,
+      headerRow: 1,
+      excludedRows: [],
+      selectedSheets: [],
+      sheetConfigs: {},
+      baseMapping: null,
+      primarySheet: null,
+    };
+  }
+
+  function cloneIdlSheetConfigs(cfgs) {
+    const result = {};
+    Object.entries(cfgs || {}).forEach(([sheet, cfg]) => {
+      result[sheet] = cloneSheetConfig(cfg);
+    });
+    return result;
+  }
+
+  function ensureIdlFileConfigs() {
+    while (idlState.fileConfigs.length < idlState.files.length) {
+      idlState.fileConfigs.push(createIdlFileConfig());
+    }
+    if (idlState.fileConfigs.length > idlState.files.length) {
+      idlState.fileConfigs = idlState.fileConfigs.slice(0, idlState.files.length);
+    }
+  }
+
+  function getIdlFileConfig(index = idlState.activeFileIndex || 0) {
+    ensureIdlFileConfigs();
+    return idlState.fileConfigs[index] || null;
+  }
+
+  function syncIdlStateToActiveFileConfig() {
+    const cfg = getIdlFileConfig();
+    if (!cfg) return;
+    cfg.preview = idlState.preview;
+    cfg.mapping = normIdlMapping(idlState.mapping);
+    cfg.sheetName = idlState.sheetName;
+    cfg.headerRow = idlState.headerRow;
+    cfg.excludedRows = [...idlState.excludedRows].filter(v => typeof v === 'number');
+    cfg.selectedSheets = Array.isArray(idlState.selectedSheets) ? [...idlState.selectedSheets] : [];
+    cfg.sheetConfigs = cloneIdlSheetConfigs(idlState.sheetConfigs);
+    cfg.baseMapping = idlState.baseMapping ? normIdlMapping(idlState.baseMapping) : null;
+    cfg.primarySheet = idlState.primarySheet || null;
+  }
+
+  function loadIdlFileState(index) {
+    const cfg = getIdlFileConfig(index);
+    if (!cfg) return;
+    idlState.activeFileIndex = index;
+    idlState.preview = cfg.preview || null;
+    idlState.mapping = normIdlMapping(cfg.mapping || {});
+    idlState.sheetName = cfg.sheetName || null;
+    idlState.headerRow = cfg.headerRow || 1;
+    idlState.excludedRows = new Set((cfg.excludedRows || []).filter(v => typeof v === 'number'));
+    idlState.selectedSheets = Array.isArray(cfg.selectedSheets) ? [...cfg.selectedSheets] : [];
+    idlState.sheetConfigs = cloneIdlSheetConfigs(cfg.sheetConfigs);
+    idlState.baseMapping = cfg.baseMapping ? normIdlMapping(cfg.baseMapping) : null;
+    idlState.primarySheet = cfg.primarySheet || null;
+  }
+
+  function updateIdlFileNavigatorUI() {
+    if (!fileNavWrap || !prevFileBtn || !nextFileBtn || !currentFileLabel) return;
+    if (idlState.files.length <= 1) {
+      fileNavWrap.classList.add('hidden');
+      return;
+    }
+    const idx = Math.max(0, Math.min(idlState.activeFileIndex || 0, idlState.files.length - 1));
+    idlState.activeFileIndex = idx;
+    prevFileBtn.disabled = idx === 0;
+    nextFileBtn.disabled = idx >= idlState.files.length - 1;
+    currentFileLabel.textContent = `Fichier ${idx + 1}/${idlState.files.length}: ${idlState.files[idx]?.name || ''}`;
+    fileNavWrap.classList.remove('hidden');
+  }
+
   function ensureSheetConfigsFromPreview(data) {
     const sheets = Array.isArray(data?.sheets) ? data.sheets : [];
     if (!sheets.length) return;
-
-    if (!idlState.baseMapping) {
-      idlState.baseMapping = normIdlMapping(idlState.mapping && Object.keys(idlState.mapping).length ? idlState.mapping : (data.suggestedMapping || {}));
-    }
 
     if (!idlState.sheetConfigs || typeof idlState.sheetConfigs !== 'object') {
       idlState.sheetConfigs = {};
@@ -7920,7 +8630,11 @@ function bindImportDpgfLots() {
 
     for (const sheet of sheets) {
       if (!idlState.sheetConfigs[sheet]) {
-        idlState.sheetConfigs[sheet] = cloneSheetConfig({ mapping: idlState.baseMapping, excludedRows: [], mappingCustomized: false });
+        idlState.sheetConfigs[sheet] = cloneSheetConfig({
+          mapping: idlState.baseMapping || data.suggestedMapping || {},
+          excludedRows: [],
+          mappingCustomized: false,
+        });
       }
     }
   }
@@ -7953,7 +8667,7 @@ function bindImportDpgfLots() {
   }
 
   function loadSheetConfig(sheetName, data) {
-    const cfg = idlState.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: data?.suggestedMapping || {}, excludedRows: [] });
+    const cfg = idlState.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: idlState.baseMapping || data?.suggestedMapping || {}, excludedRows: [] });
     idlState.mapping = normIdlMapping(cfg.mapping);
     idlState.excludedRows = new Set((cfg.excludedRows || []).filter(v => typeof v === 'number'));
   }
@@ -8038,7 +8752,12 @@ function bindImportDpgfLots() {
       removeBtn.addEventListener('click', () => {
         idlState.files.splice(idx, 1);
         idlState.lotNames.splice(idx, 1);
+        if (idlState.fileConfigs.length > idx) idlState.fileConfigs.splice(idx, 1);
+        if (idlState.activeFileIndex >= idlState.files.length) {
+          idlState.activeFileIndex = Math.max(0, idlState.files.length - 1);
+        }
         updateFilesList();
+        updateIdlFileNavigatorUI();
         validateStep1();
       });
 
@@ -8077,8 +8796,10 @@ function bindImportDpgfLots() {
         idlState.lotNames.push({ name: deriveLotName(f.name), code: '' });
       }
     });
+    ensureIdlFileConfigs();
     fileInput.value = '';
     updateFilesList();
+    updateIdlFileNavigatorUI();
     validateStep1();
   });
 
@@ -8090,24 +8811,51 @@ function bindImportDpgfLots() {
   goStep2Btn?.addEventListener('click', async () => {
     if (!idlState.files.length || !currentProject) return;
     syncNamesFromDOM();
+    ensureIdlFileConfigs();
+    idlState.activeFileIndex = 0;
+    if (headerRowInput) headerRowInput.value = getIdlFileConfig(0)?.headerRow || 1;
+    updateIdlFileNavigatorUI();
     await doIdlPreview(idlState.files[0]);
   });
 
   backBtn?.addEventListener('click', () => {
+    saveActiveSheetConfig();
+    syncIdlStateToActiveFileConfig();
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
   });
 
+  prevFileBtn?.addEventListener('click', async () => {
+    if (idlState.activeFileIndex <= 0 || idlState.files.length < 2) return;
+    saveActiveSheetConfig();
+    syncIdlStateToActiveFileConfig();
+    idlState.activeFileIndex -= 1;
+    if (headerRowInput) headerRowInput.value = getIdlFileConfig(idlState.activeFileIndex)?.headerRow || 1;
+    updateIdlFileNavigatorUI();
+    await doIdlPreview(idlState.files[idlState.activeFileIndex]);
+  });
+
+  nextFileBtn?.addEventListener('click', async () => {
+    if (idlState.activeFileIndex >= idlState.files.length - 1 || idlState.files.length < 2) return;
+    saveActiveSheetConfig();
+    syncIdlStateToActiveFileConfig();
+    idlState.activeFileIndex += 1;
+    if (headerRowInput) headerRowInput.value = getIdlFileConfig(idlState.activeFileIndex)?.headerRow || 1;
+    updateIdlFileNavigatorUI();
+    await doIdlPreview(idlState.files[idlState.activeFileIndex]);
+  });
+
   sheetSelect?.addEventListener('change', () => {
     // En mode multi-feuilles, on sauvegarde le mapping et exclusions de l'onglet actuel
     // puis on charge ceux du nouvel onglet (qui peut être différent si les colonnes varient)
+    const activeFile = idlState.files[idlState.activeFileIndex] || idlState.files[0];
     if (canUseMultiSheets()) {
       saveActiveSheetConfig();
       doIdlPreviewDataOnly(sheetSelect.value);
     } else {
       saveActiveSheetConfig();
-      doIdlPreview(idlState.files[0], sheetSelect.value);
+      if (activeFile) doIdlPreview(activeFile, sheetSelect.value);
     }
   });
 
@@ -8118,7 +8866,8 @@ function bindImportDpgfLots() {
       const val = Number(headerRowInput.value);
       if (val >= 1 && val <= 100 && idlState.preview) {
         idlState.headerRow = val;
-        doIdlPreview(idlState.files[0], sheetSelect?.value || null);
+        const activeFile = idlState.files[idlState.activeFileIndex] || idlState.files[0];
+        if (activeFile) doIdlPreview(activeFile, sheetSelect?.value || null);
       }
     }, 400);
   });
@@ -8126,10 +8875,20 @@ function bindImportDpgfLots() {
   async function doIdlPreview(file, sheetName = null) {
     if (!file || !currentProject) return;
     if (idlState.preview && idlState.sheetName) saveActiveSheetConfig();
-    const headerRow = Number(headerRowInput?.value) || 1;
+    ensureIdlFileConfigs();
+    const fileIdx = Math.max(0, idlState.files.indexOf(file));
+    const cfg = getIdlFileConfig(fileIdx);
+    idlState.activeFileIndex = fileIdx;
+    idlState.selectedSheets = Array.isArray(cfg?.selectedSheets) ? [...cfg.selectedSheets] : [];
+    idlState.sheetConfigs = cloneIdlSheetConfigs(cfg?.sheetConfigs);
+    idlState.baseMapping = cfg?.baseMapping ? normIdlMapping(cfg.baseMapping) : null;
+    idlState.primarySheet = cfg?.primarySheet || null;
+    const requestedSheet = sheetName || cfg?.sheetName || null;
+    const requestedHeader = Number(headerRowInput?.value) || 0;
+    const headerRow = requestedHeader >= 1 ? requestedHeader : (cfg?.headerRow || 1);
     const formData = new FormData();
     formData.append('file', file);
-    if (sheetName) formData.append('sheetName', sheetName);
+    if (requestedSheet) formData.append('sheetName', requestedSheet);
     if (headerRow >= 1) formData.append('headerRow', String(headerRow));
     try {
       showLoader();
@@ -8157,7 +8916,10 @@ function bindImportDpgfLots() {
         if (idlState.selectedSheets.length === 0) idlState.selectedSheets = [...availableSheets];
       }
 
+      syncIdlStateToActiveFileConfig();
+
       renderIdlStep2();
+      updateIdlFileNavigatorUI();
       step1.classList.add('hidden');
       step2.classList.remove('hidden');
       step3.classList.add('hidden');
@@ -8170,10 +8932,10 @@ function bindImportDpgfLots() {
 
   async function doIdlPreviewDataOnly(sheetName = null) {
     // En mode multi-feuilles : recharge les données du nouvel onglet
-    // Le mapping du premier onglet s'applique par défaut à tous
+    // Le mapping du premier onglet configuré s'applique par défaut à tous
     // Mais on peut le modifier au cas par cas si les colonnes sont différentes
     if (!idlState.files.length || !currentProject) return;
-    const file = idlState.files[0];
+    const file = idlState.files[idlState.activeFileIndex] || idlState.files[0];
     const headerRow = Number(headerRowInput?.value) || 1;
     const formData = new FormData();
     formData.append('file', file);
@@ -8196,15 +8958,16 @@ function bindImportDpgfLots() {
       
       // Initialize ou récupérer la config de ce nouvel onglet
       if (idlState.sheetName && !idlState.sheetConfigs[idlState.sheetName]) {
-        // Première fois qu'on visite cet onglet : hériter du baseMapping
+        // Première visite : hériter du mapping de base s'il existe, sinon du mapping suggéré
         idlState.sheetConfigs[idlState.sheetName] = cloneSheetConfig({
-          mapping: idlState.baseMapping || idlState.mapping,
+          mapping: idlState.baseMapping || data.suggestedMapping || {},
           excludedRows: new Set(),
         });
       }
       
       // Charger le mapping et excludedRows de cet onglet
       loadSheetConfig(idlState.sheetName, data);
+      syncIdlStateToActiveFileConfig();
       
       renderIdlPreviewTable();
     } catch (err) {
@@ -8217,6 +8980,7 @@ function bindImportDpgfLots() {
   function renderIdlStep2() {
     const data = idlState.preview;
     if (!data) return;
+    updateIdlFileNavigatorUI();
     sheetSelect.innerHTML = '';
     for (const s of data.sheets) {
       const opt = document.createElement('option');
@@ -8234,7 +8998,7 @@ function bindImportDpgfLots() {
           infoMsg = document.createElement('div');
           infoMsg.className = 'idl-multi-sheets-info';
           infoMsg.style.cssText = 'padding:8px 12px;margin-bottom:12px;background:var(--info,#dbeafe);border:1px solid var(--info-border,#93c5fd);border-radius:4px;font-size:0.85em;color:var(--text);line-height:1.4';
-          infoMsg.innerHTML = '<strong>ℹ️ Info :</strong> Le mapping du premier onglet s\'applique par défaut à tous. Vous pouvez visualiser et modifier le mapping et les exclusions pour chaque onglet si les colonnes varient.';
+          infoMsg.innerHTML = '<strong>ℹ️ Info :</strong> Le mapping du premier onglet configuré s\'applique par défaut aux onglets non personnalisés. Vous pouvez visualiser et modifier le mapping et les exclusions pour chaque onglet si les colonnes varient.';
           multiSheetsWrap.insertBefore(infoMsg, multiSheetsWrap.firstChild);
         }
         multiSheetsList.innerHTML = '';
@@ -8274,6 +9038,7 @@ function bindImportDpgfLots() {
     const data = idlState.preview;
     if (!data || !canUseMultiSheets()) return;
     idlState.selectedSheets = multiSheetsAll.checked ? [...data.sheets] : [];
+    syncIdlStateToActiveFileConfig();
     renderIdlStep2();
   });
 
@@ -8310,6 +9075,7 @@ function bindImportDpgfLots() {
       btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
       btn.addEventListener('click', () => {
         excluded.add(rowNum);
+        syncIdlStateToActiveFileConfig();
         renderIdlPreviewTable();
       });
       return btn;
@@ -8323,6 +9089,7 @@ function bindImportDpgfLots() {
       btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
       btn.addEventListener('click', () => {
         excluded.delete(rowNum);
+        syncIdlStateToActiveFileConfig();
         renderIdlPreviewTable();
       });
       return btn;
@@ -8389,7 +9156,7 @@ function bindImportDpgfLots() {
         if (canUseMultiSheets() && idlState.sheetName) {
           if (!idlState.sheetConfigs || typeof idlState.sheetConfigs !== 'object') idlState.sheetConfigs = {};
 
-          if (!idlState.primarySheet) {
+          if (!idlState.primarySheet && hasUsableIdlMapping(mapping)) {
             idlState.primarySheet = idlState.sheetName;
           }
 
@@ -8398,13 +9165,14 @@ function bindImportDpgfLots() {
             ...prevCfg,
             mapping,
             excludedRows: [...excluded].filter(v => typeof v === 'number'),
-            mappingCustomized: idlState.sheetName !== idlState.primarySheet,
+            mappingCustomized: !!idlState.primarySheet && idlState.sheetName !== idlState.primarySheet,
           });
 
           if (idlState.sheetName === idlState.primarySheet) {
             idlState.sheetConfigs[idlState.sheetName].mappingCustomized = false;
             propagatePrimaryMapping();
           }
+          syncIdlStateToActiveFileConfig();
           refreshSheetIndicators();
         }
         renderIdlPreviewTable();
@@ -8450,8 +9218,9 @@ function bindImportDpgfLots() {
 
   confirmBtn?.addEventListener('click', async () => {
     if (!idlState.files.length || !idlState.preview || !currentProject) return;
-    const useMultiSheets = canUseMultiSheets();
+    const useMultiSheets = idlState.files.length > 1 || canUseMultiSheets();
     saveActiveSheetConfig();
+    syncIdlStateToActiveFileConfig();
 
     if (!useMultiSheets) {
       const desig = idlState.mapping.designation;
@@ -8467,14 +9236,26 @@ function bindImportDpgfLots() {
     }
 
     if (useMultiSheets) {
-      const invalidSheet = idlState.selectedSheets.find((sheet) => {
-        const cfg = idlState.sheetConfigs?.[sheet];
-        const d = cfg?.mapping?.designation;
-        return !d || (Array.isArray(d) && d.length === 0);
-      });
-      if (invalidSheet) {
-        showNotify({ title: 'Mapping incomplet', message: `L'onglet "${invalidSheet}" n'a pas de colonne Désignation mappée.`, type: 'error' });
+      const baseMapping = idlState.baseMapping || idlState.mapping;
+      const baseDesignation = baseMapping?.designation;
+      if (!baseDesignation || (Array.isArray(baseDesignation) && baseDesignation.length === 0)) {
+        showNotify({ title: 'Mapping incomplet', message: 'Mappez au moins une colonne Désignation sur un fichier / onglet avant de lancer l\'import multiple.', type: 'error' });
         return;
+      }
+
+      for (let fileIndex = 0; fileIndex < idlState.files.length; fileIndex += 1) {
+        const cfg = getIdlFileConfig(fileIndex);
+        const selectedSheets = Array.isArray(cfg?.selectedSheets) && cfg.selectedSheets.length > 0 ? cfg.selectedSheets : null;
+        if (!selectedSheets) continue;
+        const invalidSheet = selectedSheets.find((sheet) => {
+          const sheetCfg = cfg?.sheetConfigs?.[sheet];
+          const d = sheetCfg?.mapping?.designation || cfg?.baseMapping?.designation || baseDesignation;
+          return !d || (Array.isArray(d) && d.length === 0);
+        });
+        if (invalidSheet) {
+          showNotify({ title: 'Mapping incomplet', message: `Le fichier "${idlState.files[fileIndex]?.name || ''}" contient un onglet sans colonne Désignation mappée : "${invalidSheet}".`, type: 'error' });
+          return;
+        }
       }
     }
 
@@ -8484,39 +9265,78 @@ function bindImportDpgfLots() {
     try {
       showLoader();
       if (useMultiSheets) {
-        const file = idlState.files[0];
-        const baseLotName = (idlState.lotNames[0]?.name || deriveLotName(file.name)).trim();
-        const baseLotCode = (idlState.lotNames[0]?.code || '').trim() || null;
-        const selectedSheets = [...idlState.selectedSheets];
-        for (let i = 0; i < selectedSheets.length; i++) {
-          const sheetName = selectedSheets[i];
-          const sheetCfg = idlState.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: idlState.mapping, excludedRows: [...idlState.excludedRows] });
-          const lotName = selectedSheets.length > 1 ? `${baseLotName} - ${sheetName}` : baseLotName;
-          confirmBtn.innerHTML = `<span class="spinner-small"></span> Import onglet ${i + 1}/${selectedSheets.length}…`;
-          const params = {
-            lotName,
-            lotCode: selectedSheets.length > 1 ? sheetName : baseLotCode,
-            mapping: normIdlMapping(sheetCfg.mapping),
-            sheetName,
-            headerRow: idlState.headerRow,
-            excludedRows: Array.isArray(sheetCfg.excludedRows) ? sheetCfg.excludedRows.filter(v => typeof v === 'number') : [],
-          };
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('params', JSON.stringify(params));
-          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: formData,
-            credentials: 'include',
-          });
-          const result = await resp.json();
-          if (!resp.ok) {
-            agg.errors.push({ file: `${file.name} / ${sheetName}`, error: result.error || 'Erreur inconnue' });
-          } else {
-            agg.lotsCreated += 1;
-            agg.itemsImported += result.itemsImported || 0;
-            agg.itemsUpdated += result.itemsUpdated || 0;
+        let importIndex = 0;
+        for (let fileIndex = 0; fileIndex < idlState.files.length; fileIndex += 1) {
+          const file = idlState.files[fileIndex];
+          const fileCfg = getIdlFileConfig(fileIndex) || createIdlFileConfig();
+          const baseLotName = (idlState.lotNames[fileIndex]?.name || deriveLotName(file.name)).trim();
+          const baseLotCode = (idlState.lotNames[fileIndex]?.code || '').trim() || null;
+          let availableSheets = Array.isArray(fileCfg.preview?.sheets) ? fileCfg.preview.sheets : null;
+          if (!availableSheets || availableSheets.length === 0) {
+            const previewData = await (async () => {
+              const formData = new FormData();
+              formData.append('file', file);
+              const headerRow = Number(fileCfg.headerRow || 1) || 1;
+              if (headerRow >= 1) formData.append('headerRow', String(headerRow));
+              const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData,
+                credentials: 'include',
+              });
+              const result = await resp.json();
+              if (!resp.ok) throw new Error(result.error || 'Erreur preview');
+              return result;
+            })();
+            fileCfg.preview = previewData;
+            availableSheets = Array.isArray(previewData.sheets) ? previewData.sheets : [];
+            if (!Array.isArray(fileCfg.selectedSheets) || fileCfg.selectedSheets.length === 0) {
+              fileCfg.selectedSheets = [...availableSheets];
+            }
+            if (!fileCfg.baseMapping && idlState.baseMapping) fileCfg.baseMapping = normIdlMapping(idlState.baseMapping);
+            if (!fileCfg.sheetConfigs || typeof fileCfg.sheetConfigs !== 'object') fileCfg.sheetConfigs = {};
+            availableSheets.forEach((sheetName) => {
+              if (!fileCfg.sheetConfigs[sheetName]) {
+                fileCfg.sheetConfigs[sheetName] = cloneSheetConfig({ mapping: fileCfg.baseMapping || idlState.baseMapping || idlState.mapping, excludedRows: [], mappingCustomized: false });
+              }
+            });
+          }
+
+          const selectedSheets = Array.isArray(fileCfg.selectedSheets) && fileCfg.selectedSheets.length > 0
+            ? [...fileCfg.selectedSheets]
+            : [...(availableSheets || [])];
+
+          for (let sheetIndex = 0; sheetIndex < selectedSheets.length; sheetIndex += 1) {
+            const sheetName = selectedSheets[sheetIndex];
+            const sheetCfg = fileCfg.sheetConfigs?.[sheetName] || cloneSheetConfig({ mapping: fileCfg.baseMapping || idlState.baseMapping || idlState.mapping, excludedRows: [] });
+            importIndex += 1;
+            const lotName = selectedSheets.length > 1 ? sheetName : baseLotName;
+            confirmBtn.innerHTML = `<span class="spinner-small"></span> Import ${importIndex}…`;
+            const params = {
+              lotName,
+              lotCode: selectedSheets.length > 1 ? sheetName : baseLotCode,
+              mapping: normIdlMapping(sheetCfg.mapping),
+              sheetName,
+              headerRow: fileCfg.headerRow || 1,
+              excludedRows: Array.isArray(sheetCfg.excludedRows) ? sheetCfg.excludedRows.filter(v => typeof v === 'number') : [],
+            };
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('params', JSON.stringify(params));
+            const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+              credentials: 'include',
+            });
+            const result = await resp.json();
+            if (!resp.ok) {
+              agg.errors.push({ file: `${file.name} / ${sheetName}`, error: result.error || 'Erreur inconnue' });
+            } else {
+              agg.lotsCreated += 1;
+              agg.itemsImported += result.itemsImported || 0;
+              agg.itemsUpdated += result.itemsUpdated || 0;
+            }
           }
         }
       } else {
@@ -9196,6 +10016,16 @@ if (typeof window !== 'undefined') {
 
   // Éditeur de questions
   qs('#questions-view-filter')?.addEventListener('change', loadQuestionsEditor);
+  qs('#questions-analysis-mode')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ams-btn');
+    if (!btn) return;
+    const sw = qs('#questions-analysis-mode');
+    const mode = btn.dataset.mode;
+    if (sw && mode && sw.dataset.value !== mode) {
+      sw.dataset.value = mode;
+      loadQuestionsEditor();
+    }
+  });
   qs('#questions-target-company')?.addEventListener('change', loadQuestionsEditor);
   qs('#questions-amount-filter')?.addEventListener('change', loadQuestionsEditor);
   qs('#questions-editor-options')?.addEventListener('click', openQuestionsEditorModal);
