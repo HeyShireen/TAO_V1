@@ -490,6 +490,11 @@ function activateTab(id){
   if (id === 'tab-rounds') {
     activateRoundsTab('rounds-list-view');
   }
+
+  // Si on active l'onglet paramètres, recharger la liste des projets
+  if (id === 'tab-settings') {
+    loadProjectsManagement();
+  }
 }
 function enableTab(id, enabled=true){
   const btn = qsa('.nav-btn').find(b => b.dataset.tab === id);
@@ -824,6 +829,74 @@ async function refreshCurrentUserToken() {
   }
 }
 
+/* ================= Gestion des Projets ================= */
+async function loadProjectsManagement() {
+  if (!isResponsableOrAdmin()) return;
+  try {
+    const projects = await api('/projects');
+    renderProjectsManagementTable(projects);
+  } catch (err) {
+    console.error('Erreur chargement projets:', err);
+    showNotify({ title: 'Erreur', message: 'Impossible de charger les projets', type: 'error' });
+  }
+}
+
+function renderProjectsManagementTable(projects) {
+  const tbody = qs('#admin-projects-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  
+  if (projects.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted text-center">Aucun projet</td></tr>';
+    return;
+  }
+  
+  for (const project of projects) {
+    const tr = document.createElement('tr');
+    const createdDate = new Date(project.created_at).toLocaleDateString();
+    
+    tr.innerHTML = `
+      <td><strong>${project.name}</strong></td>
+      <td>${project.reference ? project.reference : '<span class="muted">—</span>'}</td>
+      <td>${project.client ? project.client : '<span class="muted">—</span>'}</td>
+      <td>${createdDate}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn ghost btn-sm" data-admin-edit-project="${project.id}">${icon('edit')}Modifier</button>
+        <button class="btn ghost btn-sm" style="color:var(--danger)" data-delete-project="${project.id}">${icon('trash')}Supprimer</button>
+      </td>
+    `;
+    
+    const editBtn = tr.querySelector(`[data-admin-edit-project="${project.id}"]`);
+    if (editBtn) {
+      editBtn.addEventListener('click', () => openEditProjectModal(project.id));
+    }
+
+    const deleteBtn = tr.querySelector(`[data-delete-project="${project.id}"]`);
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => deleteProject(project.id, project.name));
+    }
+    
+    tbody.appendChild(tr);
+  }
+}
+
+async function deleteProject(projectId, projectName) {
+  showDeleteConfirmation({
+    title: 'Supprimer un projet',
+    message: `Êtes-vous sûr de vouloir supprimer le projet "${projectName}" ?`,
+    extra: `<strong>⚠️ Attention:</strong> Cette action est irréversible. Toutes les données du projet seront supprimées définitivement (lots, articles, offres, etc.).`,
+    onConfirm: async () => {
+      try {
+        await api(`/projects/${projectId}`, { method: 'DELETE' });
+        showNotify({ title: 'Succès', message: 'Projet supprimé avec succès', type: 'success' });
+        await loadProjectsManagement();
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    }
+  });
+}
+
 /* ================= Partage de projets ================= */
 let currentShareProjectId = null;
 
@@ -935,9 +1008,9 @@ async function openEditProjectModal(projectId) {
     
     // Remplir les champs
     setValue('#edit-proj-name', project.name || '');
-    setValue('#edit-proj-ref', project.ref || '');
+    setValue('#edit-proj-ref', project.reference || '');
     setValue('#edit-proj-client', project.client || '');
-    setValue('#edit-proj-date', project.date ? project.date.split('T')[0] : '');
+    setValue('#edit-proj-date', project.study_date ? project.study_date.split('T')[0] : '');
     
     // Charger les visionneurs disponibles
     await loadEditShareViewers();
@@ -7038,6 +7111,16 @@ function renderSheetBindings(){
 
   // Raccourcis globaux
   document.addEventListener('keydown', (e) => {
+    // Échap → fermer le premier modal ouvert (sauf les modals d'importation)
+    if (e.key === 'Escape') {
+      const IMPORT_MODALS = new Set(['import-modal', 'import-dpgf-lots-modal']);
+      const openModal = qsa('.modal').find(m => !m.classList.contains('hidden') && !IMPORT_MODALS.has(m.id));
+      if (openModal) {
+        hide('#' + openModal.id);
+        return;
+      }
+    }
+
     // Ctrl+S → sauvegarder
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault(); 
@@ -9474,6 +9557,14 @@ function updateUIForRole() {
     hide('#access-requests-section');
   }
   
+  // Section gestion des projets (responsable/admin)
+  if (isResponsableOrAdmin()) {
+    show('#projects-management-section');
+    loadProjectsManagement();
+  } else {
+    hide('#projects-management-section');
+  }
+  
   // Section création de projet (responsable/admin)
   if (canCreateProject() && !isEntreprise()) {
     show('#create-project-section');
@@ -10132,8 +10223,9 @@ if (typeof window !== 'undefined') {
   });
 
   // Modal d'édition du projet
-  qs('#close-edit-project-modal')?.addEventListener('click', () => hide('#edit-project-modal'));
+  qsa('.close-edit-project-modal').forEach(btn => btn.addEventListener('click', () => hide('#edit-project-modal')));
   qs('#save-edit-project')?.addEventListener('click', saveEditProject);
+  qs('#edit-add-share-btn')?.addEventListener('click', addEditProjectShare);
   qs('#edit-project-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'edit-project-modal') hide('#edit-project-modal');
   });
@@ -10201,6 +10293,9 @@ if (typeof window !== 'undefined') {
       }
     });
   });
+
+  // Bouton actualiser liste des projets (paramètres)
+  qs('#refresh-projects-list-btn')?.addEventListener('click', () => loadProjectsManagement());
 
   renderSheetBindings();
 }

@@ -103,54 +103,6 @@
           </div>
         </div>
 
-        <!-- Modal d'édition du projet -->
-        <div id="edit-project-modal" class="modal hidden">
-          <div class="modal-content" style="max-width: 600px;">
-            <div class="modal-header">
-              <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-edit"></use></svg>Éditer le projet</h3>
-              <button class="close-edit-project-modal btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
-            </div>
-            <div class="modal-body">
-              <div class="field">
-                <label for="edit-proj-name">Nom du projet *</label>
-                <input id="edit-proj-name" type="text" placeholder="Nom du projet" />
-              </div>
-              <div class="field">
-                <label for="edit-proj-ref">Référence</label>
-                <input id="edit-proj-ref" type="text" placeholder="Référence" />
-              </div>
-              <div class="field">
-                <label for="edit-proj-client">Client</label>
-                <input id="edit-proj-client" type="text" placeholder="Client" />
-              </div>
-              <div class="field">
-                <label for="edit-proj-date">Date</label>
-                <input id="edit-proj-date" type="date" />
-              </div>
-              <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
-              <h4 style="margin-bottom: 12px;"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-link"></use></svg>Partage du projet</h4>
-              <div class="field">
-                <label for="edit-share-viewer">Visionneur</label>
-                <select id="edit-share-viewer" name="edit-share-viewer">
-                  <option value="">-- Sélectionner un visionneur --</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>
-                  <input type="checkbox" id="edit-share-can-edit" name="edit-share-can-edit" />
-                  Autoriser la modification
-                </label>
-              </div>
-              <button id="edit-add-share-btn" class="btn ghost" style="margin-bottom: 12px;">+ Ajouter un partage</button>
-              <div id="edit-existing-shares" style="margin-top: 12px;"></div>
-              <div class="row gap" style="margin-top: 24px;">
-                <button id="save-edit-project" class="btn">Enregistrer</button>
-                <button class="close-edit-project-modal btn ghost">Annuler</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
       </section>
 
       <!-- Onglet Tours (Gestion des tours) -->
@@ -1111,6 +1063,40 @@
             </div>
           </div>
         </div>
+
+        <!-- Section Gestion des Projets (responsable/admin) -->
+        <div id="projects-management-section" class="card hidden">
+          <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>Gestion des Projets
+            <button id="refresh-projects-list-btn" class="btn ghost btn-sm" style="margin-left:auto;float:right;" title="Actualiser la liste">
+              <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>Actualiser
+            </button>
+          </h3>
+          
+          <p class="muted" style="margin-bottom:1rem;">
+            <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-info"></use></svg>Visualisez et supprimez les projets. La suppression d'un projet entraîne la suppression de toutes les données associées (lots, articles, offres, etc.).
+          </p>
+          
+          <div class="table-wrapper">
+            <table id="admin-projects-table">
+              <thead>
+                <tr>
+                  <th>Nom du projet</th>
+                  <th>Référence</th>
+                  <th>Client</th>
+                  <th>Créé le</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          
+          <div style="margin-top:1rem;padding:0.75rem;background:var(--input-bg);border-radius:8px;border-left:4px solid var(--warning);">
+            <p class="muted" style="margin:0;font-size:0.85em;">
+              <strong>⚠️ Attention:</strong> La suppression d'un projet est permanente et ne peut pas être annulée. Toutes les données du projet seront supprimées définitivement.
+            </p>
+          </div>
+        </div>
         
         <div class="card">
           <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Paramètres Généraux</h3>
@@ -1186,6 +1172,53 @@
   </div>
 
   <!-- Modals (en dehors des sections pour toujours être accessibles) -->
+  <!-- Modal d'édition du projet -->
+  <div id="edit-project-modal" class="modal hidden">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-edit"></use></svg>Éditer le projet</h3>
+        <button class="close-edit-project-modal btn ghost" aria-label="Fermer"><svg class="icon icon-only" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="edit-proj-name">Nom du projet *</label>
+          <input id="edit-proj-name" type="text" placeholder="Nom du projet" />
+        </div>
+        <div class="field">
+          <label for="edit-proj-ref">Référence</label>
+          <input id="edit-proj-ref" type="text" placeholder="Référence" />
+        </div>
+        <div class="field">
+          <label for="edit-proj-client">Client</label>
+          <input id="edit-proj-client" type="text" placeholder="Client" />
+        </div>
+        <div class="field">
+          <label for="edit-proj-date">Date</label>
+          <input id="edit-proj-date" type="date" />
+        </div>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);" />
+        <h4 style="margin-bottom: 12px;"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-link"></use></svg>Partage du projet</h4>
+        <div class="field">
+          <label for="edit-share-viewer">Visionneur</label>
+          <select id="edit-share-viewer" name="edit-share-viewer">
+            <option value="">-- Sélectionner un visionneur --</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>
+            <input type="checkbox" id="edit-share-can-edit" name="edit-share-can-edit" />
+            Autoriser la modification
+          </label>
+        </div>
+        <button id="edit-add-share-btn" class="btn ghost" style="margin-bottom: 12px;">+ Ajouter un partage</button>
+        <div id="edit-existing-shares" style="margin-top: 12px;"></div>
+        <div class="row gap" style="margin-top: 24px;">
+          <button id="save-edit-project" class="btn">Enregistrer</button>
+          <button class="close-edit-project-modal btn ghost">Annuler</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- Modal Notification globale -->
   <div id="notify-modal" class="modal hidden">
     <div class="modal-content" style="max-width:520px;">
