@@ -84,9 +84,6 @@ app.use(morgan('dev'))
 app.disable('x-powered-by')
 
 // Sécurité: Headers HTTP avec Helmet
-// IMPORTANT: activer les en-têtes HTTPS uniquement via variable explicite
-// pour éviter les redirections forcées quand l'app est exposée en HTTP (ex: IP:PORT).
-const isHttps = process.env.ENABLE_HTTPS_HEADERS === 'true' || process.env.HTTPS === 'true'
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -97,18 +94,15 @@ app.use(helmet({
       connectSrc: ["'self'"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
-      // N'upgrader vers HTTPS que si l'app est réellement derrière HTTPS
-      ...(isHttps ? { upgradeInsecureRequests: [] } : {}),
+      upgradeInsecureRequests: [],
     },
-  },
+  }, // Allow inline styles and scripts for dynamic UI
 
-  // HSTS uniquement si on sert réellement en HTTPS (sinon Chrome bloque tout en HTTP)
-  hsts: isHttps ? {
-    maxAge: 31536000,
+  hsts: {
+    maxAge: 31536000, // 1 an
     includeSubDomains: true,
     preload: true,
-  } : false,
-
+  },
   frameguard: { action: 'deny' }, // Anti-clickjacking
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }))
@@ -204,12 +198,7 @@ const loginCsp = helmet({
       connectSrc: ["'self'"],
       objectSrc: ["'none'"],
     }
-  },
-  hsts: isHttps ? {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
-  } : false,
+  }
 });
 
 // Routes spécifiques AVANT express.static
