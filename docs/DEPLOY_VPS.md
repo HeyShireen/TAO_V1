@@ -1,10 +1,12 @@
-# Guide de déploiement webhook — TAO sur VPS
+# Guide de déploiement — TAO sur VPS
 
 ## Architecture
 
 ```
-GitHub push → webhook GitHub → nginx (HTTPS) → webhook.js:9000 → deploy.sh → pm2 reload
+Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :3000 (HTTP interne, PM2)
 ```
+
+Le déploiement se fait manuellement via SSH : `git pull` + `pm2 reload`.
 
 ---
 
@@ -37,44 +39,7 @@ nano .env   # Compléter toutes les variables
 
 ---
 
-## 2. Générer le secret webhook
-
-```bash
-# Sur le VPS, générer un secret fort
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# → Copier cette valeur, vous en aurez besoin dans les étapes 3 et 4
-```
-
----
-
-## 3. Configurer les variables d'environnement du webhook
-
-Créer `/var/www/tao/server/.env.webhook` :
-
-```env
-WEBHOOK_SECRET=votre_secret_généré_ci-dessus
-WEBHOOK_PORT=9000
-WEBHOOK_BRANCH=main
-DEPLOY_SCRIPT=/var/www/tao/server/deploy.sh
-```
-
-Puis sourcer ce fichier au démarrage PM2 (dans ecosystem.config.cjs, remplacer `WEBHOOK_SECRET: ''`
-par votre secret, ou utiliser un gestionnaire de secrets).
-
----
-
-## 4. Rendre deploy.sh exécutable
-
-```bash
-chmod +x /var/www/tao/server/deploy.sh
-
-# Tester manuellement une fois
-bash /var/www/tao/server/deploy.sh
-```
-
----
-
-## 5. Démarrer avec PM2
+## 2. Démarrer avec PM2
 
 ```bash
 cd /var/www/tao/server
@@ -87,11 +52,18 @@ pm2 startup   # Suivre la commande affichée
 
 ---
 
-## 6. Configurer nginx comme reverse proxy
+## 3. Configurer nginx comme reverse proxy
 
-Modifier votre vhost nginx (ex. `/etc/nginx/sites-available/tao`) :
+Créer ou modifier votre vhost nginx (ex. `/etc/nginx/sites-available/tao`) :
 
 ```nginx
+server {
+    listen 80;
+    server_name votredomaine.com;
+    # Rediriger tout le HTTP vers HTTPS
+    return 301 https://$host$request_uri;
+}
+
 server {
     listen 443 ssl;
     server_name votredomaine.com;
@@ -107,56 +79,75 @@ server {
         proxy_set_header   Upgrade $http_upgrade;
         proxy_set_header   Connection 'upgrade';
         proxy_set_header   Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # Endpoint webhook (exposé publiquement pour GitHub)
-    location /deploy {
-        proxy_pass         http://127.0.0.1:9000/deploy;
-        proxy_set_header   Host $host;
         proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Hub-Signature-256 $http_x_hub_signature_256;
-    }
-
-    location /webhook-health {
-        proxy_pass http://127.0.0.1:9000/health;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
     }
 }
 ```
 
 ```bash
+# Activer le site et recharger nginx
+ln -s /etc/nginx/sites-available/tao /etc/nginx/sites-enabled/tao
 nginx -t && systemctl reload nginx
 ```
 
 ---
 
-## 7. Configurer le webhook sur GitHub
+## 4. Obtenir un certificat SSL (Let's Encrypt)
 
-1. Aller sur `github.com/VOTRE_ORG/VOTRE_REPO` → **Settings** → **Webhooks** → **Add webhook**
-2. **Payload URL** : `https://votredomaine.com/deploy`
-3. **Content type** : `application/json`
-4. **Secret** : le secret généré à l'étape 2
-5. **Which events** : sélectionner **Just the push event**
-6. **Active** : coché ✓
-7. Cliquer **Add webhook**
+```bash
+apt install certbot python3-certbot-nginx
+certbot --nginx -d votredomaine.com
+# Certbot modifie automatiquement la config nginx et configure le renouvellement automatique
+```
 
 ---
 
-## 8. Vérifier que tout fonctionne
+## 5. Variables d'environnement requises
+
+Dans `/var/www/tao/server/.env`, s'assurer que les variables suivantes sont définies :
+
+```env
+NODE_ENV=production
+HTTPS_PROXY=true          # Indique à l'app qu'elle est derrière nginx HTTPS → active HSTS
+ALLOWED_ORIGINS=https://votredomaine.com
+JWT_SECRET=...            # Secret JWT fort (32+ caractères)
+DATABASE_URL=...
+```
+
+---
+
+## 6. Déployer une mise à jour (manuellement via SSH)
+
+```bash
+cd /var/www/tao
+
+# Récupérer le code
+git pull origin main
+
+# Mettre à jour les dépendances si nécessaire
+cd server
+npm ci --omit=dev
+
+# Recharger l'application sans interruption
+pm2 reload tao-app --update-env
+```
+
+---
+
+## 7. Vérifier que tout fonctionne
 
 ```bash
 # Vérifier les processus PM2
 pm2 list
 
 # Suivre les logs en temps réel
-pm2 logs tao-webhook
 pm2 logs tao-app
 
 # Tester le health check
-curl https://votredomaine.com/webhook-health
-
-# Suivre le log de déploiement
-tail -f /var/log/tao-deploy.log
+curl https://votredomaine.com/api/healthz
 ```
 
 ---
@@ -165,8 +156,7 @@ tail -f /var/log/tao-deploy.log
 
 | Problème | Solution |
 |---|---|
-| `401 Signature invalide` | Le `WEBHOOK_SECRET` ne correspond pas à celui configuré sur GitHub |
-| `Branche ignorée` | Vérifier que `WEBHOOK_BRANCH=main` correspond à votre branche par défaut |
+| Styles cassés / redirect HTTPS en boucle | Vérifier que `HTTPS_PROXY=true` est dans `.env` et que nginx proxy vers `:3000` |
 | `pm2 reload` échoue | S'assurer que le nom `tao-app` correspond dans `ecosystem.config.cjs` |
-| `deploy.sh: Permission denied` | Lancer `chmod +x deploy.sh` |
-| nginx `502 Bad Gateway` | Vérifier que `webhook.js` tourne avec `pm2 list` |
+| nginx `502 Bad Gateway` | Vérifier que `tao-app` tourne avec `pm2 list` |
+| Certificat SSL expiré | `certbot renew` (normalement automatique via cron) |

@@ -84,6 +84,9 @@ app.use(morgan('dev'))
 app.disable('x-powered-by')
 
 // Sécurité: Headers HTTP avec Helmet
+// Note: upgradeInsecureRequests et HSTS ne s'activent qu'en HTTPS (derrière nginx/proxy TLS)
+// En HTTP pur (VPS sans nginx), ces directives cassent les styles et forcent HTTPS côté navigateur
+const isBehindHttpsProxy = process.env.HTTPS_PROXY === 'true';
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -94,15 +97,18 @@ app.use(helmet({
       connectSrc: ["'self'"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
+      // Seulement si le trafic client arrive via HTTPS (nginx en front)
+      ...(isBehindHttpsProxy ? { upgradeInsecureRequests: [] } : {}),
     },
   }, // Allow inline styles and scripts for dynamic UI
 
-  hsts: {
+  // HSTS: uniquement si le client voit du HTTPS (via nginx). En HTTP direct, ce header
+  // est ignoré par les navigateurs conformes mais peut être mis en cache par d'autres.
+  hsts: isBehindHttpsProxy ? {
     maxAge: 31536000, // 1 an
     includeSubDomains: true,
     preload: true,
-  },
+  } : false,
   frameguard: { action: 'deny' }, // Anti-clickjacking
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }))
