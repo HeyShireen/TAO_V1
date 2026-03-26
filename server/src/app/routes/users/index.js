@@ -17,7 +17,7 @@ router.use(isAdmin); // Toutes ces routes sont réservées aux admins
 router.get('/', async (req, res) => {
   try {
     const result = await query(
-      `SELECT u.id, u.email, u.role, u.created_at, u.company_id, c.name as company_name
+      `SELECT u.id, u.email, u.role, u.created_at, u.company_id, u.email_verified, c.name as company_name
        FROM users u
        LEFT JOIN companies c ON c.id = u.company_id
        ORDER BY u.created_at DESC`
@@ -88,6 +88,41 @@ router.patch('/:id/role', async (req, res) => {
   } catch (err) {
     console.error('Erreur modification rôle:', err);
     res.status(500).json({ error: 'Impossible de modifier le rôle' });
+  }
+});
+
+// Forcer la validation email d'un utilisateur
+router.post('/:id/verify-email', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const existingUser = await query(
+      'SELECT id, email, role, created_at, email_verified FROM users WHERE id = $1',
+      [id]
+    );
+
+    if (existingUser.rowCount === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' });
+    }
+
+    if (existingUser.rows[0].email_verified) {
+      return res.json(existingUser.rows[0]);
+    }
+
+    const result = await query(
+      'UPDATE users SET email_verified = TRUE WHERE id = $1 RETURNING id, email, role, created_at, email_verified',
+      [id]
+    );
+
+    await query(
+      'UPDATE email_verifications SET verified_at = now() WHERE user_id = $1 AND verified_at IS NULL',
+      [id]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur validation email admin:', err);
+    res.status(500).json({ error: 'Impossible de valider l\'email de l\'utilisateur' });
   }
 });
 

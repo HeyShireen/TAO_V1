@@ -643,6 +643,9 @@ function renderUsersTable(users) {
     const companyDisplay = user.company_name 
       ? `<span style="color:var(--primary);">${user.company_name}</span>` 
       : '<span class="muted">—</span>';
+    const verificationStatus = user.email_verified
+      ? '<span style="color:var(--success);font-weight:600;">Vérifié</span>'
+      : '<span style="color:var(--warning);font-weight:600;">En attente</span>';
     
     tr.innerHTML = `
       <td>${user.id}</td>
@@ -653,8 +656,10 @@ function renderUsersTable(users) {
         </select>
       </td>
       <td>${companyDisplay}</td>
+      <td>${verificationStatus}</td>
       <td>${new Date(user.created_at).toLocaleDateString()}</td>
       <td>
+        ${!user.email_verified ? `<button class="btn ghost btn-sm" data-verify-user="${user.id}">Valider</button>` : ''}
         <button class="btn ghost btn-sm" data-change-role="${user.id}">Modifier rôle</button>
         ${user.role === 'entreprise' ? `<button class="btn ghost btn-sm" data-assign-company="${user.id}">Attribuer entreprise</button>` : ''}
         <button class="btn ghost btn-sm" data-delete-user="${user.id}">Supprimer</button>
@@ -662,10 +667,14 @@ function renderUsersTable(users) {
     `;
     
     // Event listeners pour les boutons
+    const verifyBtn = tr.querySelector(`[data-verify-user="${user.id}"]`);
     const changeBtn = tr.querySelector(`[data-change-role="${user.id}"]`);
     const assignBtn = tr.querySelector(`[data-assign-company="${user.id}"]`);
     const deleteBtn = tr.querySelector(`[data-delete-user="${user.id}"]`);
     
+    if (verifyBtn) {
+      verifyBtn.addEventListener('click', () => verifyUserEmail(user));
+    }
     if (changeBtn) {
       changeBtn.addEventListener('click', () => changeUserRole(user.id));
     }
@@ -678,6 +687,23 @@ function renderUsersTable(users) {
     
     tbody.appendChild(tr);
   }
+}
+
+async function verifyUserEmail(user) {
+  showDeleteConfirmation({
+    title: 'Valider une adresse email',
+    message: `Confirmer la validation manuelle de l'adresse ${user.email} ?`,
+    extra: '<strong>⚠️ Attention:</strong> L\'utilisateur pourra se connecter sans utiliser le lien reçu par email.',
+    onConfirm: async () => {
+      try {
+        await api(`/users/${user.id}/verify-email`, { method: 'POST' });
+        showNotify({ title: 'Succès', message: 'Adresse email validée avec succès', type: 'success' });
+        loadUsers();
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    }
+  });
 }
 
 async function changeUserRole(userId) {
