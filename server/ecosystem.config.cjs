@@ -10,7 +10,7 @@ module.exports = {
     {
       name: 'tao-app',
       script: 'src/app/server.js',
-      cwd: '/var/www/tao/server',
+      cwd: '/home/tao/TAO/TAO_V1/server/',
       interpreter: 'node',
       instances: 1,         // Augmenter si plusieurs CPU disponibles
       exec_mode: 'fork',    // Passer à 'cluster' si instances > 1
@@ -20,7 +20,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
-        // Les autres variables sont dans /var/www/tao/server/.env
+        // Les autres variables sont dans /home/tao/TAO/TAO_V1/server/.env
       },
       // Logs
       out_file: '/var/log/tao-app.log',
@@ -35,7 +35,7 @@ module.exports = {
     {
       name: 'tao-webhook',
       script: 'webhook.js',
-      cwd: '/var/www/tao/server',
+      cwd: '/home/tao/TAO/TAO_V1/server/',
       interpreter: 'node',
       instances: 1,
       exec_mode: 'fork',
@@ -47,7 +47,7 @@ module.exports = {
         WEBHOOK_PORT: 9000,
         WEBHOOK_SECRET: '',   // ← À remplir ou charger depuis .env.webhook
         WEBHOOK_BRANCH: 'main',
-        DEPLOY_SCRIPT: '/var/www/tao/server/deploy.sh',
+        DEPLOY_SCRIPT: '/home/tao/TAO/TAO_V1/server/deploy.sh',
       },
       out_file: '/var/log/tao-webhook.log',
       error_file: '/var/log/tao-webhook-error.log',
