@@ -10,6 +10,7 @@
   const emailEl = qs('#login-email');
   const passEl = qs('#login-password');
   const msgEl = qs('#login-msg');
+  const loginBtn = qs('#login-btn');
   const logo = qs('#login-logo');
   const tabLogin = qs('#tab-login');
   const tabRegister = qs('#tab-register');
@@ -17,6 +18,42 @@
   const backToLoginBtn = qs('#back-to-login');
   const registerMsg = qs('#login-msg');
   const rememberMe = qs('#remember-me');
+  let loginCooldownTimer = null;
+
+  function stopLoginCooldownTimer() {
+    if (loginCooldownTimer) {
+      clearInterval(loginCooldownTimer);
+      loginCooldownTimer = null;
+    }
+    if (loginBtn) {
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Se connecter';
+    }
+  }
+
+  function startLoginCooldownTimer(initialSeconds) {
+    let remaining = Math.max(0, Number(initialSeconds) || 0);
+
+    stopLoginCooldownTimer();
+
+    const render = () => {
+      if (remaining <= 0) {
+        stopLoginCooldownTimer();
+        msgEl.textContent = 'Vous pouvez réessayer maintenant.';
+        return;
+      }
+
+      if (loginBtn) {
+        loginBtn.disabled = true;
+        loginBtn.textContent = `Réessayer dans ${remaining}s`;
+      }
+      msgEl.textContent = `Compte temporairement bloqué. Temps restant : ${remaining}s`;
+      remaining -= 1;
+    };
+
+    render();
+    loginCooldownTimer = setInterval(render, 1000);
+  }
 
   if (logo) {
     logo.addEventListener('error', () => { logo.style.display = 'none'; });
@@ -123,6 +160,11 @@
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
     msgEl.textContent = '';
+
+    if (loginBtn?.disabled && loginCooldownTimer) {
+      return;
+    }
+
     const email = emailEl.value.trim();
     const password = passEl.value;
 
@@ -140,9 +182,14 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
+        if (data?.cooldown) {
+          startLoginCooldownTimer(data.remainingSeconds);
+          return;
+        }
         msgEl.textContent = data?.error || 'Échec de la connexion';
         return;
       }
+      stopLoginCooldownTimer();
       // Compat SPA actuelle: stocker aussi le token localStorage
       if (data.token) {
         try { localStorage.setItem('token', data.token); } catch(_){}
@@ -160,6 +207,10 @@
       // Rediriger vers l'application
       window.location.href = '/app';
     } catch (err) {
+      if (loginBtn && !loginCooldownTimer) {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Se connecter';
+      }
       msgEl.textContent = 'Erreur réseau';
     }
   });

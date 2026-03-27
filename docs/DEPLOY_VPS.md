@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :4000 (HTTP interne, PM2)
+Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :3000 (HTTP interne, PM2)
 ```
 
 Le déploiement se fait manuellement via SSH : `git pull` + `pm2 reload`.
@@ -74,7 +74,7 @@ server {
 
     # Application principale
     location / {
-        proxy_pass         http://127.0.0.1:4000;
+        proxy_pass         http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade $http_upgrade;
         proxy_set_header   Connection 'upgrade';

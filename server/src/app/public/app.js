@@ -88,6 +88,8 @@ const showDeleteConfirmation = (options = {}) => {
     title = 'Confirmer la suppression',
     message = 'Êtes-vous sûr de vouloir supprimer cet élément ?',
     extra = '', // texte supplémentaire (ex: avertissements)
+    confirmLabel = 'Supprimer',
+    confirmType = 'danger', // 'danger' | 'primary'
     onConfirm = null,
     onCancel = null
   } = options;
@@ -102,6 +104,23 @@ const showDeleteConfirmation = (options = {}) => {
     extraEl.style.display = 'block';
   } else {
     extraEl.style.display = 'none';
+  }
+
+  const confirmBtn = qs('#delete-confirmation-confirm');
+  const titleEl = qs('#delete-confirmation-title');
+  if (confirmBtn) {
+    confirmBtn.textContent = confirmLabel;
+    if (confirmType === 'danger') {
+      confirmBtn.style.backgroundColor = 'var(--danger)';
+      confirmBtn.style.color = '#fff';
+      confirmBtn.style.borderColor = 'var(--danger)';
+      if (titleEl) titleEl.style.color = 'var(--danger)';
+    } else {
+      confirmBtn.style.backgroundColor = '';
+      confirmBtn.style.color = '';
+      confirmBtn.style.borderColor = '';
+      if (titleEl) titleEl.style.color = '';
+    }
   }
   
   // Stocker le callback
@@ -10307,14 +10326,16 @@ if (typeof window !== 'undefined') {
   qs('#reset-cooldowns-btn')?.addEventListener('click', async () => {
     showDeleteConfirmation({
       title: 'Réinitialiser les cooldowns de connexion',
-      message: 'Êtes-vous sûr de vouloir débloquer tous les comptes ? Cela réinitialisera les compteurs de tentatives de connexion échouées.',
+      message: 'Êtes-vous sûr de vouloir débloquer tous les comptes ? Cette action réinitialisera les compteurs de tentatives de connexion échouées.',
       extra: '<strong>ℹ️ Remarque:</strong> Cette action affectera tous les utilisateurs du système.',
+      confirmLabel: 'Réinitialiser',
+      confirmType: 'primary',
       onConfirm: async () => {
         try {
           const result = await api('/auth/reset-cooldowns', { method: 'POST' });
           showNotify({ title: 'Succès', message: result.message, type: 'success' });
         } catch (err) {
-          showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+          console.error('Erreur reset cooldowns:', err);
         }
       }
     });

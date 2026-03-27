@@ -7,6 +7,8 @@ import { redisIncr, redisGet, redisSet, redisDel, redisDelPattern } from '../uti
 // Préfixes Redis
 const LOGIN_ATTEMPTS_PREFIX = 'login_attempts:';
 const LOGIN_BLOCKED_PREFIX = 'login_blocked:';
+const LOGIN_ATTEMPTS_WINDOW_SECONDS = 60;
+const LOGIN_BLOCK_DURATION_SECONDS = 60;
 
 /**
  * Rate limiter par email (pas seulement par IP)
@@ -26,24 +28,30 @@ export function emailRateLimiter(req, res, next) {
     if (blockedUntil) {
       const remaining = parseInt(blockedUntil, 10) - Date.now();
       if (remaining > 0) {
-        const remainingMinutes = Math.ceil(remaining / 60000);
+        const remainingSeconds = Math.max(1, Math.ceil(remaining / 1000));
         return res.status(429).json({ 
-          error: `Compte temporairement bloqué. Réessayez dans ${remainingMinutes} minute(s).` 
+          error: `Compte temporairement bloqué. Réessayez dans ${remainingSeconds} seconde(s).`,
+          cooldown: true,
+          remainingSeconds,
+          blockedUntil: Number(blockedUntil)
         });
       }
       // Bloc expiré, nettoyer
       await redisDel(blockedKey);
     }
     
-    // Incrémenter les tentatives (TTL 5 min)
-    const count = await redisIncr(attemptsKey, 5 * 60);
+    // Incrémenter les tentatives (TTL 1 min)
+    const count = await redisIncr(attemptsKey, LOGIN_ATTEMPTS_WINDOW_SECONDS);
     
     // Bloquer après 20 tentatives
     if (count > 20) {
-      const blockedUntilTs = Date.now() + 5 * 60 * 1000;
-      await redisSet(blockedKey, String(blockedUntilTs), 5 * 60); // TTL 5 min
+      const blockedUntilTs = Date.now() + LOGIN_BLOCK_DURATION_SECONDS * 1000;
+      await redisSet(blockedKey, String(blockedUntilTs), LOGIN_BLOCK_DURATION_SECONDS); // TTL 1 min
       return res.status(429).json({ 
-        error: 'Trop de tentatives échouées. Compte bloqué pendant 5 minutes.' 
+        error: 'Trop de tentatives échouées. Compte bloqué pendant 1 minute.',
+        cooldown: true,
+        remainingSeconds: LOGIN_BLOCK_DURATION_SECONDS,
+        blockedUntil: blockedUntilTs
       });
     }
     
