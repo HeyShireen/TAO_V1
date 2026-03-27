@@ -5918,7 +5918,8 @@ function renderOptionsCompareTable(companies, entrepriseMode){
 
   function getOptionsCell(r, c){
     const rowEl = qsa('#options-sheet-body tr')[r];
-    return rowEl ? rowEl.children[c] : null;
+    if (!rowEl) return null;
+    return rowEl.querySelector(`td[data-c="${c}"]`) || rowEl.children[c] || null;
   }
 
   function setOptionsCell(r, c, text, updateDOM = true){
@@ -6490,7 +6491,8 @@ function ensureRows(n){
 }
 function getCell(r, c){
   const rowEl = qsa('#sheet-body tr')[r];
-  return rowEl ? rowEl.children[c] : null;
+  if (!rowEl) return null;
+  return rowEl.querySelector(`td[data-c="${c}"]`) || rowEl.children[c] || null;
 }
 function setCell(r, c, text, updateDOM = true){
   const td = getCell(r, c); if (!td) return;
@@ -7232,6 +7234,7 @@ function bindSmartImport() {
   const cancelBtn   = qs('#import-cancel');
   const doneBtn     = qs('#import-done');
   const goStep2Btn  = qs('#import-go-step2');
+  const toggleControlsBtn = qs('#import-toggle-controls');
   const sheetSelect = qs('#import-sheet-select');
   const headerRowInput = qs('#import-header-row');
   const dpgfSheetsToggle = qs('#import-dpgf-sheets-toggle');
@@ -7243,6 +7246,17 @@ function bindSmartImport() {
   const currentFileLabel = qs('#import-current-file');
 
   if (!modal || !openBtn) return;
+
+  let importControlsCollapsed = true;
+
+  function setImportControlsCollapsed(collapsed) {
+    importControlsCollapsed = !!collapsed;
+    step2?.classList.toggle('is-collapsed-controls', importControlsCollapsed);
+    if (toggleControlsBtn) {
+      toggleControlsBtn.textContent = importControlsCollapsed ? '▸ Options' : '▾ Options';
+      toggleControlsBtn.setAttribute('aria-expanded', importControlsCollapsed ? 'false' : 'true');
+    }
+  }
 
   function getSelectedImportFiles() {
     if (Array.isArray(importState.files) && importState.files.length > 0) return importState.files;
@@ -7653,6 +7667,7 @@ function bindSmartImport() {
   function openModal() {
     importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
     setDpgfSheetsDropdownOpen(false);
+    setImportControlsCollapsed(true);
     setImportMode('dpgf');
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
@@ -7669,6 +7684,7 @@ function bindSmartImport() {
 
   function closeModal() {
     setDpgfSheetsDropdownOpen(false);
+    setImportControlsCollapsed(true);
     modal.classList.add('hidden');
     modal.style.display = 'none';
     importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
@@ -7677,6 +7693,9 @@ function bindSmartImport() {
   openBtn.addEventListener('click', openModal);
   closeBtn?.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  toggleControlsBtn?.addEventListener('click', () => {
+    setImportControlsCollapsed(!importControlsCollapsed);
+  });
 
   // Mode toggle
   modeDpgf?.addEventListener('click', () => setImportMode('dpgf'));
@@ -7861,6 +7880,7 @@ function bindSmartImport() {
         step1.classList.add('hidden');
         step2.classList.remove('hidden');
         step3.classList.add('hidden');
+        setImportControlsCollapsed(true);
       }
     } catch (err) {
       showNotify({ title: 'Erreur', message: err.message, type: 'error' });
@@ -8572,6 +8592,7 @@ function bindImportDpgfLots() {
   const step2       = qs('#idl-step-2');
   const step3       = qs('#idl-step-3');
   const backBtn     = qs('#idl-back-step1');
+  const toggleControlsBtn = qs('#idl-toggle-controls');
   const headerRowInput = qs('#idl-header-row');
   const sheetSelect = qs('#idl-sheet-select');
   const fileNavWrap = qs('#idl-file-nav');
@@ -8585,6 +8606,17 @@ function bindImportDpgfLots() {
   const cancelBtn2  = qs('#idl-cancel2');
   const doneBtn     = qs('#idl-done');
   const totalRowsSpan = qs('#idl-total-rows');
+
+  let idlControlsCollapsed = true;
+
+  function setIdlControlsCollapsed(collapsed) {
+    idlControlsCollapsed = !!collapsed;
+    step2?.classList.toggle('is-collapsed-controls', idlControlsCollapsed);
+    if (toggleControlsBtn) {
+      toggleControlsBtn.textContent = idlControlsCollapsed ? '▸ Options' : '▾ Options';
+      toggleControlsBtn.setAttribute('aria-expanded', idlControlsCollapsed ? 'false' : 'true');
+    }
+  }
 
   let idlState = {
     files: [],
@@ -8628,6 +8660,7 @@ function bindImportDpgfLots() {
     if (fileNavWrap) fileNavWrap.classList.add('hidden');
     if (multiSheetsAll) multiSheetsAll.checked = true;
     goStep2Btn.disabled = true;
+    setIdlControlsCollapsed(true);
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
   }
@@ -8636,6 +8669,7 @@ function bindImportDpgfLots() {
     const wasImported = !step3.classList.contains('hidden');
     modal.classList.add('hidden');
     modal.style.display = 'none';
+    setIdlControlsCollapsed(true);
     if (wasImported) loadLotsForRound().catch(() => {});
   }
 
@@ -8952,6 +8986,11 @@ function bindImportDpgfLots() {
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
+    setIdlControlsCollapsed(true);
+  });
+
+  toggleControlsBtn?.addEventListener('click', () => {
+    setIdlControlsCollapsed(!idlControlsCollapsed);
   });
 
   prevFileBtn?.addEventListener('click', async () => {
@@ -9051,6 +9090,7 @@ function bindImportDpgfLots() {
       step1.classList.add('hidden');
       step2.classList.remove('hidden');
       step3.classList.add('hidden');
+      setIdlControlsCollapsed(true);
     } catch (err) {
       showNotify({ title: 'Erreur', message: err.message, type: 'error' });
     } finally {

@@ -74,12 +74,19 @@ router.get('/lot/:lotId', async (req, res) => {
         // Pour chaque item, récupérer ses offres
         const itemsWithOffers = [];
         for (const item of itemsRes.rows) {
-          const offersRes = await query(
-            `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price
-             FROM option_item_offers oio
-             WHERE oio.option_item_id = $1`,
-            [item.id]
-          );
+          const offersRes = roundId
+            ? await query(
+              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.round_id
+               FROM option_item_offers oio
+               WHERE oio.option_item_id = $1 AND oio.round_id = $2`,
+              [item.id, Number(roundId)]
+            )
+            : await query(
+              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.round_id
+               FROM option_item_offers oio
+               WHERE oio.option_item_id = $1`,
+              [item.id]
+            );
           itemsWithOffers.push({
             ...item,
             offers: offersRes.rows

@@ -1980,6 +1980,184 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   line-height: 1.6;
 }
 
+/* ================= Import Modals (fullscreen + isolated table scroll) ================= */
+#import-modal,
+#import-dpgf-lots-modal {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+#import-modal .modal-content,
+#import-dpgf-lots-modal .modal-content {
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
+#import-modal .modal-header,
+#import-dpgf-lots-modal .modal-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 54px 8px 12px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+#import-modal .modal-header h3,
+#import-dpgf-lots-modal .modal-header h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+
+#import-modal #import-modal-close,
+#import-dpgf-lots-modal #idl-modal-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  min-width: 30px;
+  height: 30px;
+  padding: 4px;
+}
+
+#import-modal .modal-body,
+#import-dpgf-lots-modal .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+}
+
+#import-modal #import-step-2,
+#import-dpgf-lots-modal #idl-step-2 {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+#import-modal #import-step2-toolbar {
+  flex-wrap: wrap;
+}
+
+#import-modal #import-step2-toolbar,
+#import-dpgf-lots-modal #idl-step2-toolbar {
+  margin-bottom: 8px !important;
+  gap: 8px !important;
+  row-gap: 6px;
+  align-items: flex-end !important;
+}
+
+#import-modal #import-step2-toolbar h4,
+#import-dpgf-lots-modal #idl-step2-toolbar h4 {
+  font-size: 0.95rem;
+  line-height: 1.1;
+}
+
+#import-modal #import-step2-toolbar .muted,
+#import-dpgf-lots-modal #idl-step2-toolbar .muted {
+  font-size: 0.76rem !important;
+  line-height: 1;
+}
+
+#import-modal #import-step2-toolbar .field,
+#import-dpgf-lots-modal #idl-step2-toolbar .field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#import-modal #import-step2-toolbar .field label,
+#import-dpgf-lots-modal #idl-step2-toolbar .field label {
+  margin: 0;
+  line-height: 1;
+  font-size: 0.78rem !important;
+}
+
+#import-modal #import-step2-toolbar input,
+#import-modal #import-step2-toolbar select,
+#import-dpgf-lots-modal #idl-step2-toolbar input,
+#import-dpgf-lots-modal #idl-step2-toolbar select {
+  min-height: 28px;
+  padding: 4px 6px !important;
+  font-size: 0.8rem !important;
+}
+
+#import-modal #import-preview-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+}
+
+#import-dpgf-lots-modal #idl-step2-toolbar {
+  flex-wrap: wrap;
+}
+
+#import-dpgf-lots-modal #idl-preview-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+}
+
+#import-modal #import-actions,
+#import-dpgf-lots-modal #idl-actions {
+  margin-top: 8px !important;
+  padding-top: 8px !important;
+  gap: 8px !important;
+}
+
+#import-modal #import-actions .btn,
+#import-dpgf-lots-modal #idl-actions .btn {
+  min-height: 34px;
+  padding: 8px 14px !important;
+  font-size: 0.88rem;
+}
+
+#import-modal #import-step-2.is-collapsed-controls #import-offer-fields,
+#import-modal #import-step-2.is-collapsed-controls #import-batch-hint,
+#import-modal #import-step-2.is-collapsed-controls #import-file-nav,
+#import-modal #import-step-2.is-collapsed-controls #import-dpgf-multi-sheets,
+#import-modal #import-step-2.is-collapsed-controls #import-step2-help {
+  display: none !important;
+}
+
+#import-modal #import-step-2.is-collapsed-controls #import-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+#import-dpgf-lots-modal #idl-step-2.is-collapsed-controls #idl-file-nav,
+#import-dpgf-lots-modal #idl-step-2.is-collapsed-controls #idl-multi-sheets,
+#import-dpgf-lots-modal #idl-step-2.is-collapsed-controls #idl-step2-help {
+  display: none !important;
+}
+
+#import-dpgf-lots-modal #idl-step-2.is-collapsed-controls #idl-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+#import-modal #import-step-2 .table-wrapper,
+#import-dpgf-lots-modal #idl-step-2 .table-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+}
+
 /* ================= Save Status Indicator ================= */
 .save-status {
   animation: pulse 0.6s ease-in-out;
@@ -2202,10 +2380,12 @@ thead tr.head-row-2 th { top: var(--head-row1-height, 0px); }
   }
   .modal-header h3{ font-size:14px }
 
-  /* Import modal full screen */
-  #import-modal .modal-content{
-    max-height:95vh;
-    height:95vh;
+  /* Import modals full screen */
+  #import-modal .modal-content,
+  #import-dpgf-lots-modal .modal-content{
+    max-height:none !important;
+    height:100vh !important;
+    height:100dvh !important;
   }
 
   /* ---- Lots/Rounds cards ---- */

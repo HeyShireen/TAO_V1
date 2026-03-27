@@ -1438,11 +1438,12 @@
             <div id="import-dpgf-sheets-list" class="hidden"></div>
             <p class="muted" style="font-size:0.78em;margin:8px 0 0 0">Cochez les onglets à importer. Un onglet coché = importé, un onglet décoché = ignoré.</p>
           </div>
-          <div class="row gap" style="margin-bottom:8px;align-items:center">
+          <div id="import-step2-toolbar" class="row gap" style="margin-bottom:8px;align-items:center">
             <button id="import-back-step1" class="btn ghost">← Retour</button>
             <h4 style="margin:0">Aperçu & correspondance des colonnes</h4>
             <span class="muted" style="font-size:0.82em">(<span id="import-total-rows">0</span> lignes)</span>
             <div class="spacer"></div>
+            <button id="import-toggle-controls" type="button" class="btn ghost" title="Réduire / afficher les options" aria-expanded="false" style="padding:6px 10px;line-height:1">▾ Options</button>
             <div class="field" style="margin:0">
               <label for="import-header-row" style="font-size:0.85em">Ligne en-tête :</label>
               <input id="import-header-row" type="number" min="1" max="50" value="1" style="width:56px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em;text-align:center" />
@@ -1452,10 +1453,10 @@
               <select id="import-sheet-select" name="import-sheet-select" style="padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em"></select>
             </div>
           </div>
-          <p class="muted" style="font-size:0.82em;margin-bottom:8px">Utilisez les sélecteurs en haut de chaque colonne pour indiquer à quoi elle correspond. Plusieurs colonnes peuvent être assignées à « Désignation » (indentation automatique).</p>
+          <p id="import-step2-help" class="muted" style="font-size:0.82em;margin-bottom:8px">Utilisez les sélecteurs en haut de chaque colonne pour indiquer à quoi elle correspond. Plusieurs colonnes peuvent être assignées à « Désignation » (indentation automatique).</p>
 
           <!-- Aperçu avec mapping intégré dans les en-têtes -->
-          <div class="table-wrapper" style="max-height:65vh;overflow:auto">
+          <div id="import-preview-wrap" class="table-wrapper" style="max-height:65vh;overflow:auto">
             <table id="import-preview-table" style="font-size:0.78em;white-space:nowrap">
               <thead id="import-preview-head"></thead>
               <tbody id="import-preview-body"></tbody>
@@ -1513,11 +1514,12 @@
             <div id="idl-current-file" class="muted" style="flex:1;text-align:center;font-size:0.82em"></div>
             <button id="idl-next-file" class="btn ghost" type="button">Fichier suivant →</button>
           </div>
-          <div class="row gap" style="margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <div id="idl-step2-toolbar" class="row gap" style="margin-bottom:12px;align-items:center;flex-wrap:wrap">
             <button id="idl-back-step1" class="btn ghost">← Retour</button>
             <h4 style="margin:0">Aperçu &amp; correspondance des colonnes</h4>
             <span class="muted" style="font-size:0.82em">(<span id="idl-total-rows">0</span> lignes)</span>
             <div class="spacer"></div>
+            <button id="idl-toggle-controls" type="button" class="btn ghost" title="Réduire / afficher les options" aria-expanded="false" style="padding:6px 10px;line-height:1">▾ Options</button>
             <div class="field" style="margin:0">
               <label for="idl-header-row" style="font-size:0.85em">Ligne en-tête :</label>
               <input id="idl-header-row" type="number" min="1" max="50" value="1" style="width:56px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.85em;text-align:center">
@@ -1535,14 +1537,14 @@
             <div id="idl-sheets-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
             <p class="muted" style="font-size:0.78em;margin:8px 0 0 0">Chaque onglet sélectionné du fichier courant créera un lot. Le nom du lot sera le nom de l'onglet.</p>
           </div>
-          <p class="muted" style="font-size:0.82em;margin-bottom:8px">Ce mapping s'applique à tous les fichiers sélectionnés. Assignez au moins une colonne <strong>Désignation</strong>.</p>
-          <div class="table-wrapper" style="max-height:50vh;overflow:auto">
+          <p id="idl-step2-help" class="muted" style="font-size:0.82em;margin-bottom:8px">Ce mapping s'applique à tous les fichiers sélectionnés. Assignez au moins une colonne <strong>Désignation</strong>.</p>
+          <div id="idl-preview-wrap" class="table-wrapper" style="max-height:50vh;overflow:auto">
             <table id="idl-preview-table" style="font-size:0.78em;white-space:nowrap">
               <thead id="idl-preview-head"></thead>
               <tbody id="idl-preview-body"></tbody>
             </table>
           </div>
-          <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end">
+          <div id="idl-actions" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end">
             <button id="idl-cancel2" class="btn ghost">Annuler</button>
             <button id="idl-confirm" class="btn" style="font-weight:700;padding:12px 24px"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-check-circle"></use></svg>Lancer l'import</button>
           </div>
