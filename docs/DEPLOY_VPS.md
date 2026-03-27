@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :3000 (HTTP interne, PM2)
+Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :4000 (HTTP interne, PM2)
 ```
 
 Le déploiement se fait manuellement via SSH : `git pull` + `pm2 reload`.
@@ -22,10 +22,10 @@ nvm use 22
 npm install -g pm2
 
 # Créer le dossier de l'application
-mkdir -p /var/www/tao
+mkdir -p /home/tao/TAO/TAO_V1
 
 # Cloner le dépôt
-cd /var/www/tao
+cd /home/tao/TAO/TAO_V1
 git clone https://github.com/VOTRE_ORG/VOTRE_REPO.git .
 
 # Installer les dépendances
@@ -42,7 +42,7 @@ nano .env   # Compléter toutes les variables
 ## 2. Démarrer avec PM2
 
 ```bash
-cd /var/www/tao/server
+cd /home/tao/TAO/TAO_V1/server
 pm2 start ecosystem.config.cjs
 
 # Sauvegarder pour redémarrage automatique au boot
@@ -59,22 +59,22 @@ Créer ou modifier votre vhost nginx (ex. `/etc/nginx/sites-available/tao`) :
 ```nginx
 server {
     listen 80;
-    server_name votredomaine.com;
+    server_name ao-link.fr www.ao-link.fr;
     # Rediriger tout le HTTP vers HTTPS
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name votredomaine.com;
+    server_name ao-link.fr www.ao-link.fr;
 
     # Certificat Let's Encrypt (certbot)
-    ssl_certificate     /etc/letsencrypt/live/votredomaine.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/votredomaine.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/ao-link.fr/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ao-link.fr/privkey.pem;
 
     # Application principale
     location / {
-        proxy_pass         http://127.0.0.1:3000;
+        proxy_pass         http://127.0.0.1:4000;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade $http_upgrade;
         proxy_set_header   Connection 'upgrade';
@@ -90,7 +90,7 @@ server {
 ```bash
 # Activer le site et recharger nginx
 ln -s /etc/nginx/sites-available/tao /etc/nginx/sites-enabled/tao
-nginx -t && systemctl reload nginx
+sudo nginx -t && systemctl reload nginx
 ```
 
 ---
@@ -99,7 +99,7 @@ nginx -t && systemctl reload nginx
 
 ```bash
 apt install certbot python3-certbot-nginx
-certbot --nginx -d votredomaine.com
+certbot --nginx -d ao-link.fr -d www.ao-link.fr
 # Certbot modifie automatiquement la config nginx et configure le renouvellement automatique
 ```
 
@@ -107,12 +107,12 @@ certbot --nginx -d votredomaine.com
 
 ## 5. Variables d'environnement requises
 
-Dans `/var/www/tao/server/.env`, s'assurer que les variables suivantes sont définies :
+Dans `/home/tao/TAO/TAO_V1/server/.env`, s'assurer que les variables suivantes sont définies :
 
 ```env
 NODE_ENV=production
 HTTPS_PROXY=true          # Indique à l'app qu'elle est derrière nginx HTTPS → active HSTS
-ALLOWED_ORIGINS=https://votredomaine.com
+ALLOWED_ORIGINS=https://ao-link.fr
 JWT_SECRET=...            # Secret JWT fort (32+ caractères)
 DATABASE_URL=...
 ```
@@ -122,7 +122,7 @@ DATABASE_URL=...
 ## 6. Déployer une mise à jour (manuellement via SSH)
 
 ```bash
-cd /var/www/tao
+cd /home/tao/TAO/TAO_V1
 
 # Récupérer le code
 git pull origin main
@@ -147,7 +147,7 @@ pm2 list
 pm2 logs tao-app
 
 # Tester le health check
-curl https://votredomaine.com/api/healthz
+curl https://ao-link.fr/api/healthz
 ```
 
 ---
