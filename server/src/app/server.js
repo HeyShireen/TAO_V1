@@ -126,11 +126,20 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 })
 
-// Rate Limiting Auth: 5 tentatives / 15 min (login/register)
+// Rate Limiting Auth: 5 tentatives / 1 min (login/register)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+  windowMs: 60 * 1000,
   max: 5,
-  message: { error: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' },
+  handler: (req, res) => {
+    const resetTime = req.rateLimit?.resetTime ? new Date(req.rateLimit.resetTime).getTime() : Date.now() + 60000;
+    const remainingSeconds = Math.max(1, Math.ceil((resetTime - Date.now()) / 1000));
+    return res.status(429).json({
+      error: `Trop de tentatives de connexion. Réessayez dans ${remainingSeconds} seconde(s).`,
+      cooldown: true,
+      remainingSeconds,
+      blockedUntil: resetTime,
+    });
+  },
   skipSuccessfulRequests: true, // Ne compte que les échecs
 })
 
