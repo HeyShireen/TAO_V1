@@ -817,11 +817,16 @@ input:focus,textarea:focus,select:focus{
   width:100%; 
   overflow-x:auto;
   overflow-y:auto;
+  overscroll-behavior: contain;
   border:1px solid var(--border); 
   border-radius:var(--radius-sm); 
   background:var(--card);
   box-shadow: var(--shadow-soft);
   /* Amélioration du scroll sur mobile */
+  -webkit-overflow-scrolling: touch;
+}
+.scroll-contained{
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 .table-wrapper.tall{ max-height:75vh }

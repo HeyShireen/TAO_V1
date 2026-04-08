@@ -6,7 +6,9 @@
 Internet → nginx (443 HTTPS + Let's Encrypt) → Node.js :3000 (HTTP interne, PM2)
 ```
 
-Le déploiement se fait manuellement via SSH : `git pull` + `pm2 reload`.
+Le deploiement principal documente ici concerne l'application web servie par `server/src/app/server.js`. La configuration PM2 du depot declare aussi un processus `tao-webhook` optionnel pour automatiser les mises a jour, en plus du processus principal `tao-app`.
+
+Le deploiement manuel reste: `git pull` + `pm2 reload`.
 
 ---
 
@@ -49,6 +51,12 @@ pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup   # Suivre la commande affichée
 ```
+
+Le fichier `ecosystem.config.cjs` declare par defaut:
+- `tao-app` sur le port `3000`
+- `tao-webhook` sur le port `9000`
+
+Si vous n'utilisez pas le webhook de deploiement, vous pouvez ne lancer que `tao-app`.
 
 ---
 
@@ -115,7 +123,12 @@ HTTPS_PROXY=true          # Indique à l'app qu'elle est derrière nginx HTTPS �
 ALLOWED_ORIGINS=https://ao-link.fr
 JWT_SECRET=...            # Secret JWT fort (32+ caractères)
 DATABASE_URL=...
+REDIS_URL=...             # Recommandé pour la révocation JWT et les mécanismes associés
+EMAIL_USER=...            # Si vérification email / reset mot de passe activés
+EMAIL_PASS=...
 ```
+
+Selon votre base PostgreSQL, `DB_SSL=true` peut aussi etre necessaire si le serveur de base impose TLS.
 
 ---
 
@@ -135,6 +148,12 @@ npm ci --omit=dev
 pm2 reload tao-app --update-env
 ```
 
+Si le webhook est utilise, recharger aussi:
+
+```bash
+pm2 reload tao-webhook --update-env
+```
+
 ---
 
 ## 7. Vérifier que tout fonctionne
@@ -149,6 +168,8 @@ pm2 logs tao-app
 # Tester le health check
 curl https://ao-link.fr/api/healthz
 ```
+
+Verifier que la reponse `healthz` indique bien `db: true`. Si `redis: false`, l'application peut fonctionner mais la revocation de JWT et certains mecanismes de securite degradent.
 
 ---
 

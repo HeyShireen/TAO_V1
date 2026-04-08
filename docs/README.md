@@ -1,67 +1,56 @@
-# Comparateur d'offres — Bureau (v0.1)
+# Documentation TAO_V1
 
-Architecture:
-- **server/** — API Node.js + PostgreSQL (Express)
-- **frontend/** — Mini UI HTML/JS 
+Cette documentation couvre l'etat actuel du depot. L'application est une web app Node.js + PostgreSQL dont l'interface HTML/CSS/JS est servie directement par Express depuis `server/src/app/public/`.
 
-## 1) Lancer la base et l'API
+## Demarrage rapide
 
-### Prérequis
+Pre-requis:
 - Node.js 18+
-- PostgreSQL (local ou serveur)
+- PostgreSQL
 
-### Configurer l'environnement
-```
+Commandes:
+```bash
 cd server
-cp .env.example .env
-# Modifier DATABASE_URL et JWT_SECRET
-```
-
-Exemple `DATABASE_URL` local :
-```
-postgres://postgres:postgres@localhost:5432/offer_compare
-```
-
-### Installer et initialiser
-```
 npm install
-npm run db:init
 npm run dev
 ```
 
-L'API écoute par défaut sur `http://localhost:4000`
+Le serveur demarre sur `http://localhost:4000` par defaut. Au lancement, `src/app/server.js` valide la configuration, charge le schema SQL, puis applique automatiquement les migrations presentes dans `server/src/app/migrations/`.
 
-### Bootstrap : créer le premier utilisateur (admin)
-Ouvrir le `frontend/index.html` dans un navigateur (ou héberger via un serveur statique).
-Renseigner email + mot de passe puis cliquer sur **"Créer admin"**.
+Variables minimales:
+- `DATABASE_URL`
+- `JWT_SECRET`
 
-## 2) UI Frontend (temporaire)
-Ouvrir `frontend/index.html` (double-clic).  
-Configurer éventuellement `API_BASE` dans `localStorage` si vous n'êtes pas sur localhost:
-```js
-localStorage.setItem('api_base', 'https://mon-serveur:4000');
-```
+Variables frequentes selon l'environnement:
+- `ALLOWED_ORIGINS`
+- `REDIS_URL`
+- `EMAIL_USER` / `EMAIL_PASS`
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+- `HTTPS_PROXY`
 
-## 3) Import Excel (format V1)
-- Colonnes obligatoires: **Num**, **Désignation**, **Quantité MOE**, **PU MOE** (Montant MOE optionnel).  
-- Pour chaque entreprise, ajouter 3 ou 4 colonnes nommées:  
-  - `<Nom Entreprise> Quantité`  
-  - `<Nom Entreprise> PU`  
-  - `<Nom Entreprise> Montant` (optionnel)  
-  - `<Nom Entreprise> U` (optionnel)
+## Documents actifs
 
-Le nom des colonnes peut varier (ex : qté/quantité, p.u/pu), l'importeur essaie de mapper automatiquement.
+- `GUIDE_TECHNIQUE.md` : vue d'ensemble du produit, architecture et principaux flux.
+- `MAINTENANCE.md` : exploitation courante, migrations, dependances et controles manuels.
+- `SECURITY.md` : protections actuellement implementees et points d'attention.
+- `DEPLOY_VPS.md` : deploiement sur VPS avec nginx et PM2.
 
-## 4) Emballer en application Bureau (Electron) — plus tard
-- Remplacer le front par React si besoin, ou packager `frontend/` avec Electron.  
-- L'API reste sur le serveur; l'appli bureau parle à l'API via HTTP + JWT.
+## Structure utile du depot
 
-## 5) Prochaines étapes
-- Droits avancés par rôle (admin/lecteur).  
-- Export PDF/Excel de la comparaison.  
-- Mapping de colonnes configurable par lot.  
-- Import PDF (si PDF structuré exporté d'Excel).  
-- Classements par lot et global projet.
+- `server/src/app/server.js` : point d'entree Express.
+- `server/src/app/public/` : interface web (home, login, app).
+- `server/src/app/routes/` : API REST.
+- `server/src/app/middleware/` : auth, roles, securite, honeypot, erreurs.
+- `server/src/app/migrations/` : migrations SQL appliquees au demarrage.
+- `tests/` : scripts de verification manuelle et securite.
+- `render.yaml` : configuration Render.
 
----
-Développé pour Alban (DMX) — v0.1
+## Archives documentaires
+
+Les documents historiques, rapports d'audit, plans ponctuels et anciennes syntheses sont conserves dans `docs/_archive/` :
+
+- `docs/_archive/audit/`
+- `docs/_archive/reports/`
+- `docs/_archive/SECURITY_AUDIT/`
+
+Les documents places dans `_archive` sont conserves pour l'historique, mais ne doivent pas etre traites comme reference operationnelle principale.
