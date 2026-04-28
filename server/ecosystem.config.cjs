@@ -22,6 +22,14 @@ module.exports = {
         PORT: 3000,
         // Les autres variables sont dans /home/tao/TAO/TAO_V1/server/.env
       },
+      env_demo: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        DOTENV_CONFIG_PATH: '.env.demo',
+        DEMO_MODE: 'true',
+        ALLOWED_ORIGINS: 'https://demo.ao-link.fr,https://ao-link.fr',
+        HTTPS_PROXY: 'true',
+      },
       // Logs
       out_file: '/var/log/tao-app.log',
       error_file: '/var/log/tao-app-error.log',

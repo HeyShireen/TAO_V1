@@ -16,6 +16,7 @@ import jwt from 'jsonwebtoken'
 import { query, ensureSchema } from './db.js'
 import { initRedis } from './utils/redis.js'
 import { sanitizeInput } from './middleware/security.js'
+import { demoModeMiddleware, isDemoMode } from './middleware/demo-mode.js'
 import authRoutes from './routes/auth/index.js'
 import projectRoutes from './routes/projects/index.js'
 import lotRoutes from './routes/lots/index.js'
@@ -40,6 +41,10 @@ if (process.env.RENDER || process.env.NODE_ENV === 'production') {
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : [];
+
+if (isDemoMode()) {
+  console.log('Mode DEMO active - actions destructives limitees');
+}
 
 // Valider que les origines sont configurées en production
 if ((process.env.RENDER || process.env.NODE_ENV === 'production') && allowedOrigins.length === 0) {
@@ -148,6 +153,7 @@ app.use('/api/', globalLimiter)
 
 // Sanitizer global: nettoyer les inputs
 app.use(sanitizeInput)
+app.use(demoModeMiddleware)
 
 // API
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
