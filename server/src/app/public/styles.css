@@ -1,56 +1,58 @@
 /* Thème sombre (par défaut) - eco/industriel */
 :root, [data-theme="dark"]{
-  --bg:#0f111a;
-  --bg-rgb:15,17,26;
-  --bg-pattern:#171a26;
-  --fg:#e9e8f2;
-  --muted:#8b8ea6;
-  --card:#151827;
-  --border:#262a3c;
-  --accent:#7b5cff;
-  --accent-rgb:123,92,255;
-  --accent-ghost:#211b35;
-  --accent-dim:#5f47c9;
-  --danger:#d34a5e;
-  --danger-rgb:211,74,94;
-  --success:#4aa0d9;
-  --success-rgb:74,160,217;
-  --sticky:#121623;
-  --warning:#b56ad9;
-  --blueprint:#4f7fe3;
-  --blueprint-rgb:79,127,227;
-  --copper:#a968ff;
-  --input-bg:#121623;
+  --bg:#091216;
+  --bg-rgb:9,18,22;
+  --bg-pattern:#0f2026;
+  --fg:#ecf4f1;
+  --muted:#8ba3a5;
+  --card:#101b20;
+  --border:#25343a;
+  --accent:#24c6c8;
+  --accent-rgb:36,198,200;
+  --accent-ghost:#102d31;
+  --accent-dim:#17999d;
+  --danger:#d85c5c;
+  --danger-rgb:216,92,92;
+  --success:#65b98f;
+  --success-rgb:101,185,143;
+  --sticky:#0d181d;
+  --warning:#d99a44;
+  --blueprint:#54a9d8;
+  --blueprint-rgb:84,169,216;
+  --copper:#d7954c;
+  --input-bg:#0d181d;
   --radius-xs:4px;
   --radius-sm:4px;
   --radius-md:4px;
   --radius-lg:4px;
   --shadow-soft:0 2px 10px rgba(0,0,0,0.25);
   --shadow-strong:0 12px 32px rgba(0,0,0,0.45);
+  --background-image:url('./assets/background-dark.jpg');
+  --background-overlay:rgba(9,18,22,0.46);
 }
 
 /* Thème clair */
 [data-theme="light"]{
-  --bg:#f2f2f9;
-  --bg-rgb:242,242,249;
-  --bg-pattern:#dfe1f2;
-  --fg:#1d1f2b;
-  --muted:#5e637b;
+  --bg:#f3f7f5;
+  --bg-rgb:243,247,245;
+  --bg-pattern:#d8e4e2;
+  --fg:#1b282b;
+  --muted:#5d7073;
   --card:#ffffff;
-  --border:#c9cde3;
-  --accent:#6a4bff;
-  --accent-rgb:106,75,255;
-  --accent-ghost:#efeaff;
-  --accent-dim:#7a66ff;
+  --border:#bfd0cf;
+  --accent:#0c9399;
+  --accent-rgb:12,147,153;
+  --accent-ghost:#e0f4f2;
+  --accent-dim:#0e7379;
   --danger:#c03c55;
   --danger-rgb:192,60,85;
-  --success:#3f86c2;
-  --success-rgb:63,134,194;
-  --sticky:#f2f2f9;
-  --warning:#9c5bd1;
-  --blueprint:#3f6fe0;
-  --blueprint-rgb:63,111,224;
-  --copper:#7a5cff;
+  --success:#357d62;
+  --success-rgb:53,125,98;
+  --sticky:#f3f7f5;
+  --warning:#b87635;
+  --blueprint:#297ea9;
+  --blueprint-rgb:41,126,169;
+  --copper:#b87635;
   --input-bg:#ffffff;
   --radius-xs:4px;
   --radius-sm:4px;
@@ -58,6 +60,8 @@
   --radius-lg:4px;
   --shadow-soft:0 2px 10px rgba(0,0,0,0.12);
   --shadow-strong:0 12px 28px rgba(0,0,0,0.2);
+  --background-image:url('./assets/background-light.jpg');
+  --background-overlay:rgba(255,255,255,0.2);
 }
 
 *{ box-sizing:border-box }
@@ -75,13 +79,14 @@ body::before{
   position:fixed;
   inset:0;
   z-index:-1;
-  background-color: rgba(var(--bg-rgb), 0.5);
-  background-image: url('./assets/background.jpg');
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(var(--background-overlay), var(--background-overlay)),
+    var(--background-image);
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
   background-attachment: fixed;
-  background-blend-mode: multiply;
   pointer-events:none;
 }
 
