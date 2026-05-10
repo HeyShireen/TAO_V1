@@ -3,848 +3,1054 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AO Link - Tableau d'Analyse d'Offres</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <title>AO Link - Analyse d'offres</title>
   <link rel="stylesheet" href="./styles.css" />
   <link rel="icon" type="image/x-icon" href="./assets/favicon_io/favicon.ico" />
   <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon_io/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon_io/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicon_io/apple-touch-icon.png" />
   <link rel="manifest" href="./assets/favicon_io/site.webmanifest" />
-  <meta name="theme-color" content="#091216" />
+  <meta name="theme-color" content="#202429" />
   <style>
     :root {
-      --home-shell: rgba(10, 12, 21, 0.72);
-      --home-card: rgba(12, 16, 30, 0.78);
-      --home-soft: rgba(255, 255, 255, 0.06);
-      --home-ice: #73d2ff;
-      --home-copper: #efb36e;
-      --home-hero: linear-gradient(135deg, rgba(35, 48, 82, 0.88) 0%, rgba(15, 19, 34, 0.96) 55%, rgba(26, 33, 54, 0.92) 100%);
-      --home-grid: linear-gradient(rgba(115, 210, 255, 0.09) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(115, 210, 255, 0.09) 1px, transparent 1px);
+      --home-bg:#e9ecef;
+      --home-panel:#f8f9fa;
+      --home-surface:#ffffff;
+      --home-rail:#eef1f4;
+      --home-border:#b7c0ca;
+      --home-text:#20262d;
+      --home-muted:#64707d;
+      --home-accent:#1f5f9f;
+      --home-accent-soft:#dce9f7;
+      --home-success:#34785f;
+      --home-warning:#a86c1d;
+      --home-danger:#b73e45;
+      --home-shadow:0 16px 40px rgba(15, 23, 42, 0.14);
     }
 
-    body {
-      font-family: 'Sora', sans-serif;
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --home-bg:#202429;
+        --home-panel:#2b3036;
+        --home-surface:#252a30;
+        --home-rail:#252a30;
+        --home-border:#4a535e;
+        --home-text:#eef1f4;
+        --home-muted:#9aa6b2;
+        --home-accent:#7db0e8;
+        --home-accent-soft:#27394e;
+        --home-success:#7fbd9e;
+        --home-warning:#d9a255;
+        --home-danger:#e07478;
+        --home-shadow:0 16px 40px rgba(0, 0, 0, 0.28);
+      }
     }
 
-    .home-header {
-      position: fixed;
+    html {
+      background: var(--home-bg);
+      scroll-behavior: smooth;
+    }
+
+    body.home-page {
+      min-height: 100vh;
+      margin: 0;
+      background: var(--home-bg);
+      color: var(--home-text);
+      font: 13px/1.45 "Segoe UI", Tahoma, Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    body.home-page::before {
+      display: none;
+    }
+
+    .home-topbar {
+      position: sticky;
       top: 0;
-      left: 0;
-      right: 0;
-      height: 72px;
-      z-index: 1000;
+      z-index: 50;
+      min-height: 56px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 0 32px;
-      background: rgba(10, 13, 22, 0.74);
-      border-bottom: 1px solid var(--border);
-      backdrop-filter: blur(12px);
+      gap: 14px;
+      padding: 8px 18px;
+      background: var(--home-panel);
+      border-bottom: 1px solid var(--home-border);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10);
     }
 
-    .home-logo-container {
+    .home-brand {
       display: flex;
       align-items: center;
-      gap: 12px;
       min-width: 0;
+      gap: 10px;
+      color: var(--home-text);
+      text-decoration: none;
     }
 
-    .home-logo {
-      height: 36px;
+    .home-brand img {
       width: auto;
+      height: 30px;
+      display: block;
     }
 
-    .home-title {
-      margin: 0;
-      font: 600 13px/1 'IBM Plex Mono', monospace;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--home-copper);
+    .home-brand span {
+      font-weight: 700;
+      font-size: 14px;
       white-space: nowrap;
     }
 
     .home-nav {
       display: flex;
       align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
       justify-content: flex-end;
-    }
-
-    .home-content {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 98px 28px 72px;
-    }
-
-    .hero {
-      position: relative;
-      overflow: hidden;
-      background: var(--home-hero);
-      border: 1px solid rgba(255, 255, 255, 0.09);
-      border-radius: 20px;
-      padding: 42px;
-      display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-      gap: 32px;
-      box-shadow: 0 26px 52px rgba(0, 0, 0, 0.38);
-      isolation: isolate;
-    }
-
-    .hero::before,
-    .hero::after {
-      content: '';
-      position: absolute;
-      pointer-events: none;
-      z-index: -1;
-    }
-
-    .hero::before {
-      inset: -40% auto auto -18%;
-      width: 460px;
-      height: 460px;
-      background: radial-gradient(circle, rgba(239, 179, 110, 0.22) 0%, rgba(239, 179, 110, 0) 66%);
-      animation: drift 9s ease-in-out infinite;
-    }
-
-    .hero::after {
-      inset: auto -12% -30% auto;
-      width: 500px;
-      height: 500px;
-      background: radial-gradient(circle, rgba(115, 210, 255, 0.22) 0%, rgba(115, 210, 255, 0) 68%);
-      animation: drift 11s ease-in-out infinite reverse;
-    }
-
-    .hero-eyebrow {
-      margin: 0 0 14px 0;
-      font: 500 11px/1.4 'IBM Plex Mono', monospace;
-      text-transform: uppercase;
-      letter-spacing: 0.24em;
-      color: rgba(255, 255, 255, 0.72);
-    }
-
-    .hero-title {
-      margin: 0;
-      font-size: clamp(2rem, 4.1vw, 3.35rem);
-      line-height: 1.05;
-      color: #fff;
-      letter-spacing: -0.03em;
-    }
-
-    .hero-subtitle {
-      margin: 16px 0 0 0;
-      max-width: 640px;
-      font-size: 1rem;
-      color: rgba(235, 240, 255, 0.84);
-    }
-
-    .hero-ctas {
-      margin-top: 26px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .home-button-solid {
-      background: linear-gradient(135deg, #efb36e 0%, #73d2ff 100%);
-      color: #0f111a;
-      border: 0;
-      box-shadow: 0 10px 28px rgba(115, 210, 255, 0.2);
-    }
-
-    .hero-proof {
-      margin-top: 18px;
-      display: flex;
       flex-wrap: wrap;
       gap: 8px;
     }
 
-    .hero-proof span {
-      border: 1px solid rgba(255, 255, 255, 0.17);
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 999px;
-      padding: 6px 11px;
-      font: 500 11px/1 'IBM Plex Mono', monospace;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: rgba(255, 255, 255, 0.84);
-    }
-
-    .hero-panel {
-      padding: 18px;
-      border-radius: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      background: var(--home-shell);
-      display: grid;
-      gap: 14px;
-      align-content: start;
-    }
-
-    .hero-panel h3 {
-      margin: 0;
-      font-size: 1.03rem;
-      color: #fff;
-    }
-
-    .hero-panel p {
-      margin: 0;
-      font-size: 0.9rem;
-      color: rgba(233, 236, 249, 0.78);
-    }
-
-    .visual-strip {
-      margin-top: 14px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    .visual-card {
-      position: relative;
-      overflow: hidden;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      min-height: 148px;
-      background: rgba(255, 255, 255, 0.04);
-    }
-
-    .visual-card img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      filter: saturate(0.9) contrast(1.04);
-      opacity: 0.9;
-    }
-
-    .visual-card::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(180deg, rgba(6, 9, 18, 0.08), rgba(6, 9, 18, 0.82));
-    }
-
-    .visual-caption {
-      position: absolute;
-      left: 10px;
-      bottom: 10px;
-      z-index: 1;
-      color: #fff;
-      font: 600 11px/1.3 'IBM Plex Mono', monospace;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 9px;
-    }
-
-    .kpi {
-      padding: 13px;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      background: rgba(255, 255, 255, 0.05);
-      display: grid;
-      gap: 4px;
-    }
-
-    .kpi-value {
-      margin: 0;
-      color: #fff;
-      font-size: 1.16rem;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-    }
-
-    .kpi-label {
-      margin: 0;
-      color: rgba(235, 239, 250, 0.72);
-      font-size: 0.77rem;
-    }
-
-    .section {
-      margin-top: 50px;
-    }
-
-    .section-head {
-      margin-bottom: 18px;
-      max-width: 740px;
-    }
-
-    .section-label {
-      margin: 0 0 10px 0;
-      font: 500 11px/1.3 'IBM Plex Mono', monospace;
-      text-transform: uppercase;
-      letter-spacing: 0.2em;
-      color: rgba(233, 236, 249, 0.72);
-    }
-
-    .section-title {
-      margin: 0;
-      font-size: clamp(1.45rem, 2.8vw, 2.18rem);
-      line-height: 1.18;
-      color: #fff;
-    }
-
-    .section-subtitle {
-      margin: 12px 0 0;
-      color: var(--muted);
-      font-size: 0.95rem;
-    }
-
-    .feature-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .feature-card {
-      background: var(--home-card);
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      border-radius: 14px;
-      padding: 18px;
-      transform: translateY(16px);
-      opacity: 0;
-      animation: rise 0.7s ease forwards;
-    }
-
-    .feature-card:nth-child(2) {
-      animation-delay: 0.08s;
-    }
-
-    .feature-card:nth-child(3) {
-      animation-delay: 0.16s;
-    }
-
-    .feature-card:nth-child(4) {
-      animation-delay: 0.24s;
-    }
-
-    .feature-card:nth-child(5) {
-      animation-delay: 0.32s;
-    }
-
-    .feature-card:nth-child(6) {
-      animation-delay: 0.4s;
-    }
-
-    .feature-icon {
+    .home-btn {
+      min-height: 32px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
+      gap: 7px;
+      padding: 6px 12px;
+      border: 1px solid var(--home-border);
+      border-radius: 4px;
+      background: var(--home-surface);
+      color: var(--home-text);
+      text-decoration: none;
+      font: 600 12px/1 "Segoe UI", Tahoma, Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    .home-btn:hover {
+      border-color: var(--home-accent);
+      background: var(--home-accent-soft);
+    }
+
+    .home-btn.primary {
+      background: var(--home-accent);
+      border-color: var(--home-accent);
       color: #fff;
-      margin-bottom: 12px;
-      background: linear-gradient(135deg, rgba(239, 179, 110, 0.45), rgba(115, 210, 255, 0.38));
     }
 
-    .feature-icon .icon {
-      width: 20px;
-      height: 20px;
-      margin-right: 0;
-    }
-
-    .feature-title {
+    .home-btn svg,
+    .home-icon {
+      width: 15px;
+      height: 15px;
       margin: 0;
-      font-size: 1.03rem;
-      color: #fff;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
-    .feature-text {
-      margin: 10px 0 0;
-      font-size: 0.88rem;
-      color: rgba(230, 236, 250, 0.78);
-      line-height: 1.55;
+    .home-shell {
+      width: min(1440px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 18px 0 32px;
     }
 
-    .flow {
+    .home-titlebar {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      padding: 14px;
-      background: var(--home-shell);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 14px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 14px;
     }
 
-    .flow-step {
-      position: relative;
-      padding: 12px;
-      border-radius: 10px;
-      border: 1px solid var(--home-soft);
-      background: rgba(255, 255, 255, 0.03);
-      min-height: 112px;
-    }
-
-    .flow-step:not(:last-child)::after {
-      content: '';
-      position: absolute;
-      top: 50%;
-      right: -7px;
-      width: 12px;
-      height: 1px;
-      background: rgba(115, 210, 255, 0.5);
-    }
-
-    .flow-step small {
-      display: block;
-      color: var(--home-copper);
-      font: 500 11px/1 'IBM Plex Mono', monospace;
-      letter-spacing: 0.14em;
+    .home-kicker {
+      margin: 0 0 6px;
+      color: var(--home-muted);
+      font-size: 12px;
+      font-weight: 700;
       text-transform: uppercase;
+    }
+
+    .home-titlebar h1 {
+      margin: 0;
+      color: var(--home-text);
+      font: 700 clamp(28px, 4vw, 44px)/1.05 "Segoe UI", Tahoma, Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    .home-titlebar p {
+      max-width: 720px;
+      margin: 10px 0 0;
+      color: var(--home-muted);
+      font-size: 15px;
+    }
+
+    .home-title-actions {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .product-board {
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 430px;
+      border: 1px solid var(--home-border);
+      border-radius: 6px;
+      background: var(--home-panel);
+      box-shadow: var(--home-shadow);
+    }
+
+    .board-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--home-border);
+      background: var(--home-rail);
+    }
+
+    .board-project {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-weight: 700;
+    }
+
+    .board-project small {
+      color: var(--home-muted);
+      font-weight: 600;
+    }
+
+    .board-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid var(--home-border);
+      border-radius: 999px;
+      background: var(--home-surface);
+      color: var(--home-muted);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tag strong {
+      color: var(--home-text);
+    }
+
+    .board-layout {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr) 300px;
+      min-height: 0;
+    }
+
+    .board-rail {
+      padding: 12px;
+      border-right: 1px solid var(--home-border);
+      background: var(--home-rail);
+    }
+
+    .rail-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 9px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--home-muted);
+      font-weight: 600;
+    }
+
+    .rail-item.active {
+      background: var(--home-surface);
+      border-color: var(--home-border);
+      color: var(--home-accent);
+    }
+
+    .board-main {
+      min-width: 0;
+      padding: 12px;
+      background: var(--home-surface);
+    }
+
+    .sheet-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 10px;
+      overflow-x: auto;
+    }
+
+    .sheet-tab {
+      min-height: 30px;
+      padding: 6px 10px;
+      border: 1px solid var(--home-border);
+      border-radius: 4px 4px 0 0;
+      background: var(--home-panel);
+      color: var(--home-muted);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .sheet-tab.active {
+      color: var(--home-text);
+      background: var(--home-surface);
+      border-bottom-color: var(--home-surface);
+    }
+
+    .sheet-wrap {
+      overflow: auto;
+      border: 1px solid var(--home-border);
+      border-radius: 4px;
+    }
+
+    .preview-table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 12px;
+      background: var(--home-surface);
+    }
+
+    .preview-table th,
+    .preview-table td {
+      padding: 8px 9px;
+      border: 1px solid var(--home-border);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .preview-table th {
+      background: var(--home-rail);
+      color: var(--home-muted);
+      font-weight: 700;
+    }
+
+    .preview-table td.amount {
+      text-align: right;
+    }
+
+    .preview-table .delta-good {
+      color: var(--home-success);
+      font-weight: 700;
+    }
+
+    .preview-table .delta-risk {
+      color: var(--home-danger);
+      font-weight: 700;
+    }
+
+    .board-aside {
+      min-width: 0;
+      padding: 12px;
+      border-left: 1px solid var(--home-border);
+      background: var(--home-panel);
+    }
+
+    .aside-title {
+      margin: 0 0 10px;
+      color: var(--home-text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .question-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .question-list li {
+      padding: 9px;
+      border: 1px solid var(--home-border);
+      border-radius: 4px;
+      background: var(--home-surface);
+    }
+
+    .question-list strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--home-text);
+      font-size: 12px;
+    }
+
+    .question-list span {
+      color: var(--home-muted);
+      font-size: 12px;
+    }
+
+    .home-section {
+      margin-top: 22px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
       margin-bottom: 10px;
     }
 
-    .flow-step h3 {
+    .section-heading h2 {
       margin: 0;
-      color: #fff;
-      font-size: 0.95rem;
+      color: var(--home-text);
+      font-size: 19px;
+      letter-spacing: 0;
     }
 
-    .flow-step .icon {
-      margin-right: 0;
-      width: 18px;
-      height: 18px;
-      color: var(--home-ice);
-      margin-bottom: 8px;
+    .section-heading p {
+      max-width: 620px;
+      margin: 4px 0 0;
+      color: var(--home-muted);
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .module-card {
+      min-height: 122px;
+      padding: 12px;
+      border: 1px solid var(--home-border);
+      border-radius: 5px;
+      background: var(--home-panel);
+    }
+
+    .module-card svg {
+      width: 20px;
+      height: 20px;
+      margin-bottom: 12px;
+      color: var(--home-accent);
+    }
+
+    .module-card h3 {
+      margin: 0;
+      color: var(--home-text);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .module-card p {
+      margin: 7px 0 0;
+      color: var(--home-muted);
+      font-size: 12px;
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      border: 1px solid var(--home-border);
+      border-radius: 5px;
+      overflow: hidden;
+      background: var(--home-panel);
+    }
+
+    .flow-step {
+      min-height: 116px;
+      padding: 12px;
+      border-right: 1px solid var(--home-border);
+      background: var(--home-panel);
+    }
+
+    .flow-step:last-child {
+      border-right: 0;
+    }
+
+    .flow-step small {
+      color: var(--home-muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .flow-step h3 {
+      margin: 10px 0 6px;
+      color: var(--home-text);
+      font-size: 13px;
     }
 
     .flow-step p {
-      margin: 8px 0 0;
-      color: rgba(230, 236, 250, 0.72);
-      font-size: 0.82rem;
-      line-height: 1.45;
+      margin: 0;
+      color: var(--home-muted);
+      font-size: 12px;
     }
 
-    .split {
+    .role-export-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 12px;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+      gap: 10px;
     }
 
-    .panel {
-      border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: var(--home-shell);
+    .role-table,
+    .export-panel {
+      border: 1px solid var(--home-border);
+      border-radius: 5px;
       overflow: hidden;
+      background: var(--home-panel);
     }
 
-    .panel-title {
-      margin: 0;
-      padding: 15px 16px;
-      color: #fff;
-      font-size: 1rem;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      background: linear-gradient(90deg, rgba(239, 179, 110, 0.16), rgba(115, 210, 255, 0.1));
-    }
-
-    .roles-table {
+    .role-row {
       display: grid;
-      grid-template-columns: 1.25fr 1fr 1fr;
+      grid-template-columns: 145px minmax(0, 1fr) minmax(0, 1fr);
+      border-bottom: 1px solid var(--home-border);
     }
 
-    .role-cell {
-      padding: 12px 14px;
-      font-size: 0.83rem;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      color: rgba(233, 236, 249, 0.84);
-      background: rgba(255, 255, 255, 0.02);
+    .role-row:last-child {
+      border-bottom: 0;
     }
 
-    .role-cell.role-head {
-      font: 600 11px/1.2 'IBM Plex Mono', monospace;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--home-copper);
-      background: rgba(255, 255, 255, 0.04);
+    .role-row > div {
+      padding: 10px;
+      border-right: 1px solid var(--home-border);
+      color: var(--home-muted);
     }
 
-    .stack-list {
+    .role-row > div:last-child {
+      border-right: 0;
+    }
+
+    .role-row.header > div {
+      background: var(--home-rail);
+      color: var(--home-text);
+      font-weight: 800;
+    }
+
+    .export-panel {
+      padding: 12px;
+    }
+
+    .export-panel h3 {
+      margin: 0 0 10px;
+      color: var(--home-text);
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    .export-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
       list-style: none;
-      padding: 10px 14px 14px;
-      margin: 0;
-      display: grid;
-      gap: 9px;
     }
 
-    .stack-list li {
-      padding: 11px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.09);
-      background: rgba(255, 255, 255, 0.03);
-      color: rgba(233, 236, 249, 0.82);
-      font-size: 0.84rem;
-      line-height: 1.45;
-    }
-
-    .stack-list strong {
-      display: block;
-      color: #fff;
-      font-size: 0.9rem;
-      margin-bottom: 3px;
-    }
-
-    .cta-banner {
-      margin-top: 44px;
-      border-radius: 18px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: var(--home-grid);
-      background-size: 26px 26px;
-      background-color: rgba(11, 15, 28, 0.92);
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-      padding: 28px;
+    .export-list li {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      gap: 16px;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 9px;
+      border: 1px solid var(--home-border);
+      border-radius: 4px;
+      background: var(--home-surface);
+      color: var(--home-muted);
+      font-weight: 600;
+    }
+
+    .home-footer {
+      margin-top: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       flex-wrap: wrap;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--home-border);
+      border-radius: 5px;
+      background: var(--home-panel);
     }
 
-    .cta-banner h3 {
-      margin: 0;
-      color: #fff;
-      font-size: 1.18rem;
+    .home-footer strong {
+      color: var(--home-text);
     }
 
-    .cta-banner p {
-      margin: 10px 0 0;
-      color: rgba(233, 236, 249, 0.78);
-      font-size: 0.9rem;
-      max-width: 560px;
+    .home-footer span {
+      color: var(--home-muted);
     }
 
-    @keyframes drift {
-      0%,
-      100% {
-        transform: translate3d(0, 0, 0);
-      }
-      50% {
-        transform: translate3d(0, 14px, 0);
-      }
-    }
-
-    @keyframes rise {
-      to {
-        transform: translateY(0);
-        opacity: 1;
-      }
-    }
-
-    @media (max-width: 1080px) {
-      .feature-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    @media (max-width: 1180px) {
+      .board-layout {
+        grid-template-columns: 160px minmax(0, 1fr);
       }
 
-      .hero {
-        grid-template-columns: 1fr;
-        padding: 30px;
+      .board-aside {
+        grid-column: 1 / -1;
+        border-left: 0;
+        border-top: 1px solid var(--home-border);
       }
 
-      .flow {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      .question-list {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
-      .visual-strip {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .flow-step:not(:last-child)::after {
-        display: none;
+      .module-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
     }
 
-    @media (max-width: 760px) {
-      .home-header {
-        height: auto;
-        padding: 10px 14px;
+    @media (max-width: 820px) {
+      .home-shell {
+        width: min(100% - 20px, 1440px);
       }
 
-      .home-title {
-        display: none;
+      .home-topbar,
+      .home-titlebar,
+      .board-toolbar,
+      .section-heading,
+      .home-footer {
+        align-items: stretch;
+        flex-direction: column;
       }
 
-      .home-content {
-        padding: 96px 14px 54px;
-      }
-
-      .home-nav {
-        width: 100%;
-      }
-
-      .home-nav .btn {
-        flex: 1 1 auto;
-        text-align: center;
-        justify-content: center;
-      }
-
-      .hero {
-        padding: 22px;
-      }
-
-      .hero-ctas {
+      .home-titlebar {
         display: grid;
         grid-template-columns: 1fr;
       }
 
-      .kpi-grid,
-      .roles-table,
-      .split,
-      .feature-grid,
-      .flow {
+      .home-title-actions,
+      .home-nav,
+      .board-tags {
+        justify-content: stretch;
+      }
+
+      .home-btn {
+        flex: 1 1 auto;
+      }
+
+      .board-layout {
         grid-template-columns: 1fr;
       }
 
-      .visual-strip {
+      .board-rail {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        border-right: 0;
+        border-bottom: 1px solid var(--home-border);
+      }
+
+      .question-list,
+      .module-grid,
+      .flow-grid,
+      .role-export-grid {
         grid-template-columns: 1fr;
       }
 
-      .role-cell {
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      .flow-step {
+        border-right: 0;
+        border-bottom: 1px solid var(--home-border);
+      }
+
+      .flow-step:last-child {
+        border-bottom: 0;
+      }
+
+      .role-row {
+        grid-template-columns: 1fr;
+      }
+
+      .role-row > div {
+        border-right: 0;
+        border-bottom: 1px solid var(--home-border);
+      }
+
+      .role-row > div:last-child {
+        border-bottom: 0;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .home-brand span {
+        display: none;
+      }
+
+      .home-titlebar h1 {
+        font-size: 30px;
+      }
+
+      .board-rail {
+        grid-template-columns: 1fr;
       }
     }
   </style>
 </head>
-<body>
-  <header class="home-header">
-    <div class="home-logo-container">
-      <img src="./assets/logo.png" alt="Logo AO Link" class="home-logo" onerror="this.style.display='none'" />
-      <h1 class="home-title">AO Link</h1>
-    </div>
-    <nav class="home-nav">
-      <a href="/app" id="nav-app-link" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Acceder a l'application</a>
-      <a href="/login" id="nav-login-link" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>Connexion</a>
-      <button id="nav-logout-btn" class="btn ghost" style="display:none">Deconnexion</button>
+<body class="home-page">
+  <header class="home-topbar">
+    <a class="home-brand" href="/" aria-label="Accueil AO Link">
+      <img src="./assets/logo.png" alt="AO Link" onerror="this.style.display='none'" />
+      <span>AO Link</span>
+    </a>
+    <nav class="home-nav" aria-label="Navigation principale">
+      <a href="#modules" class="home-btn">
+        <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>
+        Modules
+      </a>
+      <a href="/login" id="nav-login-link" class="home-btn primary">
+        <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>
+        Connexion
+      </a>
+      <a href="/app" id="nav-app-link" class="home-btn primary" hidden>
+        <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>
+        Ouvrir l'application
+      </a>
+      <button id="nav-logout-btn" class="home-btn" type="button" hidden>
+        <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-x"></use></svg>
+        Deconnexion
+      </button>
     </nav>
   </header>
 
-  <main class="home-content">
-    <section class="hero">
+  <main class="home-shell">
+    <section class="home-titlebar" aria-labelledby="home-title">
       <div>
-        <p class="hero-eyebrow">Tableau d'analyse des offres</p>
-        <h2 class="hero-title">Pilotez vos AO de la collecte d'offres jusqu'a la decision finale.</h2>
-        <div class="hero-ctas">
-          <a href="/app" id="hero-app-link" class="btn" style="display:none"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Acceder a l'application</a>
-          <a href="/login" id="hero-login-link" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Commencer maintenant</a>
-          <a href="#modules" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-book"></use></svg>Voir les modules</a>
+        <p class="home-kicker">Tableau d'analyse d'offres</p>
+        <h1 id="home-title">AO Link</h1>
+        <p>Un espace de travail pour importer les DPGF, comparer les offres par lot et par round, produire les questions RAO et sortir les exports de decision.</p>
+      </div>
+      <div class="home-title-actions">
+        <a href="/login" id="hero-login-link" class="home-btn primary">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>
+          Se connecter
+        </a>
+        <a href="/app" id="hero-app-link" class="home-btn primary" hidden>
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>
+          Reprendre le dossier
+        </a>
+        <a href="#workflow" class="home-btn">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>
+          Flux AO
+        </a>
+      </div>
+    </section>
+
+    <section class="product-board" aria-label="Apercu de l'outil AO Link">
+      <div class="board-toolbar">
+        <div class="board-project">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>
+          Projet Lycee Nord - Lot CVC
+          <small>Tour 2 - Analyse entreprise</small>
         </div>
-        <div class="hero-proof">
-          <span>MOE vs Entreprises</span>
-          <span>Imports Excel robustes</span>
-          <span>RAO et exports Word/Excel</span>
+        <div class="board-tags">
+          <span class="tag"><strong>Edition</strong> tableur</span>
+          <span class="tag"><strong>Auto-save</strong> actif</span>
+          <span class="tag"><strong>RAO</strong> 14 questions</span>
         </div>
       </div>
 
-      <aside class="hero-panel">
-        <h3>Ce que la plateforme structure</h3>
-        <p>Un seul espace pour tout le cycle AO.</p>
-        <div class="kpi-grid">
-          <article class="kpi">
-            <p class="kpi-value">Projets + lots</p>
-          </article>
-          <article class="kpi">
-            <p class="kpi-value">Rounds</p>
-          </article>
-          <article class="kpi">
-            <p class="kpi-value">Questions RAO</p>
-          </article>
-          <article class="kpi">
-            <p class="kpi-value">Roles securises</p>
-          </article>
+      <div class="board-layout">
+        <aside class="board-rail" aria-label="Modules">
+          <div class="rail-item active">
+            <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>
+            Donnees
+          </div>
+          <div class="rail-item">
+            <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>
+            Questions
+          </div>
+          <div class="rail-item">
+            <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>
+            Config
+          </div>
+          <div class="rail-item">
+            <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>
+            Rounds
+          </div>
+          <div class="rail-item">
+            <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>
+            Exports
+          </div>
+        </aside>
+
+        <section class="board-main">
+          <div class="sheet-tabs" aria-label="Vues du lot">
+            <span class="sheet-tab active">Comparatif</span>
+            <span class="sheet-tab">Edition</span>
+            <span class="sheet-tab">Options</span>
+            <span class="sheet-tab">Simulation</span>
+          </div>
+          <div class="sheet-wrap">
+            <table class="preview-table" aria-label="Exemple de tableau comparatif">
+              <thead>
+                <tr>
+                  <th>Num</th>
+                  <th>Designation</th>
+                  <th>Unite</th>
+                  <th class="amount">MOE</th>
+                  <th class="amount">Entreprise A</th>
+                  <th class="amount">Entreprise B</th>
+                  <th>Ecart retenu</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>01.01</td>
+                  <td>Centrale de traitement d'air</td>
+                  <td>u</td>
+                  <td class="amount">42 500</td>
+                  <td class="amount">39 880</td>
+                  <td class="amount">45 120</td>
+                  <td class="delta-good">-6.2%</td>
+                </tr>
+                <tr>
+                  <td>01.02</td>
+                  <td>Reseau gaine galvanisee</td>
+                  <td>ml</td>
+                  <td class="amount">18 640</td>
+                  <td class="amount">19 420</td>
+                  <td class="amount">17 960</td>
+                  <td class="delta-good">-3.6%</td>
+                </tr>
+                <tr>
+                  <td>01.03</td>
+                  <td>Diffuseurs et bouches</td>
+                  <td>ens</td>
+                  <td class="amount">9 800</td>
+                  <td class="amount">13 250</td>
+                  <td class="amount">9 610</td>
+                  <td class="delta-risk">+35.2%</td>
+                </tr>
+                <tr>
+                  <td>01.04</td>
+                  <td>Regulation et mise en service</td>
+                  <td>fft</td>
+                  <td class="amount">11 400</td>
+                  <td class="amount">-</td>
+                  <td class="amount">11 900</td>
+                  <td class="delta-risk">Reponse oubliee</td>
+                </tr>
+                <tr>
+                  <td>Total</td>
+                  <td>Lot CVC</td>
+                  <td></td>
+                  <td class="amount">82 340</td>
+                  <td class="amount">72 550</td>
+                  <td class="amount">84 590</td>
+                  <td class="delta-good">Entreprise A</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="board-aside">
+          <h2 class="aside-title">Questions RAO detectees</h2>
+          <ul class="question-list">
+            <li>
+              <strong>Quantite tres haute</strong>
+              <span>Verifier l'ecart sur les diffuseurs.</span>
+            </li>
+            <li>
+              <strong>Reponse oubliee</strong>
+              <span>Demander le chiffrage de la regulation.</span>
+            </li>
+            <li>
+              <strong>Unite a confirmer</strong>
+              <span>Reseau gaine: ml attendu.</span>
+            </li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section id="modules" class="home-section">
+      <div class="section-heading">
+        <div>
+          <h2>Modules utiles au quotidien</h2>
+          <p>La page d'accueil donne le vocabulaire de l'application, sans faire semblant d'etre autre chose qu'un outil de travail.</p>
         </div>
-        <div class="visual-strip" aria-label="Apercus visuels du produit">
-          <article class="visual-card">
-            <img src="./assets/background.jpg" alt="Vue projet et lots" loading="lazy" />
-            <span class="visual-caption">Projets</span>
-          </article>
-          <article class="visual-card">
-            <img src="./assets/background.jpg" alt="Vue comparatif des offres" loading="lazy" style="object-position:center 42%" />
-            <span class="visual-caption">Comparatif</span>
-          </article>
-          <article class="visual-card">
-            <img src="./assets/logo.png" alt="Logo AO Link" loading="lazy" style="object-fit:contain;padding:26px;background:radial-gradient(circle at center, rgba(115,210,255,0.2), rgba(10,12,21,0.9))" />
-            <span class="visual-caption">Exports</span>
-          </article>
+      </div>
+      <div class="module-grid">
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>
+          <h3>Projets et lots</h3>
+          <p>Structure par projet, phase, lot, macrolot et options.</p>
+        </article>
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>
+          <h3>Imports Excel</h3>
+          <p>Mapping DPGF, offres entreprises et multi-feuilles.</p>
+        </article>
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-edit"></use></svg>
+          <h3>Edition tableur</h3>
+          <p>Saisie rapide, selection, copier-coller et sauvegarde.</p>
+        </article>
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>
+          <h3>Comparatifs</h3>
+          <p>MOE, offres, ecarts, reponses oubliees et simulations.</p>
+        </article>
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>
+          <h3>Questions RAO</h3>
+          <p>Generation selon les seuils et suivi des validations.</p>
+        </article>
+        <article class="module-card">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-shield"></use></svg>
+          <h3>Roles</h3>
+          <p>Admin, responsable, lecteur et entreprise.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="workflow" class="home-section">
+      <div class="section-heading">
+        <div>
+          <h2>Flux AO</h2>
+          <p>Le parcours de reference reste visible: importer, comparer, questionner, arbitrer.</p>
         </div>
+      </div>
+      <div class="flow-grid">
+        <article class="flow-step">
+          <small>01</small>
+          <h3>Creer le dossier</h3>
+          <p>Projet, tours, lots, options et droits d'acces.</p>
+        </article>
+        <article class="flow-step">
+          <small>02</small>
+          <h3>Importer la base</h3>
+          <p>DPGF MOE avec quantites, prix et commentaires.</p>
+        </article>
+        <article class="flow-step">
+          <small>03</small>
+          <h3>Integrer les offres</h3>
+          <p>Fichiers entreprises, postes ajoutes et unites.</p>
+        </article>
+        <article class="flow-step">
+          <small>04</small>
+          <h3>Analyser les ecarts</h3>
+          <p>Comparatif, seuils, questions et simulations.</p>
+        </article>
+        <article class="flow-step">
+          <small>05</small>
+          <h3>Exporter</h3>
+          <p>Excel, Word, RAO et supports de decision.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="home-section role-export-grid">
+      <div class="role-table" aria-label="Roles applicatifs">
+        <div class="role-row header">
+          <div>Role</div>
+          <div>Ce qu'il fait</div>
+          <div>Ce qu'il voit</div>
+        </div>
+        <div class="role-row">
+          <div>Admin</div>
+          <div>Parametre et supervise</div>
+          <div>Tous les projets</div>
+        </div>
+        <div class="role-row">
+          <div>Responsable</div>
+          <div>Pilote l'analyse</div>
+          <div>Dossiers partages ou crees</div>
+        </div>
+        <div class="role-row">
+          <div>Lecteur</div>
+          <div>Consulte</div>
+          <div>Lecture seule</div>
+        </div>
+        <div class="role-row">
+          <div>Entreprise</div>
+          <div>Saisit son offre</div>
+          <div>Perimetre limite a son offre</div>
+        </div>
+      </div>
+
+      <aside class="export-panel">
+        <h3>Sorties attendues</h3>
+        <ul class="export-list">
+          <li><svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Tableaux comparatifs Excel</li>
+          <li><svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-mail"></use></svg>Fiches questions a envoyer</li>
+          <li><svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>Analyse par lot et par round</li>
+          <li><svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-copy"></use></svg>Supports de revue et arbitrage</li>
+        </ul>
       </aside>
     </section>
 
-    <section id="modules" class="section">
-      <div class="section-head">
-        <p class="section-label">Modules coeur</p>
-        <h2 class="section-title">Une interface alignee sur le vrai workflow AO.</h2>
-      </div>
-
-      <div class="feature-grid">
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg></div>
-          <h3 class="feature-title">Projets, lots et options</h3>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg></div>
-          <h3 class="feature-title">Import d'offres Excel</h3>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg></div>
-          <h3 class="feature-title">Comparaison par round</h3>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg></div>
-          <h3 class="feature-title">Questions RAO automatiques</h3>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg></div>
-          <h3 class="feature-title">Exports de decision</h3>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg></div>
-          <h3 class="feature-title">Securite integree</h3>
-        </article>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <p class="section-label">Parcours utilisateur</p>
-        <h2 class="section-title">Schema du flux AO</h2>
-      </div>
-      <div class="flow">
-        <article class="flow-step">
-          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-folder"></use></svg>
-          <small>Etape 01</small>
-          <h3>Creer le projet</h3>
-        </article>
-        <article class="flow-step">
-          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>
-          <small>Etape 02</small>
-          <h3>Importer les offres</h3>
-        </article>
-        <article class="flow-step">
-          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg>
-          <small>Etape 03</small>
-          <h3>Comparer par round</h3>
-        </article>
-        <article class="flow-step">
-          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-list"></use></svg>
-          <small>Etape 04</small>
-          <h3>Generer les RAO</h3>
-        </article>
-        <article class="flow-step">
-          <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-chart"></use></svg>
-          <small>Etape 05</small>
-          <h3>Exporter et decider</h3>
-        </article>
-      </div>
-    </section>
-
-    <section class="section split">
-      <article class="panel">
-        <h3 class="panel-title">Matrice des roles</h3>
-        <div class="roles-table">
-          <div class="role-cell role-head">Role</div>
-          <div class="role-cell role-head">Perimetre</div>
-          <div class="role-cell role-head">Visibilite</div>
-
-          <div class="role-cell">Admin</div>
-          <div class="role-cell">Administration globale</div>
-          <div class="role-cell">Tous projets et utilisateurs</div>
-
-          <div class="role-cell">Responsable</div>
-          <div class="role-cell">Pilotage complet du dossier</div>
-          <div class="role-cell">Analyses + exports</div>
-
-          <div class="role-cell">Lecteur</div>
-          <div class="role-cell">Consultation</div>
-          <div class="role-cell">Lecture seule</div>
-
-          <div class="role-cell">Entreprise</div>
-          <div class="role-cell">Saisie de son offre</div>
-          <div class="role-cell">Sans acces MOE ni concurrents</div>
-        </div>
-      </article>
-
-      <article class="panel">
-        <h3 class="panel-title">Resultats concrets</h3>
-        <ul class="stack-list">
-          <li>
-            <strong>Un seul espace de travail</strong>
-          </li>
-          <li>
-            <strong>Comparaison immediate</strong>
-          </li>
-          <li>
-            <strong>Questions RAO prêtes plus vite</strong>
-          </li>
-          <li>
-            <strong>Exports exploitables en reunion</strong>
-          </li>
-        </ul>
-      </article>
-    </section>
-
-    <section class="cta-banner">
+    <section class="home-footer">
       <div>
-        <h3>AO Link met l'analyse d'offres au meme niveau que vos exigences metier.</h3>
+        <strong>AO Link</strong>
+        <span> - l'outil de comparaison des offres, pense pour les dossiers techniques.</span>
       </div>
-      <div class="hero-ctas" style="margin-top:0">
-        <a href="/login" class="btn home-button-solid"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>Aller a la connexion</a>
-        <a href="/app" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-home"></use></svg>Acceder a l'app</a>
+      <div class="home-title-actions">
+        <a href="/login" class="home-btn primary">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>
+          Connexion
+        </a>
+        <a href="/app" class="home-btn">
+          <svg class="home-icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg>
+          Application
+        </a>
       </div>
     </section>
   </main>
 
   <script>
-    function checkAuth() {
-      const cookies = document.cookie.split(';');
-      const authCookie = cookies.find(c => c.trim().startsWith('auth='));
-      const hasAuth = authCookie && authCookie.split('=')[1] && authCookie.split('=')[1] !== 'undefined' && authCookie.split('=')[1] !== 'null';
+    const showEl = (id, show) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.hidden = !show;
+    };
 
-      if (hasAuth) {
-        document.getElementById('nav-app-link').style.display = 'inline-block';
-        document.getElementById('nav-logout-btn').style.display = 'inline-block';
-        document.getElementById('nav-login-link').style.display = 'none';
-        document.getElementById('hero-app-link').style.display = 'inline-block';
-        document.getElementById('hero-login-link').style.display = 'none';
-      } else {
-        document.getElementById('nav-app-link').style.display = 'none';
-        document.getElementById('nav-logout-btn').style.display = 'none';
-        document.getElementById('nav-login-link').style.display = 'inline-block';
-        document.getElementById('hero-app-link').style.display = 'none';
-        document.getElementById('hero-login-link').style.display = 'inline-block';
-      }
+    function getCookieValue(name) {
+      return document.cookie
+        .split(';')
+        .map(part => part.trim())
+        .find(part => part.startsWith(name + '='))
+        ?.slice(name.length + 1);
     }
 
-    document.getElementById('nav-logout-btn').addEventListener('click', async () => {
+    function hasAuthToken() {
+      const cookieToken = getCookieValue('auth');
+      const localToken = localStorage.getItem('token');
+      return Boolean(
+        (cookieToken && cookieToken !== 'undefined' && cookieToken !== 'null') ||
+        (localToken && localToken !== 'undefined' && localToken !== 'null')
+      );
+    }
+
+    function updateAuthLinks() {
+      const isAuthed = hasAuthToken();
+      showEl('nav-app-link', isAuthed);
+      showEl('hero-app-link', isAuthed);
+      showEl('nav-logout-btn', isAuthed);
+      showEl('nav-login-link', !isAuthed);
+      showEl('hero-login-link', !isAuthed);
+    }
+
+    document.getElementById('nav-logout-btn')?.addEventListener('click', async () => {
       try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          credentials: 'include'
-        });
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      } catch (err) {
+        console.error('Erreur deconnexion', err);
+      } finally {
         localStorage.removeItem('token');
         window.location.reload();
-      } catch (e) {
-        console.error('Erreur deconnexion', e);
       }
     });
 
-    checkAuth();
-
-    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-      anchor.addEventListener('click', function (e) {
-        e.preventDefault();
-        const target = document.querySelector(this.getAttribute('href'));
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      });
-    });
+    updateAuthLinks();
   </script>
 </body>
 </html>

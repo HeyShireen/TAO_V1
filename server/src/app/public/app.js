@@ -41,6 +41,13 @@ let selectedRoundOptions = new Set();
 let questionsEditorAutoRefreshInterval = null; // Pour l'auto-actualisation de l'éditeur
 const undoStack = [];
 const redoStack = [];
+let sheetSelection = {
+  anchor: null,
+  focus: null,
+  explicit: false,
+  mouseDown: false,
+  dragging: false
+};
 const DEFAULT_SIMULATIONS = 3;
 let roundsSimulations = [];
 let pendingEmailExport = null;
@@ -6341,6 +6348,7 @@ function renderSheetInitial(){
   const head = qs('#sheet-head');
   const body = qs('#sheet-body');
   head.innerHTML = ''; body.innerHTML = '';
+  clearSheetSelection();
 
   // top header: base (rowSpan=2) + groupes
   const tr1 = document.createElement('tr');
@@ -6587,7 +6595,7 @@ function recalcRowAmountsRow(r){
 }
 
 /** focus cellule (ajoute lignes si nécessaire), saute readonly */
-function focusCell(r, c){
+function focusCell(r, c, options = {}){
   if (r < 0) r = 0;
   if (c < 0) c = 0;
   ensureRows(r+1);
@@ -6602,10 +6610,181 @@ function focusCell(r, c){
     td.focus();
     const range = document.createRange(); range.selectNodeContents(td); range.collapse(false);
     const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    if (!options.keepSelection) {
+      setSheetSelectionRange({ r, c }, { r, c }, false);
+    }
   }
 }
 
 /* ====== Délégation d’événements (pas de listeners par cellule) ====== */
+function pointFromSheetCell(td){
+  if (!td || !td.matches?.('#sheet-body td[data-r][data-c]')) return null;
+  const r = Number(td.dataset.r);
+  const c = Number(td.dataset.c);
+  if (!Number.isInteger(r) || !Number.isInteger(c)) return null;
+  return { r, c };
+}
+
+function sameSheetPoint(a, b){
+  return !!a && !!b && a.r === b.r && a.c === b.c;
+}
+
+function getSheetSelectionRange(){
+  if (!sheetSelection.anchor || !sheetSelection.focus) return null;
+  return {
+    minR: Math.min(sheetSelection.anchor.r, sheetSelection.focus.r),
+    maxR: Math.max(sheetSelection.anchor.r, sheetSelection.focus.r),
+    minC: Math.min(sheetSelection.anchor.c, sheetSelection.focus.c),
+    maxC: Math.max(sheetSelection.anchor.c, sheetSelection.focus.c)
+  };
+}
+
+function sheetSelectionContainsPoint(point, range = getSheetSelectionRange()){
+  if (!point || !range) return false;
+  return point.r >= range.minR && point.r <= range.maxR && point.c >= range.minC && point.c <= range.maxC;
+}
+
+function sheetSelectionIsRange(){
+  const range = getSheetSelectionRange();
+  if (!range || !sheetSelection.explicit) return false;
+  return range.minR !== range.maxR || range.minC !== range.maxC;
+}
+
+function clearSheetSelection(){
+  qsa('#sheet-body td.sheet-cell-selected, #sheet-body td.sheet-cell-active').forEach(td => {
+    td.classList.remove('sheet-cell-selected', 'sheet-cell-active');
+  });
+  qs('#sheet-table')?.classList.remove('is-selecting');
+  sheetSelection = { anchor:null, focus:null, explicit:false, mouseDown:false, dragging:false };
+}
+
+function setSheetSelectionRange(anchor, focus, explicit = false){
+  if (!anchor || !focus) {
+    clearSheetSelection();
+    return;
+  }
+
+  sheetSelection.anchor = { r: anchor.r, c: anchor.c };
+  sheetSelection.focus = { r: focus.r, c: focus.c };
+  sheetSelection.explicit = !!explicit;
+
+  qsa('#sheet-body td.sheet-cell-selected, #sheet-body td.sheet-cell-active').forEach(td => {
+    td.classList.remove('sheet-cell-selected', 'sheet-cell-active');
+  });
+
+  const range = getSheetSelectionRange();
+  if (!range) return;
+  for (let r = range.minR; r <= range.maxR; r++) {
+    for (let c = range.minC; c <= range.maxC; c++) {
+      const td = getCell(r, c);
+      if (!td) continue;
+      if (sheetSelection.explicit) td.classList.add('sheet-cell-selected');
+      if (r === focus.r && c === focus.c) td.classList.add('sheet-cell-active');
+    }
+  }
+}
+
+function getSheetClipboardValue(r, c){
+  const key = colModel[c]?.key;
+  if (!key) return '';
+  const row = sheetRows[r];
+  if (key.endsWith('.mt') || key === 'moe.mt') return valueForCell(row, key);
+  const td = getCell(r, c);
+  return (td?.textContent ?? valueForCell(row, key) ?? '').replace(/\u00A0/g, ' ');
+}
+
+function sheetSelectionToClipboardText(range = getSheetSelectionRange()){
+  if (!range) return '';
+  const rows = [];
+  for (let r = range.minR; r <= range.maxR; r++) {
+    const cells = [];
+    for (let c = range.minC; c <= range.maxC; c++) {
+      cells.push(String(getSheetClipboardValue(r, c)).trim());
+    }
+    rows.push(cells.join('\t'));
+  }
+  return rows.join('\n');
+}
+
+function normalizeSheetPastedValue(colKey, value){
+  let val = String(value ?? '').trim();
+  const isNumericCol = colKey.includes('qty') || colKey.includes('pu');
+  if (isNumericCol && val !== '') {
+    const parsed = parseNum(val);
+    if (Number.isFinite(parsed)) val = String(parsed);
+  }
+  return val;
+}
+
+function applySheetClipboardGrid(startR, startC, grid){
+  ensureRows(startR + grid.length);
+  let wrote = false;
+  let maxR = startR;
+  let maxC = startC;
+
+  for (let i = 0; i < grid.length; i++) {
+    let col = startC;
+    for (let j = 0; j < grid[i].length; j++) {
+      let guard = 0;
+      while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
+      if (col >= colModel.length) break;
+
+      const cellTarget = getCell(startR + i, col);
+      if (!cellTarget) break;
+      const val = normalizeSheetPastedValue(colModel[col]?.key || '', grid[i][j]);
+      const prev = cellTarget.textContent;
+
+      setCell(startR + i, col, val, true);
+      cellTarget.dataset.prev = val;
+      if (prev !== val) {
+        pushUndo({ r:startR + i, c:col, key: colModel[col].key, prev, next: val });
+        redoStack.length = 0;
+      }
+      wrote = true;
+      maxR = Math.max(maxR, startR + i);
+      maxC = Math.max(maxC, col);
+      col++;
+    }
+    recalcRowAmountsRow(startR + i);
+  }
+
+  if (wrote) setSheetSelectionRange({ r:startR, c:startC }, { r:maxR, c:maxC }, true);
+}
+
+function clearSheetSelectionCells(range = getSheetSelectionRange()){
+  if (!range) return;
+  const touchedRows = new Set();
+
+  for (let r = range.minR; r <= range.maxR; r++) {
+    for (let c = range.minC; c <= range.maxC; c++) {
+      if (!colModel[c]?.editable) continue;
+      const td = getCell(r, c);
+      if (!td) continue;
+      const prev = td.textContent;
+      if (prev === '') continue;
+      setCell(r, c, '', true);
+      td.dataset.prev = '';
+      pushUndo({ r, c, key: colModel[c].key, prev, next: '' });
+      redoStack.length = 0;
+      touchedRows.add(r);
+    }
+  }
+
+  touchedRows.forEach(r => recalcRowAmountsRow(r));
+}
+
+function writeSheetSelectionClipboard(e, cut = false){
+  if (!sheetSelectionIsRange()) return false;
+  const range = getSheetSelectionRange();
+  const text = sheetSelectionToClipboardText(range);
+  if (e.clipboardData) {
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  }
+  if (cut) clearSheetSelectionCells(range);
+  return true;
+}
+
 let delegatesAttached = false;
 function attachSheetDelegates(){
   if (delegatesAttached) return;
@@ -6614,6 +6793,10 @@ function attachSheetDelegates(){
   body.addEventListener('focusin', (e) => {
     const td = e.target.closest('td'); if (!td) return;
     td.dataset.prev = td.textContent;
+    const point = pointFromSheetCell(td);
+    if (point && !sheetSelection.explicit && !sheetSelection.dragging) {
+      setSheetSelectionRange(point, point, false);
+    }
   });
 
   // commit & undo tracking à la sortie de cellule
@@ -6637,10 +6820,16 @@ function attachSheetDelegates(){
   body.addEventListener('keydown', (e) => {
     const td = e.target.closest('td'); if (!td) return;
     const r = Number(td.dataset.r), c = Number(td.dataset.c);
+    const ctrl = e.ctrlKey || e.metaKey;
 
     // Undo/Redo
-    if (e.ctrlKey && (e.key==='z' || e.key==='Z')) { e.preventDefault(); undo(); return; }
-    if (e.ctrlKey && (e.key==='y' || (e.shiftKey && (e.key==='Z'||e.key==='z')))) { e.preventDefault(); redo(); return; }
+    if (ctrl && (e.key==='z' || e.key==='Z') && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (ctrl && (e.key==='y' || (e.shiftKey && (e.key==='Z'||e.key==='z')))) { e.preventDefault(); redo(); return; }
+    if (e.key === 'Escape' && sheetSelection.explicit) {
+      e.preventDefault();
+      setSheetSelectionRange({ r, c }, { r, c }, false);
+      return;
+    }
 
     const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
     if (!navKeys.includes(e.key)) return;
@@ -6652,14 +6841,68 @@ function attachSheetDelegates(){
 
     let nr = r, nc = c;
     if (e.key === 'ArrowLeft')  nc = Math.max(0, c - 1);
-    if (e.key === 'ArrowRight') nc = c + 1;
+    if (e.key === 'ArrowRight') nc = Math.min(colModel.length - 1, c + 1);
     if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
     if (e.key === 'ArrowDown')  nr = r + 1;
     if (e.key === 'Enter')      nr = r + 1;
     if (e.key === 'Tab')        nc = c + (e.shiftKey ? -1 : 1);
 
+    if (e.shiftKey && e.key.startsWith('Arrow')) {
+      e.preventDefault();
+      ensureRows(nr + 1);
+      const anchor = sheetSelection.anchor || { r, c };
+      setSheetSelectionRange(anchor, { r:nr, c:nc }, true);
+      getCell(nr, nc)?.focus({ preventScroll:true });
+      window.getSelection()?.removeAllRanges();
+      return;
+    }
+
     e.preventDefault();
     focusCell(nr, nc);
+  }, true);
+
+  body.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    const td = e.target.closest('#sheet-body td[data-r][data-c]');
+    const point = pointFromSheetCell(td);
+    if (!point) return;
+
+    if (e.shiftKey && sheetSelection.anchor) {
+      e.preventDefault();
+      setSheetSelectionRange(sheetSelection.anchor, point, true);
+      td.focus({ preventScroll:true });
+      window.getSelection()?.removeAllRanges();
+      return;
+    }
+
+    sheetSelection.mouseDown = true;
+    sheetSelection.dragging = false;
+    setSheetSelectionRange(point, point, false);
+  });
+
+  body.addEventListener('mouseover', (e) => {
+    if (!sheetSelection.mouseDown || e.buttons !== 1 || !sheetSelection.anchor) return;
+    const td = e.target.closest('#sheet-body td[data-r][data-c]');
+    const point = pointFromSheetCell(td);
+    if (!point || sameSheetPoint(point, sheetSelection.focus)) return;
+
+    e.preventDefault();
+    sheetSelection.dragging = true;
+    qs('#sheet-table')?.classList.add('is-selecting');
+    setSheetSelectionRange(sheetSelection.anchor, point, true);
+    window.getSelection()?.removeAllRanges();
+  });
+
+  body.addEventListener('selectstart', (e) => {
+    if (sheetSelection.mouseDown && sheetSelection.dragging) e.preventDefault();
+  });
+
+  body.addEventListener('copy', (e) => {
+    writeSheetSelectionClipboard(e, false);
+  }, true);
+
+  body.addEventListener('cut', (e) => {
+    writeSheetSelectionClipboard(e, true);
   }, true);
 
   // collage multi-cellules (Excel / CSV ; ; , auto)
@@ -6667,18 +6910,21 @@ function attachSheetDelegates(){
     const td = e.target.closest('td'); if (!td) return;
     e.preventDefault();
 
-    const startR = Number(td.dataset.r);
-    const startC = Number(td.dataset.c);
+    const point = pointFromSheetCell(td);
+    const selectedRange = getSheetSelectionRange();
+    const useSelectionStart = sheetSelection.explicit && sheetSelectionContainsPoint(point, selectedRange);
+    const startR = useSelectionStart ? selectedRange.minR : Number(td.dataset.r);
+    const startC = useSelectionStart ? selectedRange.minC : Number(td.dataset.c);
 
     const text = e.clipboardData.getData('text/plain') || '';
+    if (!text) return;
     const delim = detectDelimiter(text);
     // Garder toutes les lignes, même vides, pour préserver l'espacement DPGF
     const lines = text.replace(/\r/g,'').split('\n');
     if (!lines.length) return;
     const grid = lines.map(l => l.split(delim));
-
-    ensureRows(startR + grid.length);
-
+    applySheetClipboardGrid(startR, startC, grid);
+    return;
     for (let i = 0; i < grid.length; i++) {
       let col = startC;
       for (let j = 0; j < grid[i].length; j++) {
@@ -6732,6 +6978,17 @@ function attachSheetDelegates(){
     
     deleteRow(rIndex);
   });
+
+  document.addEventListener('mouseup', () => {
+    sheetSelection.mouseDown = false;
+    sheetSelection.dragging = false;
+    qs('#sheet-table')?.classList.remove('is-selecting');
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('#sheet-table') || e.target.closest('#sheet-actions')) return;
+    clearSheetSelection();
+  }, true);
 
   delegatesAttached = true;
 }
@@ -7140,6 +7397,7 @@ function renderSheetBindings(){
 
   // bascule modes
   qs('#mode-compare')?.addEventListener('click', () => {
+    clearSheetSelection();
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
     hide('#options-sheet-view'); show('#options-compare-view');
     qs('#mode-compare').classList.add('active-mode'); qs('#mode-edit').classList.remove('active-mode');
