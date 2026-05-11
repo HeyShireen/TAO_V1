@@ -284,5 +284,34 @@
   });
 
   // Démarrage: afficher login par défaut
+  qs('#forgot-password-link')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    msgEl.textContent = '';
+
+    const email = (emailEl?.value || prompt('Entrez votre adresse email pour recevoir un lien de reinitialisation :') || '').trim();
+    if (!email) return;
+
+    msgEl.textContent = 'Envoi de l\'email...';
+
+    try {
+      const resp = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        msgEl.textContent = data?.error || 'Impossible d\'envoyer l\'email de reinitialisation';
+        return;
+      }
+
+      msgEl.textContent = data?.message || 'Si un compte existe avec cet email, un lien de reinitialisation a ete envoye.';
+    } catch (err) {
+      msgEl.textContent = 'Erreur reseau';
+    }
+  });
+
   showLogin();
 })();

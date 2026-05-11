@@ -402,8 +402,9 @@ router.get('/reset-password/:token', async (req, res) => {
           <h2>🔐 Nouveau mot de passe</h2>
           <p style="color:#666; margin-bottom:20px;">Compte : <strong>${reset.email}</strong></p>
           <form id="resetForm">
-            <input type="password" id="password" placeholder="Nouveau mot de passe (min. 8 caractères)" required minlength="8">
-            <input type="password" id="confirmPassword" placeholder="Confirmer le mot de passe" required minlength="8">
+            <input type="password" id="password" placeholder="Nouveau mot de passe (min. 12 caracteres)" required minlength="12">
+            <input type="password" id="confirmPassword" placeholder="Confirmer le mot de passe" required minlength="12">
+            <p style="color:#666; font-size:0.9em; text-align:left; margin:8px 0 0;">Minimum 12 caracteres, une majuscule, un chiffre et un caractere special.</p>
             <button type="submit">Réinitialiser le mot de passe</button>
           </form>
           <div id="message"></div>
@@ -420,8 +421,8 @@ router.get('/reset-password/:token', async (req, res) => {
               return;
             }
             
-            if (password.length < 8) {
-              message.innerHTML = '<p class="error">Le mot de passe doit contenir au moins 8 caractères</p>';
+            if (password.length < 12) {
+              message.innerHTML = '<p class="error">Le mot de passe doit contenir au moins 12 caracteres</p>';
               return;
             }
             
