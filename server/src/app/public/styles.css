@@ -1535,10 +1535,10 @@ body.demo-tutorial [data-demo-tip] {
 body.demo-tutorial [data-demo-tip]::after {
   content: "?";
   position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1546,19 +1546,14 @@ body.demo-tutorial [data-demo-tip]::after {
   border: 1px solid var(--accent);
   background: var(--card);
   color: var(--accent);
-  font: 700 10px/1 'IBM Plex Mono', monospace;
+  font: 700 9px/1 'IBM Plex Mono', monospace;
   box-shadow: var(--shadow-soft);
   pointer-events: none;
   z-index: 20;
 }
 
-body.demo-tutorial [data-demo-tip]::before {
-  content: attr(data-demo-tip);
-  position: absolute;
-  top: calc(100% + 10px);
-  left: 0;
-  width: max-content;
-  max-width: min(280px, 72vw);
+#demo-tip-popover {
+  position: fixed;
   padding: 8px 10px;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -1575,15 +1570,14 @@ body.demo-tutorial [data-demo-tip]::before {
   z-index: 1400;
 }
 
-body.demo-tutorial [data-demo-tip]:hover::before,
-body.demo-tutorial [data-demo-tip]:focus-visible::before {
+#demo-tip-popover.is-visible {
   opacity: 1;
   transform: translateY(0);
 }
 
 @media (max-width: 760px) {
   body.demo-tutorial [data-demo-tip]::after,
-  body.demo-tutorial [data-demo-tip]::before {
+  #demo-tip-popover {
     display: none;
   }
 }

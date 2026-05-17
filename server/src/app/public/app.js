@@ -10951,6 +10951,61 @@ function isDemoTutorialHost(){
 function initDemoTutorialBubbles(){
   if (!isDemoTutorialHost()) return;
   document.body.classList.add('demo-tutorial');
+
+  const getTip = () => {
+    let tip = document.getElementById('demo-tip-popover');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'demo-tip-popover';
+      tip.setAttribute('role', 'tooltip');
+      document.body.appendChild(tip);
+    }
+    return tip;
+  };
+
+  const positionTip = (target, tip) => {
+    const rect = target.getBoundingClientRect();
+    tip.style.maxWidth = `${Math.min(300, window.innerWidth - 24)}px`;
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    tip.classList.add('is-visible');
+
+    const tipRect = tip.getBoundingClientRect();
+    const top = Math.min(window.innerHeight - tipRect.height - 12, rect.bottom + 10);
+    const left = Math.min(window.innerWidth - tipRect.width - 12, Math.max(12, rect.left));
+
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(12, top)}px`;
+  };
+
+  const showDemoTip = (target) => {
+    const text = target?.getAttribute('data-demo-tip');
+    if (!text) return;
+    const tip = getTip();
+    tip.textContent = text;
+    positionTip(target, tip);
+  };
+
+  const hideDemoTip = () => {
+    document.getElementById('demo-tip-popover')?.classList.remove('is-visible');
+  };
+
+  document.body.addEventListener('mouseover', (event) => {
+    const target = event.target.closest?.('[data-demo-tip]');
+    if (target) showDemoTip(target);
+  });
+  document.body.addEventListener('mouseout', (event) => {
+    if (event.target.closest?.('[data-demo-tip]')) hideDemoTip();
+  });
+  document.body.addEventListener('focusin', (event) => {
+    const target = event.target.closest?.('[data-demo-tip]');
+    if (target) showDemoTip(target);
+  });
+  document.body.addEventListener('focusout', (event) => {
+    if (event.target.closest?.('[data-demo-tip]')) hideDemoTip();
+  });
+  window.addEventListener('scroll', hideDemoTip, true);
+  window.addEventListener('resize', hideDemoTip);
 }
 
 function annotateDynamicHelp(){
