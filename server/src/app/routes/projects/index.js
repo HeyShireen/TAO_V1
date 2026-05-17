@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { validateRequired, validateMaxLength, ValidationError } from '../../utils/validation.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject, canDeleteProject, getVisibleProjects } from '../../utils/permissions.js';
+import { isDemoMode } from '../../middleware/demo-mode.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
 
 const uploadDpgf = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
@@ -31,8 +32,8 @@ router.post('/', isResponsableOrAdmin, async (req, res) => {
     if (location) validateMaxLength(location, 200, 'La localisation');
     
     const r = await query(
-      `INSERT INTO projects (name, reference, client, location, study_phase, study_date, created_by, owner_id) 
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `INSERT INTO projects (name, reference, client, location, study_phase, study_date, created_by, owner_id, is_demo) 
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [
         name.trim(), 
         reference ? reference.trim() : null, 
@@ -41,7 +42,8 @@ router.post('/', isResponsableOrAdmin, async (req, res) => {
         study_phase, 
         study_date, 
         req.user?.id || null,
-        req.user?.id || null
+        req.user?.id || null,
+        isDemoMode()
       ]
     );
     res.json(r.rows[0]);

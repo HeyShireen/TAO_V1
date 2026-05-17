@@ -6,6 +6,7 @@ import JSZip from 'jszip';
 import nodemailer from 'nodemailer';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { canViewProject } from '../../utils/permissions.js';
 
 const router = Router();
 
@@ -53,6 +54,10 @@ async function handleSummaryExport(req, res) {
     }
 
     const round = roundRes.rows[0];
+    const canViewDemoProject = await canViewProject(userId, round.project_id, req.user.role, req.user.company_id || null);
+    if (!canViewDemoProject) {
+      return res.status(403).json({ error: 'Accès non autorisé' });
+    }
 
     // Vérifier l'accès au projet
     const accessCheck = await query(
@@ -325,7 +330,8 @@ async function handleRoundsComparison(req, res) {
       [projectId, userId, req.user.role]
     );
 
-    if (projectRes.rowCount === 0 || !projectRes.rows[0].has_access) {
+    const canViewDemoProject = await canViewProject(userId, projectId, req.user.role, req.user.company_id || null);
+    if (projectRes.rowCount === 0 || !projectRes.rows[0].has_access || !canViewDemoProject) {
       return res.status(403).json({ error: 'Accès non autorisé' });
     }
 
@@ -910,6 +916,8 @@ router.get('/rao/:projectId', async (req, res) => {
     );
     if (projectRes.rowCount === 0) return res.status(404).json({ error: 'Projet introuvable' });
     const project = projectRes.rows[0];
+    const canViewDemoProject = await canViewProject(userId, projectId, req.user.role, req.user.company_id || null);
+    if (!canViewDemoProject) return res.status(403).json({ error: 'Accès refusé' });
 
     // Vérifier l'accès
     const accessCheck = await query(
@@ -1341,6 +1349,10 @@ router.post('/project-bundle-zip', async (req, res) => {
     );
     if (projectMetaRes.rowCount === 0) {
       return res.status(404).json({ error: 'Projet introuvable' });
+    }
+    const canViewDemoProject = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canViewDemoProject) {
+      return res.status(403).json({ error: 'Accès refusé' });
     }
 
     // Determine rounds to process: one specific round or all project rounds

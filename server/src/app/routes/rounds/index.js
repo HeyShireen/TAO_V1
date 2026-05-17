@@ -272,6 +272,11 @@ router.post('/:roundId/duplicate', isResponsableOrAdmin, async (req, res) => {
       }
       
       const source = sourceRound.rows[0];
+      const canEditSource = await canEditProject(req.user.id, source.project_id, req.user.role);
+      if (!canEditSource) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Accès refusé' });
+      }
       
       // Trouver le prochain numéro
       const maxResult = await client.query(
@@ -338,6 +343,8 @@ router.get('/:roundId/stats', async (req, res) => {
       return res.status(404).json({ error: 'Tour introuvable' });
     }
     const projectId = roundResult.rows[0].project_id;
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
     
     // Items et MOE sont partagés au niveau projet (via les lots)
     let itemsCount = 0;
@@ -435,6 +442,8 @@ router.get('/:roundId/summary', async (req, res) => {
       return res.status(404).json({ error: 'Tour introuvable' });
     }
     const projectId = roundResult.rows[0].project_id;
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
     
     // Récupérer tous les lots du projet
     const lotsResult = await query(

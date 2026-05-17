@@ -2,6 +2,18 @@
 // Helpers pour vérifier les permissions sur les projets
 
 import { query } from '../db.js';
+import { isDemoMode } from '../middleware/demo-mode.js';
+
+async function isProjectAllowedInCurrentMode(projectId) {
+  if (!isDemoMode()) return true;
+
+  const project = await query(
+    'SELECT is_demo FROM projects WHERE id = $1',
+    [projectId]
+  );
+
+  return project.rows[0]?.is_demo === true;
+}
 
 /**
  * Vérifier si un utilisateur peut voir un projet
@@ -11,6 +23,10 @@ import { query } from '../db.js';
  * - Visionneur: seulement les projets partagés avec lui
  */
 async function canViewProject(userId, projectId, userRole, userCompanyId = null) {
+  if (!(await isProjectAllowedInCurrentMode(projectId))) {
+    return false;
+  }
+
   // Admin et responsable peuvent tout voir
   if (userRole === 'admin' || userRole === 'responsable') {
     return true;
@@ -46,6 +62,10 @@ async function canViewProject(userId, projectId, userRole, userCompanyId = null)
  * - Visionneur: jamais (ou uniquement si partagé avec can_edit=true)
  */
 async function canEditProject(userId, projectId, userRole) {
+  if (!(await isProjectAllowedInCurrentMode(projectId))) {
+    return false;
+  }
+
   // Admin et responsable peuvent tout éditer
   if (userRole === 'admin' || userRole === 'responsable') {
     return true;
@@ -73,6 +93,10 @@ async function canEditProject(userId, projectId, userRole) {
  * - Visionneur: jamais
  */
 async function canDeleteProject(userId, projectId, userRole) {
+  if (!(await isProjectAllowedInCurrentMode(projectId))) {
+    return false;
+  }
+
   if (userRole === 'admin') {
     return true;
   }
@@ -105,10 +129,12 @@ function canShareProject(userRole) {
  * Obtenir la liste des projets visibles pour un utilisateur
  */
 async function getVisibleProjects(userId, userRole, userCompanyId = null) {
+  const demoProjectFilter = isDemoMode() ? 'COALESCE(p.is_demo, false) = true' : 'TRUE';
+
   // Admin et responsable voient tout
   if (userRole === 'admin' || userRole === 'responsable') {
     const result = await query(
-      'SELECT * FROM projects ORDER BY created_at DESC'
+      `SELECT p.* FROM projects p WHERE ${demoProjectFilter} ORDER BY p.created_at DESC`
     );
     return result.rows;
   }
@@ -119,7 +145,7 @@ async function getVisibleProjects(userId, userRole, userCompanyId = null) {
       `SELECT DISTINCT p.* FROM projects p
        JOIN lots l ON l.project_id = p.id
        JOIN lot_companies lc ON lc.lot_id = l.id
-       WHERE lc.company_id = $1
+       WHERE lc.company_id = $1 AND ${demoProjectFilter}
        ORDER BY p.created_at DESC`,
       [userCompanyId]
     );
@@ -130,7 +156,7 @@ async function getVisibleProjects(userId, userRole, userCompanyId = null) {
   const result = await query(
     `SELECT p.* FROM projects p
      INNER JOIN project_shares ps ON p.id = ps.project_id
-     WHERE ps.shared_with_user_id = $1 AND ps.can_view = true
+     WHERE ps.shared_with_user_id = $1 AND ps.can_view = true AND ${demoProjectFilter}
      ORDER BY p.created_at DESC`,
     [userId]
   );
@@ -143,5 +169,6 @@ export {
   canEditProject,
   canDeleteProject,
   canShareProject,
-  getVisibleProjects
+  getVisibleProjects,
+  isProjectAllowedInCurrentMode
 };

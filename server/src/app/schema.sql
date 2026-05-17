@@ -13,9 +13,11 @@ CREATE TABLE IF NOT EXISTS public.projects (
   reference TEXT,
   client TEXT,
   location TEXT,
+  is_demo BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS study_phase TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS public.lots (
   id BIGSERIAL PRIMARY KEY,

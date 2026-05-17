@@ -225,6 +225,7 @@ const loginCsp = helmet({
 // Routes spécifiques AVANT express.static
 // Page d'accueil publique (pas d'authentification requise)
 app.get('/', (_req, res) => {
+  if (isDemoMode()) return res.redirect('/app')
   res.sendFile(homeFile)
 })
 

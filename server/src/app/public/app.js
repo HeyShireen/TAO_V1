@@ -10939,6 +10939,19 @@ function hideHelpTooltip(el){
 }
 
 function setHelp(el, text){ if (el) el.setAttribute('data-help', text); }
+function setDemoTip(el, text){ if (el) el.setAttribute('data-demo-tip', text); }
+
+function isDemoTutorialHost(){
+  const host = window.location.hostname || '';
+  return host === 'demo.ao-link.fr'
+    || host.startsWith('demo.')
+    || new URLSearchParams(window.location.search).has('demoTips');
+}
+
+function initDemoTutorialBubbles(){
+  if (!isDemoTutorialHost()) return;
+  document.body.classList.add('demo-tutorial');
+}
 
 function annotateDynamicHelp(){
   setHelp(document.getElementById('create-project'), 'Créer un nouveau projet');
@@ -10953,6 +10966,27 @@ function annotateDynamicHelp(){
   setHelp(document.getElementById('export-data-options'), 'Ouvrir les options d\'export de la zone Données');
   setHelp(document.getElementById('export-lot-compare-options'), 'Ouvrir les options d\'export du tableau comparatif du lot');
   setHelp(document.getElementById('open-phase-export-modal'), 'Ouvrir les options d\'export du projet depuis la phase');
+
+  setDemoTip(document.querySelector('[data-tab="tab-projects"]'), 'Point de depart: ouvrez le projet demo pour parcourir les fonctionnalites.');
+  setDemoTip(document.querySelector('[data-tab="tab-rounds"]'), 'Les tours representent les phases de consultation: ouverture, negociation, ajustements.');
+  setDemoTip(document.getElementById('create-project'), 'Cree un projet d essai. En demo, il reste isole des vrais dossiers.');
+  setDemoTip(document.getElementById('add-round'), 'Ajoute un nouveau tour pour simuler une phase de negociation.');
+  setDemoTip(document.getElementById('export-rao'), 'Genere le rapport d analyse d offres pour presenter la decision.');
+  setDemoTip(document.getElementById('compare-round'), 'Choisissez un tour pour comparer les montants avec les phases precedentes.');
+  setDemoTip(document.getElementById('rounds-compare-tab-compare'), 'Vue synthese: compare les montants par lot, entreprise et tour.');
+  setDemoTip(document.getElementById('rounds-compare-tab-options'), 'Les options servent a tester des variantes hors base: PV, prestations complementaires, variantes techniques.');
+  setDemoTip(document.getElementById('rounds-compare-tab-simulation'), 'La simulation permet de retenir virtuellement des entreprises par lot avant decision.');
+  setDemoTip(document.getElementById('add-simulation'), 'Ajoute un scenario pour comparer plusieurs choix d attribution.');
+  setDemoTip(document.getElementById('export-rounds-compare-options'), 'Exporte la comparaison des tours pour partage interne ou client.');
+  setDemoTip(document.getElementById('add-lot'), 'Ajoute un lot de travaux dans la phase courante.');
+  setDemoTip(document.getElementById('mode-edit'), 'Mode saisie: ajustez MOE et offres directement dans la grille.');
+  setDemoTip(document.getElementById('mode-compare'), 'Mode comparatif: visualisez les ecarts, totaux et anomalies.');
+  setDemoTip(document.getElementById('options-create-btn'), 'Cree une option commerciale ou technique rattachee au lot courant.');
+  setDemoTip(document.getElementById('options-add-btn'), 'Ajoute des lignes dans l option selectionnee, comme une mini-DPGF.');
+  setDemoTip(document.getElementById('generate-questions'), 'Genere les questions entreprises a partir des ecarts detectes.');
+  setDemoTip(document.getElementById('export-summary-excel'), 'Exporte le recapitulatif du tour courant en Excel.');
+  setDemoTip(document.getElementById('export-data-options'), 'Exporte les donnees du lot ou les transmet par email.');
+  setDemoTip(document.getElementById('export-lot-compare-options'), 'Exporte le comparatif du lot ouvert.');
 }
 
 function bindHelpToggle(){
@@ -11020,6 +11054,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Init aide contextuelle
   initContextHelp();
+  initDemoTutorialBubbles();
   bindHelpToggle();
   setTimeout(annotateDynamicHelp, 1200); // léger délai pour laisser le DOM se peupler
 

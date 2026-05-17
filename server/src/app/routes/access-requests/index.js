@@ -5,6 +5,7 @@ import express from 'express';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
+import { canEditProject } from '../../utils/permissions.js';
 import { sendAccessRequestNotification, sendAccessApprovedEmail, sendAccessRejectedEmail } from '../../utils/email.js';
 
 const router = express.Router();
@@ -115,6 +116,11 @@ router.patch('/:id/approve', isResponsableOrAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Projet introuvable' });
     }
     const project = projectResult.rows[0];
+
+    const canEditProjectTarget = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEditProjectTarget) {
+      return res.status(403).json({ error: 'Accès refusé' });
+    }
     
     // Récupérer la demande (accepter aussi les demandes déjà approuvées pour multi-projet)
     const requestResult = await query(

@@ -637,8 +637,14 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
 
 /* ---------- Smart Import : Preview ---------- */
 router.post('/:id/import-preview', requireRole(['admin', 'responsable']), upload.single('file'), async (req, res) => {
+  const lotId = Number(req.params.id);
   if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
   try {
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
     const sheetName = req.body?.sheetName || null;
     const headerRow = req.body?.headerRow ? Number(req.body.headerRow) : null;
     const isPdf = isPdfFile({ mime: req.file.mimetype, name: req.file.originalname });
@@ -660,6 +666,11 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
   const lotId = Number(req.params.id);
 
   try {
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+
     const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId } = JSON.parse(req.body.params || '{}');
     if (!mode) return res.status(400).json({ error: 'Mode requis (dpgf ou offer)' });
     if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
