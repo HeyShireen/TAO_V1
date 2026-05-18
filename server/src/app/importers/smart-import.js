@@ -497,10 +497,17 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
 
     // Charger les items DPGF existants du lot (ordonnés par position)
     const itemsRes = await client.query(
-      'SELECT id, num, designation, unit, position FROM items WHERE lot_id = $1 ORDER BY position NULLS LAST, id',
+      'SELECT id, num, designation, unit, position FROM items WHERE lot_id = $1 AND source_company_id IS NULL ORDER BY position NULLS LAST, id',
       [lotId]
     );
     const dpgfItems = itemsRes.rows;
+    const dpgfItemsByNum = new Map();
+    dpgfItems.forEach((item, index) => {
+      const norm = normalizeArticleNum(item.num);
+      if (!norm) return;
+      if (!dpgfItemsByNum.has(norm)) dpgfItemsByNum.set(norm, []);
+      dpgfItemsByNum.get(norm).push({ item, index });
+    });
 
     if (dpgfItems.length === 0) {
       throw new Error('Le lot ne contient aucun article. Importez d\'abord la DPGF.');
@@ -530,6 +537,17 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       [lotId, resolvedCompanyId, roundId]
     );
     const clearedExistingOffers = Number(clearExistingRes.rowCount || 0);
+    const clearedAddedItemsRes = await client.query(
+      `DELETE FROM items i
+       WHERE i.lot_id = $1
+         AND i.source_company_id = $2
+         AND NOT EXISTS (
+           SELECT 1 FROM offers o
+           WHERE o.item_id = i.id
+         )`,
+      [lotId, resolvedCompanyId]
+    );
+    const clearedAddedItems = Number(clearedAddedItemsRes.rowCount || 0);
 
     // --- Helpers de normalisation pour le matching ---
     function normalizeNum(n) {
@@ -749,11 +767,24 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       let matchScore = 0;
       let matchMethod = '';
       let matchLookaheadOffset = 0;
+      let matchDpgfIndex = -1;
 
       // Fenêtre de lookahead (par numéro uniquement pour limiter les faux positifs)
       const LOOKAHEAD_LIMIT = 15;
 
-      for (let look = 0; look < LOOKAHEAD_LIMIT && dpgfCursor + look < dpgfItems.length; look++) {
+      if (num) {
+        const normImport = normalizeNum(num);
+        const numMatches = normImport ? (dpgfItemsByNum.get(normImport) || []) : [];
+        const preferred = numMatches.find(({ index }) => index >= dpgfCursor) || numMatches[0];
+        if (preferred) {
+          isMatch = true;
+          matchScore = 100;
+          matchMethod = preferred.index >= dpgfCursor ? 'num-global' : 'num-global-backtrack';
+          matchDpgfIndex = preferred.index;
+        }
+      }
+
+      for (let look = 0; !isMatch && look < LOOKAHEAD_LIMIT && dpgfCursor + look < dpgfItems.length; look++) {
         const dpgfItem = dpgfItems[dpgfCursor + look];
 
         let candidateMatch = false;
@@ -796,6 +827,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           matchScore = candidateScore;
           matchMethod = candidateMethod;
           matchLookaheadOffset = look;
+          matchDpgfIndex = dpgfCursor + look;
           break;
         }
 
@@ -807,10 +839,12 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       if (isMatch) {
         // Si le match a été trouvé par lookahead, avancer le curseur jusqu'à l'article matché
         // (les items DPGF intermédiaires n'ont pas été couverts par cette ligne entreprise)
-        if (matchLookaheadOffset > 0) {
+        if (matchDpgfIndex >= 0 && matchDpgfIndex > dpgfCursor) {
+          dpgfCursor = matchDpgfIndex;
+        } else if (matchLookaheadOffset > 0) {
           dpgfCursor += matchLookaheadOffset;
         }
-        const dpgfItem = dpgfItems[dpgfCursor];
+        const dpgfItem = dpgfItems[matchDpgfIndex >= 0 ? matchDpgfIndex : dpgfCursor];
         // Extraire un commentaire si l'entreprise a ajouté du texte à la désignation
         let desigComment = null;
         const baseDesig = String(dpgfItem.designation ?? '').trim();
@@ -952,6 +986,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       mode: 'offer',
       companyId: resolvedCompanyId,
       clearedExistingOffers,
+      clearedAddedItems,
       matched,
       skipped,
       amountMismatchCount,

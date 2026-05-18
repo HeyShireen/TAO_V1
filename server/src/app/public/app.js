@@ -6706,6 +6706,35 @@ function sheetSelectionToClipboardText(range = getSheetSelectionRange()){
   return rows.join('\n');
 }
 
+function getActiveSheetPoint(){
+  return pointFromSheetCell(document.activeElement?.closest?.('#sheet-body td[data-r][data-c]'));
+}
+
+function getEffectiveSheetRange(point = getActiveSheetPoint()){
+  const range = getSheetSelectionRange();
+  if (sheetSelection.explicit && range && (!point || sheetSelectionContainsPoint(point, range))) return range;
+  if (point) return { minR: point.r, maxR: point.r, minC: point.c, maxC: point.c };
+  return range;
+}
+
+async function copyTextToClipboard(text){
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  return ok;
+}
+
 function normalizeSheetPastedValue(colKey, value){
   let val = String(value ?? '').trim();
   const isNumericCol = colKey.includes('qty') || colKey.includes('pu');
@@ -6748,7 +6777,10 @@ function applySheetClipboardGrid(startR, startC, grid){
     recalcRowAmountsRow(startR + i);
   }
 
-  if (wrote) setSheetSelectionRange({ r:startR, c:startC }, { r:maxR, c:maxC }, true);
+  if (wrote) {
+    setSheetSelectionRange({ r:startR, c:startC }, { r:maxR, c:maxC }, true);
+    markAsChanged();
+  }
 }
 
 function clearSheetSelectionCells(range = getSheetSelectionRange()){
@@ -6771,11 +6803,12 @@ function clearSheetSelectionCells(range = getSheetSelectionRange()){
   }
 
   touchedRows.forEach(r => recalcRowAmountsRow(r));
+  if (touchedRows.size > 0) markAsChanged();
 }
 
 function writeSheetSelectionClipboard(e, cut = false){
-  if (!sheetSelectionIsRange()) return false;
-  const range = getSheetSelectionRange();
+  const range = getEffectiveSheetRange(pointFromSheetCell(e.target?.closest?.('#sheet-body td[data-r][data-c]')));
+  if (!range) return false;
   const text = sheetSelectionToClipboardText(range);
   if (e.clipboardData) {
     e.clipboardData.setData('text/plain', text);
@@ -6817,14 +6850,43 @@ function attachSheetDelegates(){
   });
 
   // navigation clavier
-  body.addEventListener('keydown', (e) => {
+  body.addEventListener('keydown', async (e) => {
     const td = e.target.closest('td'); if (!td) return;
     const r = Number(td.dataset.r), c = Number(td.dataset.c);
     const ctrl = e.ctrlKey || e.metaKey;
+    const point = { r, c };
 
     // Undo/Redo
     if (ctrl && (e.key==='z' || e.key==='Z') && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if (ctrl && (e.key==='y' || (e.shiftKey && (e.key==='Z'||e.key==='z')))) { e.preventDefault(); redo(); return; }
+    if (ctrl && (e.key==='c' || e.key==='C')) {
+      e.preventDefault();
+      const range = getEffectiveSheetRange(point);
+      await copyTextToClipboard(sheetSelectionToClipboardText(range));
+      return;
+    }
+    if (ctrl && (e.key==='x' || e.key==='X')) {
+      e.preventDefault();
+      const range = getEffectiveSheetRange(point);
+      await copyTextToClipboard(sheetSelectionToClipboardText(range));
+      clearSheetSelectionCells(range);
+      return;
+    }
+    if (ctrl && (e.key==='a' || e.key==='A')) {
+      e.preventDefault();
+      const firstEditable = colModel.findIndex(col => col.editable);
+      let lastEditable = colModel.length - 1;
+      while (lastEditable >= 0 && !colModel[lastEditable]?.editable) lastEditable--;
+      if (firstEditable >= 0 && lastEditable >= firstEditable) {
+        setSheetSelectionRange({ r:0, c:firstEditable }, { r:Math.max(0, sheetRows.length - 1), c:lastEditable }, true);
+      }
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && sheetSelection.explicit) {
+      e.preventDefault();
+      clearSheetSelectionCells(getEffectiveSheetRange(point));
+      return;
+    }
     if (e.key === 'Escape' && sheetSelection.explicit) {
       e.preventDefault();
       setSheetSelectionRange({ r, c }, { r, c }, false);
