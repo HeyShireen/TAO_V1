@@ -5663,10 +5663,13 @@ async function refreshCompare({ silent = false } = {}){
       const sourceName = data.companies.find(c => c.id === r.source_company_id)?.name || '';
       const bgStyle = sourceColor ? `background-color: ${sourceColor}20;` : ''; // 20 = opacity ~12%
       const borderStyle = sourceColor ? `border-left: 4px solid ${sourceColor};` : '';
+      const parentLabel = r.parent_item_id
+        ? `<div class="muted" style="font-size:0.75em;margin-top:3px">Sous ${r.parent_num ? escapeHtml(String(r.parent_num)) + ' - ' : ''}${escapeHtml(String(r.parent_designation || 'parent DPGF'))}</div>`
+        : '';
 
       let tr = `<tr style="${bgStyle}${borderStyle}" title="Poste ajouté par ${sourceName}">`;
       tr += `<td class="sticky-col">${r.num||''}</td>`;
-      tr += `<td class="sticky-col2"><span style="font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceColor ? 'background:'+sourceColor+';color:#fff;' : 'background:var(--warning);color:#fff;'}margin-right:6px">${sourceName}</span>${r.designation||''}</td>`;
+      tr += `<td class="sticky-col2"><span style="font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceColor ? 'background:'+sourceColor+';color:#fff;' : 'background:var(--warning);color:#fff;'}margin-right:6px">${sourceName}</span>${r.designation||''}${parentLabel}</td>`;
       tr += `<td>${r.unit||''}</td>`;
 
       if (!entrepriseMode) {
@@ -6264,6 +6267,9 @@ function buildSheetModel(raw){
       designation: it.designation || '',
       unit: it.unit || '',
       source_company_id: it.source_company_id || null,
+      parent_item_id: it.parent_item_id || null,
+      parent_num: it.parent_num || null,
+      parent_designation: it.parent_designation || null,
       moe: { 
         qty: moe.qty != null ? String(moe.qty) : '', 
         pu: moe.unit_price != null ? String(moe.unit_price) : '' 
@@ -9094,6 +9100,9 @@ function bindSmartImport() {
                     }
                     if (ctx.expectedDpgfDesignation) {
                       ctxHtml += `<div style="font-size:0.85em;color:var(--muted)">Attendu : <em>${ctx.expectedDpgfNum ? ctx.expectedDpgfNum + ' – ' : ''}${ctx.expectedDpgfDesignation}</em></div>`;
+                    }
+                    if (p.parentItemId || p.parentNum || p.parentDesignation) {
+                      ctxHtml += `<div style="font-size:0.85em;color:var(--muted)">Parent : <em>${p.parentNum ? p.parentNum + ' - ' : ''}${p.parentDesignation || 'parent DPGF'}</em></div>`;
                     }
                     const fmtNum = (v) => v != null ? Number(v).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) : '-';
                     return `<tr style="border-bottom:1px solid var(--border)">

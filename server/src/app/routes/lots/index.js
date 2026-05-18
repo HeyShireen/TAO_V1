@@ -95,7 +95,8 @@ router.get('/:id', async (req, res) => {
     const result = await query(`
       SELECT 
         l.id as lot_id, l.code, l.name as lot_name, l.project_id,
-        i.id as item_id, i.num, i.designation, i.unit, i.position, i.source_company_id,
+        i.id as item_id, i.num, i.designation, i.unit, i.position, i.source_company_id, i.parent_item_id,
+        parent_i.num as parent_num, parent_i.designation as parent_designation,
         ${isEntreprise ? 'NULL AS moe_qty, NULL AS moe_unit_price, NULL AS moe_amount,' : 'm.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,'}
         (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name, 'color', c2.color, 'email', c2.email) ORDER BY lc2.created_at, c2.id)
          FROM lot_companies lc2
@@ -116,10 +117,11 @@ router.get('/:id', async (req, res) => {
         )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
       FROM lots l
       LEFT JOIN items i ON i.lot_id = l.id
+      LEFT JOIN items parent_i ON parent_i.id = i.parent_item_id
       ${isEntreprise ? '' : 'LEFT JOIN moe_items m ON m.item_id = i.id'}
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
       WHERE l.id = $1
-      GROUP BY l.id, i.id${isEntreprise ? '' : ', m.item_id'}
+      GROUP BY l.id, i.id, parent_i.id${isEntreprise ? '' : ', m.item_id'}
       ORDER BY i.position NULLS LAST, i.id
     `, queryParams);
 
@@ -155,7 +157,10 @@ router.get('/:id', async (req, res) => {
           designation: row.designation,
           unit: row.unit,
           position: row.position,
-          source_company_id: row.source_company_id || null
+          source_company_id: row.source_company_id || null,
+          parent_item_id: row.parent_item_id || null,
+          parent_num: row.parent_num || null,
+          parent_designation: row.parent_designation || null
         });
 
         if (!isEntreprise && (row.moe_qty !== null || row.moe_unit_price !== null)) {
@@ -247,7 +252,13 @@ router.get('/:id/table', async (req, res) => {
   const canView = await canViewProject(req.user.id, projectId, req.user.role, userCompanyId);
   if (!canView) return res.status(403).json({ error: 'Accès refusé à ce lot' });
 
-  const itemsRes = await query('SELECT * FROM items WHERE lot_id=$1 ORDER BY position NULLS LAST, id', [id]);
+  const itemsRes = await query(`
+    SELECT i.*, p.num AS parent_num, p.designation AS parent_designation
+    FROM items i
+    LEFT JOIN items p ON p.id = i.parent_item_id
+    WHERE i.lot_id=$1
+    ORDER BY i.position NULLS LAST, i.id
+  `, [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
 
   const moeRes = (!isEntreprise && itemIds.length)
@@ -287,6 +298,9 @@ router.get('/:id/table', async (req, res) => {
       designation: item.designation,
       unit: item.unit,
       source_company_id: item.source_company_id || null,
+      parent_item_id: item.parent_item_id || null,
+      parent_num: item.parent_num || null,
+      parent_designation: item.parent_designation || null,
       moe: { qty: m.qty, pu: m.unit_price, mt: m.amount },
       companies: []
     };

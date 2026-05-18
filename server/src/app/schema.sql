@@ -83,6 +83,8 @@ ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS created_by BIGINT;
 
 -- Position dans items (ordre dans le tableur)
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS position INTEGER;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS source_company_id BIGINT REFERENCES public.companies(id) ON DELETE SET NULL;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS parent_item_id BIGINT REFERENCES public.items(id) ON DELETE SET NULL;
 
 -- Amount calculé sur offers (compatibilité)
 ALTER TABLE public.offers ADD COLUMN IF NOT EXISTS amount NUMERIC;

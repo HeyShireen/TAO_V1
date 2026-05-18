@@ -678,6 +678,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     let amountMismatchCount = 0;
     const addedPosts = [];          // Postes ajoutés par l'entreprise (pas dans la DPGF)
     const matchDetails = [];
+    let currentParentDpgfItem = null;
 
     function formatAmountForComment(value) {
       const numericValue = Number(value);
@@ -753,6 +754,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
             if (score >= MATCH_THRESHOLD) emptyLineMatchesDpgf = true;
           }
           if (emptyLineMatchesDpgf) {
+            if (num && dpgfItem.num) currentParentDpgfItem = dpgfItem;
             dpgfCursor++; // Cet item DPGF est un titre/en-tête, on le consomme
           }
         }
@@ -845,6 +847,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           dpgfCursor += matchLookaheadOffset;
         }
         const dpgfItem = dpgfItems[matchDpgfIndex >= 0 ? matchDpgfIndex : dpgfCursor];
+        if (num && dpgfItem.num) currentParentDpgfItem = dpgfItem;
         // Extraire un commentaire si l'entreprise a ajouté du texte à la désignation
         let desigComment = null;
         const baseDesig = String(dpgfItem.designation ?? '').trim();
@@ -911,6 +914,9 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           num: num || null,
           designation: String(importedDesignation || '').trim() || '(vide)',
           unit: unit || null,
+          parentItemId: currentParentDpgfItem?.id || prevDpgf?.id || null,
+          parentNum: currentParentDpgfItem?.num || prevDpgf?.num || null,
+          parentDesignation: currentParentDpgfItem?.designation || prevDpgf?.designation || null,
           qty,
           unit_price: pu,
           amount: mt,
@@ -939,8 +945,8 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       for (const post of addedPosts) {
         const designation = post.designation || '(poste ajouté)';
         const insRes = await client.query(
-          'INSERT INTO items (lot_id, num, designation, unit, position, source_company_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-          [lotId, post.num, designation, post.unit, nextPos, resolvedCompanyId]
+          'INSERT INTO items (lot_id, num, designation, unit, position, source_company_id, parent_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+          [lotId, post.num, designation, post.unit, nextPos, resolvedCompanyId, post.parentItemId || null]
         );
         const newItemId = insRes.rows[0].id;
         post.savedItemId = newItemId;
