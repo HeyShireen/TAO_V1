@@ -651,53 +651,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       return Math.round(ratio * 80); // max 80 pour un match par mots
     }
 
-    function isEnterpriseDetailLine({ num, designation }) {
-      if (num) return false;
-      const raw = String(designation || '');
-      const normalized = normalizeDesig(raw);
-      if (!normalized) return false;
-
-      // Les offres contiennent souvent des sous-details de prix sans numero DPGF :
-      // lignes indentees, prefixees par "_" ou libelles de calcul. Elles ne doivent
-      // pas devenir des postes ajoutes au bordereau.
-      if (/^[\s\u00A0\u202F._-]+/.test(raw)) return true;
-
-      const exactDetailLabels = new Set([
-        'dimension',
-        'dimensions',
-        'metre',
-        'metres',
-        'metrage',
-        'metrages',
-        'mesure',
-        'mesures',
-        'detail',
-        'details',
-        'sous detail',
-        'sous details',
-      ]);
-      if (exactDetailLabels.has(normalized)) return true;
-
-      const detailPrefixes = [
-        'dimensions ',
-        'metrage ',
-        'metrages ',
-        'mesures ',
-        'detail ',
-        'details ',
-        'sous detail ',
-        'sous details ',
-        'essais et demarches',
-        'essai et demarche',
-        'prototypes et echantillons',
-        'prototype et echantillon',
-        'frais d etude',
-        'frais d execution',
-        'frais d etude d execution',
-      ];
-      return detailPrefixes.some(prefix => normalized.startsWith(prefix));
-    }
-
     // Seuil minimum de similarité pour considérer que ça matche
     const MATCH_THRESHOLD = 50;
 
@@ -706,7 +659,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     let skipped = 0;
     let amountMismatchCount = 0;
     const addedPosts = [];          // Postes ajoutés par l'entreprise (pas dans la DPGF)
-    const ignoredDetailRows = [];
     const matchDetails = [];
 
     function formatAmountForComment(value) {
@@ -920,25 +872,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         const expectedDpgf = dpgfCursor < dpgfItems.length ? dpgfItems[dpgfCursor] : null;
         const prevDpgf = dpgfCursor > 0 ? dpgfItems[dpgfCursor - 1] : null;
 
-        if (isEnterpriseDetailLine({ num, designation: importedDesignation })) {
-          skipped++;
-          ignoredDetailRows.push({
-            row: i + 1,
-            designation: String(importedDesignation || '').trim() || '(vide)',
-            unit: unit || null,
-            qty,
-            unit_price: pu,
-            amount: mt,
-            context: {
-              afterDpgfNum: prevDpgf?.num || null,
-              afterDpgfDesignation: prevDpgf?.designation || null,
-              expectedDpgfNum: expectedDpgf?.num || null,
-              expectedDpgfDesignation: expectedDpgf?.designation || null,
-            }
-          });
-          continue;
-        }
-
         addedPosts.push({
           row: i + 1,
           num: num || null,
@@ -1002,9 +935,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     if (unmatchedDpgf.length > 0) {
       warnings.push(`${unmatchedDpgf.length} article(s) DPGF n'ont pas été couverts par l'offre entreprise.`);
     }
-    if (ignoredDetailRows.length > 0) {
-      warnings.push(`${ignoredDetailRows.length} ligne(s) de sous-detail entreprise ignoree(s) comme postes ajoutes.`);
-    }
     if (amountMismatchCount > 0) {
       warnings.push(`${amountMismatchCount} ligne(s) avec incohérence montant total / montant calculé : commentaire automatique ajouté.`);
       console.warn('[AMOUNT-DIAG][import.offer] Incohérences montant importé vs calculé', {
@@ -1028,8 +958,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       totalItems: dpgfItems.length,
       addedPosts,
       addedPostsCount: addedPosts.length,
-      ignoredDetailRows,
-      ignoredDetailRowsCount: ignoredDetailRows.length,
       unmatchedDpgf,
       unmatchedDpgfCount: unmatchedDpgf.length,
       matchDetails: matchDetails.slice(0, 30),
