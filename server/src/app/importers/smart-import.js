@@ -808,11 +808,14 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         //    Pour le lookahead (look > 0), seuil relevé à 80 pour éviter les faux positifs
         if (!candidateMatch && importedDesignation) {
           const score = designationMatch(dpgfItem.designation, importedDesignation);
-          const threshold = look === 0 ? MATCH_THRESHOLD : 80;
+          const threshold = look === 0 ? MATCH_THRESHOLD : (!num ? 90 : 80);
+          const canDesignationLookahead = look === 0 || num || !dpgfItem.num;
           if (score >= threshold) {
-            candidateMatch = true;
-            candidateScore = score;
-            candidateMethod = 'designation';
+            if (canDesignationLookahead) {
+              candidateMatch = true;
+              candidateScore = score;
+              candidateMethod = !num && look > 0 ? 'designation-subline' : 'designation';
+            }
           }
         }
 
@@ -835,7 +838,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
 
         // Sans Num dans l'import, ne pas faire de lookahead au-delà du curseur courant :
         // le risque de faux positif sur la désignation seule est trop élevé.
-        if (!num) break;
+        if (!num && look > 0 && dpgfItem.num) break;
       }
 
       if (isMatch) {
