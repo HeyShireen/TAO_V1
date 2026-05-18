@@ -738,6 +738,16 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       const hasData = (qty != null && qty !== 0) || (pu != null && pu !== 0) || (mt != null && mt !== 0);
       if (!hasData) {
         skipped++;
+        if (num) {
+          const normImport = normalizeNum(num);
+          const numMatches = normImport ? (dpgfItemsByNum.get(normImport) || []) : [];
+          const preferred = numMatches.find(({ index }) => index >= dpgfCursor) || numMatches[0];
+          if (preferred) {
+            currentParentDpgfItem = preferred.item;
+            dpgfCursor = Math.max(dpgfCursor, preferred.index + 1);
+            continue;
+          }
+        }
         // Vérifier si cette ligne vide correspond à l'item DPGF courant → avancer le curseur
         if (dpgfCursor < dpgfItems.length) {
           const dpgfItem = dpgfItems[dpgfCursor];
