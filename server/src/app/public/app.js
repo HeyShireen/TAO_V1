@@ -7506,6 +7506,190 @@ function bindSmartImport() {
   if (!modal || !openBtn) return;
 
   let importControlsCollapsed = true;
+  let previewRequestSeq = 0;
+  let previewAbortController = null;
+  let draftSaveTimer = null;
+
+  const IMPORT_DRAFT_DB = 'tao-import-drafts';
+  const IMPORT_DRAFT_STORE = 'smart-import-drafts';
+  const IMPORT_DRAFT_VERSION = 1;
+
+  function createEmptyImportState(mode = 'dpgf') {
+    return {
+      mode,
+      file: null,
+      files: [],
+      fileConfigs: [],
+      globalMapping: null,
+      activeFileIndex: 0,
+      preview: null,
+      mapping: {},
+      excludedRows: new Set(),
+      autoExcludedRows: new Set(),
+      fileId: null,
+      selectedSheetsDpgf: [],
+      sheetConfigsDpgf: {},
+      dpgfBaseMapping: null,
+    };
+  }
+
+  function getImportDraftKey() {
+    return currentLot?.id ? `lot:${currentLot.id}` : null;
+  }
+
+  function openImportDraftDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB indisponible'));
+        return;
+      }
+      const req = indexedDB.open(IMPORT_DRAFT_DB, IMPORT_DRAFT_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IMPORT_DRAFT_STORE)) {
+          db.createObjectStore(IMPORT_DRAFT_STORE, { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('Impossible d\'ouvrir le cache d\'import'));
+    });
+  }
+
+  async function withImportDraftStore(mode, callback) {
+    const db = await openImportDraftDb();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(IMPORT_DRAFT_STORE, mode);
+        const store = tx.objectStore(IMPORT_DRAFT_STORE);
+        let result;
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => reject(tx.error || new Error('Erreur cache import'));
+        tx.onabort = () => reject(tx.error || new Error('Cache import interrompu'));
+        const request = callback(store);
+        if (request && typeof request === 'object' && 'onsuccess' in request) {
+          request.onsuccess = () => { result = request.result; };
+          request.onerror = () => reject(request.error || new Error('Erreur cache import'));
+        } else {
+          result = request;
+        }
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  function serializeFileConfig(cfg = {}) {
+    return {
+      mapping: cfg.mapping ? normalizeMappingShape(cfg.mapping) : null,
+      excludedRows: Array.isArray(cfg.excludedRows) ? cfg.excludedRows.filter(v => typeof v === 'number') : [],
+      headerRow: cfg.headerRow || null,
+      sheetName: cfg.sheetName || null,
+      fileId: null,
+      companyId: cfg.companyId || null,
+      companyName: cfg.companyName || '',
+    };
+  }
+
+  async function saveImportDraftNow() {
+    const key = getImportDraftKey();
+    const files = getSelectedImportFiles();
+    if (!key || files.length === 0) return;
+    persistActiveFileConfig(false);
+
+    const draft = {
+      key,
+      savedAt: Date.now(),
+      projectId: currentProject?.id || null,
+      lotId: currentLot?.id || null,
+      roundId: currentRound?.id || null,
+      mode: importState.mode,
+      activeFileIndex: importState.activeFileIndex || 0,
+      files: files.map(file => ({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        lastModified: file.lastModified || Date.now(),
+        blob: file,
+      })),
+      fileConfigs: (importState.fileConfigs || []).map(serializeFileConfig),
+      globalMapping: importState.globalMapping ? cloneMapping(importState.globalMapping) : null,
+      preview: importState.preview || null,
+      mapping: normalizeMappingShape(importState.mapping || {}),
+      excludedRows: [...(importState.excludedRows instanceof Set ? importState.excludedRows : new Set())].filter(v => typeof v === 'number'),
+      selectedSheetsDpgf: Array.isArray(importState.selectedSheetsDpgf) ? [...importState.selectedSheetsDpgf] : [],
+      sheetConfigsDpgf: importState.sheetConfigsDpgf || {},
+      dpgfBaseMapping: importState.dpgfBaseMapping ? cloneMapping(importState.dpgfBaseMapping) : null,
+      companySelectValue: qs('#import-company-select')?.value || '',
+      companyNewValue: qs('#import-company-new')?.value || '',
+    };
+
+    await withImportDraftStore('readwrite', (store) => store.put(draft));
+  }
+
+  function scheduleImportDraftSave() {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(() => {
+      saveImportDraftNow().catch((err) => {
+        console.warn('Sauvegarde brouillon import impossible:', err);
+      });
+    }, 250);
+  }
+
+  async function loadImportDraft() {
+    const key = getImportDraftKey();
+    if (!key) return null;
+    return withImportDraftStore('readonly', (store) => store.get(key));
+  }
+
+  async function clearImportDraft() {
+    const key = getImportDraftKey();
+    clearTimeout(draftSaveTimer);
+    if (!key || !window.indexedDB) return;
+    try {
+      await withImportDraftStore('readwrite', (store) => store.delete(key));
+    } catch (err) {
+      console.warn('Nettoyage brouillon import impossible:', err);
+    }
+  }
+
+  function restoreImportDraft(draft) {
+    if (!draft || !Array.isArray(draft.files) || draft.files.length === 0) return false;
+
+    const files = draft.files.map((entry) => {
+      const blob = entry.blob instanceof Blob ? entry.blob : new Blob([entry.blob || ''], { type: entry.type || 'application/octet-stream' });
+      return new File([blob], entry.name || 'import.xlsx', {
+        type: entry.type || blob.type || '',
+        lastModified: entry.lastModified || Date.now(),
+      });
+    });
+
+    importState = createEmptyImportState(draft.mode || 'dpgf');
+    importState.files = files;
+    importState.activeFileIndex = Math.max(0, Math.min(Number(draft.activeFileIndex || 0), files.length - 1));
+    importState.file = files[importState.activeFileIndex] || files[0] || null;
+    importState.fileConfigs = Array.isArray(draft.fileConfigs) ? draft.fileConfigs.map(serializeFileConfig) : [];
+    ensureFileConfigs();
+    importState.globalMapping = draft.globalMapping ? cloneMapping(draft.globalMapping) : null;
+    importState.preview = draft.preview || null;
+    importState.mapping = normalizeMappingShape(draft.mapping || importState.fileConfigs[importState.activeFileIndex]?.mapping || {});
+    importState.excludedRows = new Set((draft.excludedRows || []).filter(v => typeof v === 'number'));
+    importState.autoExcludedRows = new Set();
+    importState.fileId = null;
+    importState.selectedSheetsDpgf = Array.isArray(draft.selectedSheetsDpgf) ? [...draft.selectedSheetsDpgf] : [];
+    importState.sheetConfigsDpgf = draft.sheetConfigsDpgf || {};
+    importState.dpgfBaseMapping = draft.dpgfBaseMapping ? cloneMapping(draft.dpgfBaseMapping) : null;
+
+    if (qs('#import-company-select')) qs('#import-company-select').value = draft.companySelectValue || '';
+    if (qs('#import-company-new')) qs('#import-company-new').value = draft.companyNewValue || '';
+    return true;
+  }
+
+  function cancelPreviewRequest() {
+    previewRequestSeq += 1;
+    if (previewAbortController) {
+      previewAbortController.abort();
+      previewAbortController = null;
+    }
+  }
 
   function setImportControlsCollapsed(collapsed) {
     importControlsCollapsed = !!collapsed;
@@ -7747,6 +7931,11 @@ function bindSmartImport() {
       updateImportFileSelectionUI();
       updateOfferImportUI();
       updateFileNavigatorUI();
+      if (importState.files.length === 0) {
+        clearImportDraft();
+      } else {
+        scheduleImportDraftSave();
+      }
     }
   }
 
@@ -7835,6 +8024,7 @@ function bindSmartImport() {
           importState.activeFileIndex = fileIndex;
           updateImportFileSelectionUI();
           updateFileNavigatorUI();
+          scheduleImportDraftSave();
           await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: true });
         });
       });
@@ -7847,6 +8037,7 @@ function bindSmartImport() {
           ensureFileConfigs();
           importState.fileConfigs[fileIndex].companyName = input.value || '';
           importState.fileConfigs[fileIndex].companyId = null;
+          scheduleImportDraftSave();
         });
       });
     }
@@ -7922,35 +8113,74 @@ function bindSmartImport() {
     fileNavWrap.classList.remove('hidden');
   }
 
-  function openModal() {
-    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
+  async function openModal() {
+    cancelPreviewRequest();
+    importState = createEmptyImportState('dpgf');
     setDpgfSheetsDropdownOpen(false);
     setImportControlsCollapsed(true);
-    setImportMode('dpgf');
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
     fileInput.value = '';
-    updateImportFileSelectionUI();
     qs('#import-company-new').value = '';
     qs('#import-company-select').value = '';
-    // Remplir le select companies
     populateImportCompanies();
+
+    let restored = false;
+    try {
+      const draft = await loadImportDraft();
+      if (draft && Number(draft.lotId) === Number(currentLot?.id)) {
+        setImportMode(draft.mode || 'dpgf');
+        restored = restoreImportDraft(draft);
+      }
+    } catch (err) {
+      console.warn('Restauration brouillon import impossible:', err);
+    }
+
+    if (restored) {
+      updateImportFileSelectionUI();
+      updateOfferImportUI();
+      updateFileNavigatorUI();
+      if (importState.preview) {
+        step1.classList.add('hidden');
+        step2.classList.remove('hidden');
+        renderStep2();
+      }
+      showNotify({ title: 'Brouillon restauré', message: 'Votre progression d\'import a été retrouvée.', type: 'info' });
+    } else {
+      setImportMode('dpgf');
+      updateImportFileSelectionUI();
+    }
+
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
   }
 
   function closeModal() {
+    cancelPreviewRequest();
+    if (step3?.classList.contains('hidden') && getSelectedImportFiles().length > 0) {
+      saveImportDraftNow().catch((err) => console.warn('Sauvegarde brouillon import impossible:', err));
+    }
     setDpgfSheetsDropdownOpen(false);
     setImportControlsCollapsed(true);
     modal.classList.add('hidden');
     modal.style.display = 'none';
-    importState = { mode: 'dpgf', file: null, files: [], fileConfigs: [], globalMapping: null, activeFileIndex: 0, preview: null, mapping: {}, excludedRows: new Set(), autoExcludedRows: new Set(), fileId: null, selectedSheetsDpgf: [], sheetConfigsDpgf: {}, dpgfBaseMapping: null };
+    importState = createEmptyImportState('dpgf');
   }
 
   openBtn.addEventListener('click', openModal);
   closeBtn?.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  window.addEventListener('beforeunload', () => {
+    if (!modal.classList.contains('hidden') && step3?.classList.contains('hidden') && getSelectedImportFiles().length > 0) {
+      saveImportDraftNow().catch(() => {});
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && !modal.classList.contains('hidden') && step3?.classList.contains('hidden') && getSelectedImportFiles().length > 0) {
+      saveImportDraftNow().catch(() => {});
+    }
+  });
   toggleControlsBtn?.addEventListener('click', () => {
     setImportControlsCollapsed(!importControlsCollapsed);
   });
@@ -8011,6 +8241,7 @@ function bindSmartImport() {
     updateImportFileSelectionUI();
     updateOfferImportUI();
     updateFileNavigatorUI();
+    scheduleImportDraftSave();
   }
 
   function populateImportCompanies() {
@@ -8030,9 +8261,11 @@ function bindSmartImport() {
   const companySelect = qs('#import-company-select');
   companyNewInput?.addEventListener('input', () => {
     if (companyNewInput.value.trim()) companySelect.value = '';
+    scheduleImportDraftSave();
   });
   companySelect?.addEventListener('change', () => {
     if (companySelect.value) companyNewInput.value = '';
+    scheduleImportDraftSave();
   });
 
   // File selection
@@ -8073,6 +8306,7 @@ function bindSmartImport() {
     updateImportFileSelectionUI();
     updateOfferImportUI();
     updateFileNavigatorUI();
+    scheduleImportDraftSave();
   });
 
   goStep2Btn?.addEventListener('click', async () => {
@@ -8085,6 +8319,13 @@ function bindSmartImport() {
   async function doPreview(sheetName, sourceFile = importState.file, options = {}) {
     const { keepExistingMapping = false, switchToStep2 = true } = options;
     if (!sourceFile || !currentLot) return;
+    const lotId = currentLot.id;
+    if (previewAbortController) {
+      previewAbortController.abort();
+    }
+    const requestSeq = ++previewRequestSeq;
+    const abortController = new AbortController();
+    previewAbortController = abortController;
     const files = getSelectedImportFiles();
     const fileIdx = Math.max(0, files.indexOf(sourceFile));
     importState.activeFileIndex = fileIdx;
@@ -8101,14 +8342,16 @@ function bindSmartImport() {
 
     try {
       showLoader();
-      const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-preview`, {
+      const resp = await fetch(`${API_BASE}/lots/${lotId}/import-preview`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
         credentials: 'include',
+        signal: abortController.signal,
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Erreur preview');
+      if (requestSeq !== previewRequestSeq || !currentLot || Number(currentLot.id) !== Number(lotId)) return;
 
       importState.preview = data;
       importState.file = sourceFile;
@@ -8134,6 +8377,7 @@ function bindSmartImport() {
       renderStep2();
       updateOfferImportUI();
       updateFileNavigatorUI();
+      scheduleImportDraftSave();
       if (switchToStep2) {
         step1.classList.add('hidden');
         step2.classList.remove('hidden');
@@ -8141,9 +8385,15 @@ function bindSmartImport() {
         setImportControlsCollapsed(true);
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       showNotify({ title: 'Erreur', message: err.message, type: 'error' });
     } finally {
-      hideLoader();
+      if (requestSeq === previewRequestSeq) {
+        if (previewAbortController === abortController) {
+          previewAbortController = null;
+        }
+        hideLoader();
+      }
     }
   }
 
@@ -8153,6 +8403,7 @@ function bindSmartImport() {
       saveDpgfSheetConfig(importState.preview?.selectedSheet);
     }
     persistActiveFileConfig(false);
+    scheduleImportDraftSave();
     doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: !canUseDpgfMultiSheets(), switchToStep2: false });
   });
 
@@ -8165,6 +8416,7 @@ function bindSmartImport() {
       if (val >= 1 && val <= 100 && importState.preview) {
         persistActiveFileConfig(false);
         importState.preview.headerRow = val;
+        scheduleImportDraftSave();
         doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: true, switchToStep2: false });
       }
     }, 400);
@@ -8176,6 +8428,7 @@ function bindSmartImport() {
     persistActiveFileConfig(true);
     importState.activeFileIndex -= 1;
     updateFileNavigatorUI();
+    scheduleImportDraftSave();
     await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: false });
   });
 
@@ -8185,6 +8438,7 @@ function bindSmartImport() {
     persistActiveFileConfig(true);
     importState.activeFileIndex += 1;
     updateFileNavigatorUI();
+    scheduleImportDraftSave();
     await doPreview(undefined, getActiveImportFile(), { keepExistingMapping: false, switchToStep2: false });
   });
 
@@ -8238,6 +8492,7 @@ function bindSmartImport() {
             else selected.delete(s);
             importState.selectedSheetsDpgf = [...selected];
             updateDpgfSheetsSummary(available);
+            scheduleImportDraftSave();
           });
           const txt = document.createElement('span');
           txt.textContent = s;
@@ -8316,14 +8571,14 @@ function bindSmartImport() {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '×'; btn.title = 'Supprimer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.add(rowNum); persistActiveFileConfig(false); renderPreviewTable(); });
+      btn.addEventListener('click', () => { excluded.add(rowNum); persistActiveFileConfig(false); renderPreviewTable(); scheduleImportDraftSave(); });
       return btn;
     }
     function makeRestoreBtn(rowNum) {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '↩'; btn.title = 'Restaurer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.delete(rowNum); persistActiveFileConfig(false); renderPreviewTable(); });
+      btn.addEventListener('click', () => { excluded.delete(rowNum); persistActiveFileConfig(false); renderPreviewTable(); scheduleImportDraftSave(); });
       return btn;
     }
 
@@ -8388,6 +8643,7 @@ function bindSmartImport() {
         applyAutoExcludeRowsBeforeFirstArticle();
         persistActiveFileConfig(false);
         renderPreviewTable();
+        scheduleImportDraftSave();
       });
 
       if (color !== 'transparent') {
@@ -8637,6 +8893,7 @@ function bindSmartImport() {
       }
 
       // Afficher résultat
+      await clearImportDraft();
       renderStep3(finalResult);
       step1.classList.add('hidden');
       step2.classList.add('hidden');

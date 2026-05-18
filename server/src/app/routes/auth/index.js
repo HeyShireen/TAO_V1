@@ -12,6 +12,12 @@ import { generateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAll
 
 const router = express.Router();
 
+function isPublicRegistrationDisabled() {
+  return process.env.DISABLE_PUBLIC_REGISTRATION === 'true'
+    || process.env.BETA_ACCESS_MODE === 'true'
+    || process.env.DEMO_MODE === 'true';
+}
+
 // Helper: create token
 function sign(user) {
   const jwtSecret = process.env.JWT_SECRET;
@@ -21,6 +27,10 @@ function sign(user) {
 
 // Register: auto-inscription publique avec honeypot anti-bot
 router.post('/register', emailRateLimiter, honeypotValidator, async (req, res) => {
+  if (isPublicRegistrationDisabled()) {
+    return res.status(403).json({ error: 'La creation de compte est desactivee pour la beta. Utilisez le compte beta pre-rempli.' });
+  }
+
   const { email, password } = req.body;
   
   // Validation

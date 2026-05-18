@@ -27,6 +27,7 @@ module.exports = {
         PORT: 3000,
         DOTENV_CONFIG_PATH: '.env.demo',
         DEMO_MODE: 'true',
+        BETA_ACCESS_MODE: 'true',
         ALLOWED_ORIGINS: 'https://demo.ao-link.fr,https://ao-link.fr',
         HTTPS_PROXY: 'true',
       },

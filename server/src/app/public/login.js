@@ -18,7 +18,9 @@
   const backToLoginBtn = qs('#back-to-login');
   const registerMsg = qs('#login-msg');
   const rememberMe = qs('#remember-me');
+  const forgotPasswordLink = qs('#forgot-password-link');
   let loginCooldownTimer = null;
+  let betaAccessConfig = null;
 
   function stopLoginCooldownTimer() {
     if (loginCooldownTimer) {
@@ -135,6 +137,10 @@
   }
 
   function showRegister(){
+    if (betaAccessConfig?.enabled) {
+      showLogin();
+      return;
+    }
     form?.classList.add('hidden');
     registerForm?.classList.remove('hidden');
     tabLogin?.classList.add('ghost');
@@ -146,11 +152,37 @@
   tabRegister?.addEventListener('click', showRegister);
   backToLoginBtn?.addEventListener('click', showLogin);
 
+  function applyBetaAccessConfig(config) {
+    betaAccessConfig = config?.betaAccess || null;
+    if (!betaAccessConfig?.enabled) return;
+
+    showLogin();
+
+    if (betaAccessConfig.email) emailEl.value = betaAccessConfig.email;
+    if (betaAccessConfig.password) passEl.value = betaAccessConfig.password;
+
+    const subtitle = qs('.max-480 > p.muted');
+    if (subtitle) {
+      subtitle.textContent = 'Acces beta : le compte est deja pre-rempli, cliquez simplement sur Se connecter.';
+    }
+
+    tabRegister?.classList.add('hidden');
+    registerForm?.classList.add('hidden');
+    backToLoginBtn?.classList.add('hidden');
+    forgotPasswordLink?.closest('p')?.classList.add('hidden');
+    if (rememberMe) rememberMe.checked = false;
+  }
+
+  fetch('/api/public-config', { credentials: 'include' })
+    .then((resp) => resp.ok ? resp.json() : null)
+    .then(applyBetaAccessConfig)
+    .catch(() => {});
+
   // Prefill depuis le stockage local (si l'utilisateur a choisi de se souvenir)
   try {
     const savedEmail = localStorage.getItem('rememberedEmail');
     const savedPassword = localStorage.getItem('rememberedPassword');
-    if (savedEmail && savedPassword) {
+    if (savedEmail && savedPassword && !betaAccessConfig?.enabled) {
       emailEl.value = savedEmail;
       passEl.value = savedPassword;
       if (rememberMe) rememberMe.checked = true;

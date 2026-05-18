@@ -38,9 +38,14 @@
 4. Modifier ou ajouter ces variables :
    ```
    DEMO_MODE=true
+   BETA_ACCESS_MODE=true
+   DEMO_USER_EMAIL=demo@ao-link.fr
+   DEMO_USER_PASSWORD=un-mot-de-passe-beta-de-12-caracteres-minimum
    ALLOWED_ORIGINS=https://demo.ao-link.fr,https://ao-link.fr
    HTTPS_PROXY=true
    ```
+
+   Quand `BETA_ACCESS_MODE=true` ou `DEMO_MODE=true`, la page `/login` pre-remplit le compte beta et masque la creation de compte. L'API `/api/auth/register` refuse aussi les inscriptions publiques.
 
 ---
 
@@ -109,12 +114,14 @@ server {
 
 ## ÉTAPE 5 : Créer un compte utilisateur démo
 
-1. Se connecter à l'application en tant qu'admin
-2. Créer un nouvel utilisateur avec ces identifiants :
-   - **Email** : demo@ao-link.fr
-   - **Mot de passe** : générer un mot de passe dédié et le transmettre séparément
-   - **Rôle** : Accès complet
-3. Noter ces identifiants pour les fournir aux utilisateurs démo
+1. Definir `DEMO_USER_EMAIL` et `DEMO_USER_PASSWORD` dans `.env.demo`.
+2. Le serveur cree ou met a jour automatiquement ce compte au demarrage quand le mode beta/demo est actif.
+3. Pour charger aussi les donnees demo, lancer :
+   ```bash
+   cd /home/tao/TAO/TAO_V1/server
+   npm run demo:seed
+   ```
+4. Le compte sera verifie automatiquement et disponible directement sur `/login`.
 
 ---
 

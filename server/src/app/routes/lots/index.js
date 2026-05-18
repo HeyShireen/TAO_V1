@@ -14,16 +14,47 @@ router.use(requireAuth);
 // Cache temporaire des fichiers import (preview → apply sans re-upload)
 const tempFileCache = new Map();
 const TEMP_FILE_TTL = 10 * 60 * 1000; // 10 minutes
+const TEMP_FILE_MAX_ENTRIES = 12;
+const TEMP_FILE_MAX_BYTES = 80 * 1024 * 1024; // 80 Mo max en memoire
+
+function getBufferSize(buffer) {
+  if (!buffer) return 0;
+  if (typeof buffer.byteLength === 'number') return buffer.byteLength;
+  if (typeof buffer.length === 'number') return buffer.length;
+  return 0;
+}
+
+function getTempCacheBytes() {
+  let total = 0;
+  for (const entry of tempFileCache.values()) {
+    total += entry.size || getBufferSize(entry.buffer);
+  }
+  return total;
+}
+
+function cleanupTempFileCache(now = Date.now()) {
+  for (const [k, v] of tempFileCache) {
+    if (now - v.ts > TEMP_FILE_TTL) tempFileCache.delete(k);
+  }
+
+  while (
+    tempFileCache.size > TEMP_FILE_MAX_ENTRIES
+    || getTempCacheBytes() > TEMP_FILE_MAX_BYTES
+  ) {
+    const oldestKey = tempFileCache.keys().next().value;
+    if (!oldestKey) break;
+    tempFileCache.delete(oldestKey);
+  }
+}
+
 function cacheTempFile(buffer, meta) {
   const id = crypto.randomUUID();
-  tempFileCache.set(id, { buffer, ts: Date.now(), ...meta });
-  // Nettoyage des vieux fichiers
-  for (const [k, v] of tempFileCache) {
-    if (Date.now() - v.ts > TEMP_FILE_TTL) tempFileCache.delete(k);
-  }
+  tempFileCache.set(id, { buffer, ts: Date.now(), size: getBufferSize(buffer), ...meta });
+  cleanupTempFileCache();
   return id;
 }
 function getTempFile(id) {
+  cleanupTempFileCache();
   const entry = tempFileCache.get(id);
   if (!entry) return null;
   if (Date.now() - entry.ts > TEMP_FILE_TTL) { tempFileCache.delete(id); return null; }

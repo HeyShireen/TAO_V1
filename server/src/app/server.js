@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
 
 import { query, ensureSchema } from './db.js'
+import { hashPassword } from './utils/hash.js'
 import { initRedis } from './utils/redis.js'
 import { sanitizeInput } from './middleware/security.js'
 import { demoModeMiddleware, isDemoMode } from './middleware/demo-mode.js'
@@ -44,6 +45,41 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 if (isDemoMode()) {
   console.log('Mode DEMO active - actions destructives limitees');
+}
+
+function isBetaAccessMode() {
+  return process.env.BETA_ACCESS_MODE === 'true' || isDemoMode();
+}
+
+async function ensureBetaAccessUser() {
+  if (!isBetaAccessMode()) return;
+
+  const email = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim().toLowerCase();
+  const password = process.env.BETA_USER_PASSWORD || process.env.DEMO_USER_PASSWORD || '';
+  const role = process.env.BETA_USER_ROLE || 'responsable';
+
+  if (!password) {
+    console.warn('Mode beta actif, mais aucun BETA_USER_PASSWORD/DEMO_USER_PASSWORD n\'est defini.');
+    return;
+  }
+
+  const passwordHash = await hashPassword(password);
+  const existing = await query('SELECT id FROM users WHERE lower(email) = lower($1)', [email]);
+
+  if (existing.rowCount > 0) {
+    await query(
+      'UPDATE users SET password_hash = $2, role = $3, email_verified = true WHERE id = $1',
+      [existing.rows[0].id, passwordHash, role]
+    );
+    console.log(`Compte beta mis a jour: ${email}`);
+    return;
+  }
+
+  await query(
+    'INSERT INTO users (email, password_hash, role, email_verified) VALUES ($1, $2, $3, true)',
+    [email, passwordHash, role]
+  );
+  console.log(`Compte beta cree: ${email}`);
 }
 
 // Valider que les origines sont configurées en production
@@ -157,6 +193,20 @@ app.use(demoModeMiddleware)
 
 // API
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
+app.get('/api/public-config', (_req, res) => {
+  const betaAccessEnabled = isBetaAccessMode();
+  const betaEmail = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim();
+  const betaPassword = process.env.BETA_USER_PASSWORD || process.env.DEMO_USER_PASSWORD || '';
+
+  res.json({
+    betaAccess: {
+      enabled: betaAccessEnabled,
+      email: betaAccessEnabled ? betaEmail : '',
+      password: betaAccessEnabled ? betaPassword : '',
+      registrationDisabled: betaAccessEnabled || process.env.DISABLE_PUBLIC_REGISTRATION === 'true',
+    },
+  });
+})
 app.get('/api/healthz', async (_req, res) => {
   try {
     const r = await query('SELECT 1')
@@ -256,6 +306,7 @@ app.use(errorHandler)
 // Init BDD + Redis puis lancement
 await initRedis()
 await ensureSchema()
+await ensureBetaAccessUser()
 const port = process.env.PORT || 4000
 app.listen(port, '0.0.0.0', () => {
   console.log(`✅ Serveur démarré sur le port ${port}`)
