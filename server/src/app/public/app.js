@@ -4074,26 +4074,15 @@ async function exportRoundsComparisonExcel() {
   try {
     const { queryParams, exportParams } = getRoundsComparisonExportParams();
     const requestUrl = `${API_BASE}/exports/rounds-comparison/${currentProject.id}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const res = await fetch(requestUrl, {
+    await downloadFromApi(requestUrl, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      filenameFallback: `ComparaisonTours_${currentProject?.name || 'Projet'}.xlsx`,
+      body: {
         simulations: exportParams.simulations,
         simulationRoundId: exportParams.simulationRoundId,
         selectedOptions: exportParams.selectedOptions
-      })
+      }
     });
-    if (!res.ok) throw new Error('Erreur export');
-    const blob = await res.blob();
-    const downloadUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `ComparaisonTours_${currentProject?.name}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(downloadUrl);
   } catch (err) {
     showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
   }
@@ -4194,8 +4183,16 @@ async function exportCurrentDataExcel() {
     showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
     return;
   }
+  const isCompareContext = dataExportContext === 'lot-compare';
+  if (isCompareContext && !currentLot) {
+    showNotify({ title:'Validation', message:'Sélectionnez un lot', type:'info' });
+    return;
+  }
   try {
-    const res = await fetch(`${API_BASE}/exports/summary/${currentRound.id}`, {
+    const exportUrl = isCompareContext
+      ? `${API_BASE}/exports/lot-comparison/${currentLot.id}?round_id=${currentRound.id}`
+      : `${API_BASE}/exports/summary/${currentRound.id}`;
+    const res = await fetch(exportUrl, {
       credentials: 'include'
     });
     if (!res.ok) throw new Error('Erreur export');
@@ -4203,7 +4200,9 @@ async function exportCurrentDataExcel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`;
+    a.download = isCompareContext
+      ? `Comparatif_${currentLot?.code || currentLot?.id}_${currentLot?.name || ''}_Tour${currentRound.round_number}.xlsx`
+      : `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -4307,10 +4306,10 @@ async function confirmDataExport() {
           to,
           subject,
           message,
-          exportType: 'summary',
-          exportParams: {
-            roundId: currentRound.id
-          }
+          exportType: dataExportContext === 'lot-compare' ? 'lot-comparison' : 'summary',
+          exportParams: dataExportContext === 'lot-compare'
+            ? { lotId: currentLot?.id, roundId: currentRound.id }
+            : { roundId: currentRound.id }
         }
       });
       closeDataExportModal();

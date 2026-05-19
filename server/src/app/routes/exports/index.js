@@ -4,14 +4,283 @@ import ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, BorderStyle, UnderlineType, HeadingLevel, AlignmentType } from 'docx';
 import JSZip from 'jszip';
 import nodemailer from 'nodemailer';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { canViewProject } from '../../utils/permissions.js';
 
 const router = Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const LOT_COMPARISON_TEMPLATE = path.join(__dirname, '../../templates/comparatif-etancheite-template.xlsx');
+const ROUNDS_COMPARISON_TEMPLATE = path.join(__dirname, '../../templates/recapitulatif-template.xlsx');
+const DMX_LOGO_PATH = path.join(__dirname, '../../public/assets/logo.png');
 
 // Toutes les routes nécessitent authentification
 router.use(requireAuth);
+
+const EXPORT_CURRENCY_FMT = '#,##0.00 "€"';
+const EXPORT_PERCENT_FMT = '0.00%';
+const EXPORT_QTY_FMT = '#,##0.##';
+const DEFAULT_LOT_THRESHOLDS = {
+  qty_very_low_threshold: 25,
+  qty_low_threshold: 10,
+  qty_high_threshold: 10,
+  qty_very_high_threshold: 25,
+  price_very_low_threshold: 25,
+  price_low_threshold: 10,
+  price_high_threshold: 10,
+  price_very_high_threshold: 25,
+  amount_very_low_threshold: 25,
+  amount_low_threshold: 10,
+  amount_high_threshold: 10,
+  amount_very_high_threshold: 25
+};
+const QUESTION_EXPORT_STYLES = {
+  veryLow: { fg: 'FF000000', bg: 'FFBFD7FF', accent: 'FF0D6EFD', bold: true },
+  low: { fg: 'FF000000', bg: 'FFBDEFF8', accent: 'FF0DCAF0', bold: true },
+  high: { fg: 'FF000000', bg: 'FFFFD7B8', accent: 'FFFD7E14', bold: true },
+  veryHigh: { fg: 'FF000000', bg: 'FFF2B8BE', accent: 'FFDC3545', bold: true },
+  unanswered: { fg: 'FF000000', bg: 'FFFFF3CD', accent: 'FFFFC107', bold: true },
+  unitMismatch: { fg: 'FF000000', bg: 'FFFFE3A8', accent: 'FFF59E0B', bold: true },
+  validated: { fg: 'FF000000', bg: 'FFC9EBD3', accent: 'FF28A745', bold: true }
+};
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeHexColor(value, fallback = 'FFFFF3CD') {
+  const raw = String(value || '').trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) return `FF${raw.toUpperCase()}`;
+  if (/^[0-9a-fA-F]{8}$/.test(raw)) return raw.toUpperCase();
+  return fallback;
+}
+
+function normalizeUnitLabel(value) {
+  if (!value) return '';
+  return String(value).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')
+    .replace(/[²]/g, '2')
+    .replace(/[³]/g, '3')
+    .replace(/[-\u2013\u2014]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function canonicalizeUnit(value) {
+  const compact = normalizeUnitLabel(value).replace(/\s/g, '');
+  if (!compact) return '';
+  return new Map([
+    ['uni', 'u'],
+    ['u', 'u'],
+    ['ens', 'fft'],
+    ['fft', 'fft'],
+    ['ml', 'm'],
+    ['m', 'm'],
+    ['m2', 'm2'],
+    ['m3', 'm3']
+  ]).get(compact) || compact;
+}
+
+function hasBlockingUnitMismatch(expectedUnit, offeredUnit, offeredAmount) {
+  const amount = Number.parseFloat(offeredAmount);
+  if (!Number.isFinite(amount) || amount === 0) return false;
+  const expected = canonicalizeUnit(expectedUnit);
+  const offered = canonicalizeUnit(offeredUnit);
+  if (!expected || !offered) return false;
+  return expected !== offered;
+}
+
+function getDeviationLevel(deviationPct, veryLow, low, high, veryHigh) {
+  if (!Number.isFinite(deviationPct)) return null;
+  if (deviationPct < -Math.abs(veryLow)) return 'veryLow';
+  if (deviationPct < -Math.abs(low)) return 'low';
+  if (deviationPct > Math.abs(veryHigh)) return 'veryHigh';
+  if (deviationPct > Math.abs(high)) return 'high';
+  return null;
+}
+
+function applyQuestionExportStyle(cell, styleKey, options = {}) {
+  const style = QUESTION_EXPORT_STYLES[styleKey];
+  if (!style) return;
+  const bg = options.bg || style.bg;
+  const accent = options.accent || style.accent || style.fg;
+  cell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: bg },
+    bgColor: { argb: bg }
+  };
+  cell.font = { ...(cell.font || {}), color: { argb: style.fg }, bold: style.bold };
+  cell.border = {
+    ...(cell.border || {}),
+    left: { style: 'medium', color: { argb: accent } },
+    right: cell.border?.right || { style: 'thin' },
+    top: cell.border?.top || { style: 'thin' },
+    bottom: cell.border?.bottom || { style: 'thin' }
+  };
+}
+
+function getCompanyTableEndColumn(companyCount, firstCompanyCol = 11, companyWidth = 9) {
+  return firstCompanyCol + Math.max(companyCount, 0) * companyWidth - 1;
+}
+
+function resetTableArea(worksheet, { firstRow, lastRow, lastCol }) {
+  for (let r = firstRow; r <= lastRow; r += 1) {
+    worksheet.getRow(r).style = {};
+    for (let c = 1; c <= lastCol; c += 1) {
+      const cell = worksheet.getCell(r, c);
+      const value = cell.value;
+      cell.style = {};
+      cell.value = value;
+      cell.fill = { type: 'pattern', pattern: 'none' };
+      cell.border = {};
+    }
+  }
+}
+
+function trimWorksheetAfterColumn(worksheet, lastCol) {
+  const maxCol = Math.max(worksheet.columnCount || 0, worksheet.actualColumnCount || 0, 120);
+  for (let c = lastCol + 1; c <= maxCol; c += 1) {
+    const column = worksheet.getColumn(c);
+    column.hidden = true;
+    column.width = 0.1;
+    column.eachCell({ includeEmpty: true }, cell => {
+      cell.value = null;
+      cell.style = {};
+      cell.fill = { type: 'pattern', pattern: 'none' };
+      cell.border = {};
+    });
+  }
+}
+
+function addDmxLogoAboveMoe(workbook, worksheet, moeStartCol) {
+  try {
+    const imageId = workbook.addImage({
+      filename: DMX_LOGO_PATH,
+      extension: 'png'
+    });
+    worksheet.addImage(imageId, {
+      tl: { col: moeStartCol - 1, row: 10.2 },
+      br: { col: moeStartCol + 3, row: 16.2 },
+      editAs: 'oneCell'
+    });
+  } catch (err) {
+    console.warn('Logo DMX non inséré dans l’export comparatif:', err.message);
+  }
+}
+
+function applyMetricQuestionStyle({ valueCell, deltaCell = null, deviationPct, thresholds, metric }) {
+  const level = getMetricQuestionStyleKey(deviationPct, thresholds, metric);
+  if (!level) return;
+  applyQuestionExportStyle(valueCell, level);
+  if (deltaCell) applyQuestionExportStyle(deltaCell, level);
+}
+
+function getMetricQuestionStyleKey(deviationPct, thresholds, metric) {
+  return getDeviationLevel(
+    deviationPct,
+    thresholds[`${metric}_very_low_threshold`],
+    thresholds[`${metric}_low_threshold`],
+    thresholds[`${metric}_high_threshold`],
+    thresholds[`${metric}_very_high_threshold`]
+  );
+}
+
+function fmtThreshold(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))).replace('.', ',');
+}
+
+function metricLegendLabel(metricLabel, direction, threshold) {
+  const prefix = direction === 'low' ? 'inférieur' : 'supérieur';
+  return `${metricLabel} ${prefix} à ${fmtThreshold(threshold)} %`;
+}
+
+function getQuestionLegendRows(thresholds, questionConfig) {
+  return [
+    {
+      qty: 'QUANTITE',
+      price: 'PRIX UNITAIRE',
+      note: 'MONTANT',
+      bg: QUESTION_EXPORT_STYLES.veryLow.bg
+    },
+    {
+      qty: `Quantité très basse (< -${fmtThreshold(thresholds.qty_very_low_threshold)} %)`,
+      price: `Prix très bas (< -${fmtThreshold(thresholds.price_very_low_threshold)} %)`,
+      note: `Montant très bas (< -${fmtThreshold(thresholds.amount_very_low_threshold)} %)`,
+      bg: QUESTION_EXPORT_STYLES.veryLow.bg
+    },
+    {
+      qty: `Quantité basse (< -${fmtThreshold(thresholds.qty_low_threshold)} %)`,
+      price: `Prix bas (< -${fmtThreshold(thresholds.price_low_threshold)} %)`,
+      note: `Montant bas (< -${fmtThreshold(thresholds.amount_low_threshold)} %)`,
+      bg: QUESTION_EXPORT_STYLES.low.bg
+    },
+    {
+      qty: `Quantité haute (> ${fmtThreshold(thresholds.qty_high_threshold)} %)`,
+      price: `Prix haut (> ${fmtThreshold(thresholds.price_high_threshold)} %)`,
+      note: `Montant haut (> ${fmtThreshold(thresholds.amount_high_threshold)} %)`,
+      bg: QUESTION_EXPORT_STYLES.high.bg
+    },
+    {
+      qty: `Quantité très haute (> ${fmtThreshold(thresholds.qty_very_high_threshold)} %)`,
+      price: `Prix très haut (> ${fmtThreshold(thresholds.price_very_high_threshold)} %)`,
+      note: `Montant très haut (> ${fmtThreshold(thresholds.amount_very_high_threshold)} %)`,
+      bg: QUESTION_EXPORT_STYLES.veryHigh.bg
+    }
+  ];
+}
+
+function sanitizeFilenamePart(value, fallback = 'Export') {
+  return String(value || fallback)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || fallback;
+}
+
+function applyBorder(cell, border = {}) {
+  const existing = cell.border || {};
+  const keepStrong = (provided, current, fallback) => {
+    if (current?.style === 'medium' && provided?.style === 'thin') return current;
+    return provided || current || fallback;
+  };
+  cell.border = {
+    top: keepStrong(border.top, existing.top, { style: 'thin' }),
+    left: keepStrong(border.left, existing.left, { style: 'thin' }),
+    bottom: keepStrong(border.bottom, existing.bottom, { style: 'thin' }),
+    right: keepStrong(border.right, existing.right, { style: 'thin' })
+  };
+}
+
+function unmergeAllCells(worksheet) {
+  const merges = [...(worksheet.model?.merges || [])];
+  for (const range of merges) {
+    worksheet.unMergeCells(range);
+  }
+}
+
+function clearWorksheetValues(worksheet) {
+  worksheet.eachRow({ includeEmpty: true }, row => {
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.value = null;
+    });
+  });
+  worksheet.conditionalFormattings = [];
+}
+
+function formatLotLabel(lot) {
+  const code = lot?.code ? `LOT ${lot.code}` : `LOT ${lot?.id || ''}`;
+  const name = lot?.name ? ` : ${String(lot.name).toUpperCase()}` : '';
+  return `${code}${name}`.trim();
+}
 
 // Transporteur email (réutilise la même config que utils/email.js)
 let emailTransporter = null;
@@ -35,6 +304,476 @@ function getEmailTransporter() {
 }
 
 // Export Excel du récapitulatif d'un tour
+async function fetchLotComparisonData({ lotId, roundId, req }) {
+  const userId = req.user.id;
+  const isEntreprise = req.user?.role === 'entreprise';
+  const userCompanyId = req.user?.company_id || null;
+
+  const lotRes = await query(
+    `SELECT l.*, p.name AS project_name, p.reference, p.client, p.location, p.study_phase
+     FROM lots l
+     JOIN projects p ON p.id = l.project_id
+     WHERE l.id = $1`,
+    [lotId]
+  );
+  if (lotRes.rowCount === 0) {
+    const err = new Error('Lot introuvable');
+    err.status = 404;
+    throw err;
+  }
+  const lot = lotRes.rows[0];
+  const canView = await canViewProject(userId, lot.project_id, req.user.role, userCompanyId);
+  if (!canView) {
+    const err = new Error('Accès refusé');
+    err.status = 403;
+    throw err;
+  }
+
+  const roundRes = roundId
+    ? await query('SELECT * FROM rounds WHERE id = $1 AND project_id = $2', [roundId, lot.project_id])
+    : { rows: [] };
+  const round = roundRes.rows[0] || null;
+
+  const itemsRes = await query(
+    `SELECT i.*, p.num AS parent_num, p.designation AS parent_designation
+     FROM items i
+     LEFT JOIN items p ON p.id = i.parent_item_id
+     WHERE i.lot_id = $1
+     ORDER BY i.position NULLS LAST, i.id`,
+    [lotId]
+  );
+  const items = itemsRes.rows;
+  const itemIds = items.map(i => Number(i.id)).filter(Number.isFinite);
+
+  const moeRes = (!isEntreprise && itemIds.length)
+    ? await query('SELECT * FROM moe_items WHERE item_id = ANY($1::int[])', [itemIds])
+    : { rows: [] };
+  const moeByItem = new Map(moeRes.rows.map(row => [Number(row.item_id), row]));
+
+  const companiesParams = [lotId];
+  let companyWhere = '';
+  if (isEntreprise && userCompanyId) {
+    companiesParams.push(userCompanyId);
+    companyWhere = 'AND c.id = $2';
+  }
+  const companiesRes = await query(
+    `SELECT c.id, c.name, c.color
+     FROM lot_companies lc
+     JOIN companies c ON c.id = lc.company_id
+     WHERE lc.lot_id = $1 ${companyWhere}
+     ORDER BY lc.created_at, c.id`,
+    companiesParams
+  );
+  const companies = companiesRes.rows;
+
+  const offersParams = [itemIds];
+  let offersWhere = '';
+  if (roundId) {
+    offersParams.push(roundId);
+    offersWhere += ` AND o.round_id = $${offersParams.length}`;
+  }
+  if (isEntreprise && userCompanyId) {
+    offersParams.push(userCompanyId);
+    offersWhere += ` AND o.company_id = $${offersParams.length}`;
+  }
+  const offersRes = itemIds.length
+    ? await query(`SELECT * FROM offers o WHERE o.item_id = ANY($1::int[])${offersWhere}`, offersParams)
+    : { rows: [] };
+
+  const offersByItemCompany = new Map();
+  for (const offer of offersRes.rows) {
+    offersByItemCompany.set(`${Number(offer.item_id)}:${Number(offer.company_id)}`, offer);
+  }
+
+  const thresholdsRes = await query('SELECT * FROM lot_threshold_config WHERE lot_id = $1', [lotId]);
+  const thresholds = { ...DEFAULT_LOT_THRESHOLDS, ...(thresholdsRes.rows[0] || {}) };
+
+  const questionConfigRes = await query(
+    'SELECT unanswered_comment, unanswered_color FROM project_question_config WHERE project_id = $1',
+    [lot.project_id]
+  );
+  const questionConfig = questionConfigRes.rows[0] || {};
+
+  const generatedQuestionsParams = [lotId];
+  let generatedQuestionsWhere = '';
+  if (roundId) {
+    generatedQuestionsParams.push(roundId);
+    generatedQuestionsWhere = `AND round_id = $${generatedQuestionsParams.length}`;
+  }
+  const generatedQuestionsRes = await query(
+    `SELECT item_id, company_id, status, question_text, question_type
+     FROM generated_questions
+     WHERE lot_id = $1 ${generatedQuestionsWhere}`,
+    generatedQuestionsParams
+  );
+  const questionsByItemCompany = new Map();
+  for (const q of generatedQuestionsRes.rows) {
+    if (!q.item_id || !q.company_id) continue;
+    const key = `${Number(q.item_id)}:${Number(q.company_id)}`;
+    if (!questionsByItemCompany.has(key)) questionsByItemCompany.set(key, []);
+    questionsByItemCompany.get(key).push(q);
+  }
+  const validatedQuestions = new Set(
+    generatedQuestionsRes.rows
+      .filter(q => q.status === 'validated' && q.item_id && q.company_id)
+      .map(q => `${Number(q.item_id)}:${Number(q.company_id)}`)
+  );
+
+  return {
+    lot,
+    round,
+    items,
+    moeByItem,
+    companies,
+    offersByItemCompany,
+    thresholds,
+    questionConfig,
+    validatedQuestions,
+    questionsByItemCompany
+  };
+}
+
+async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, companies, offersByItemCompany, thresholds, questionConfig, validatedQuestions, questionsByItemCompany }) {
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.readFile(LOT_COMPARISON_TEMPLATE);
+    for (const sheet of [...workbook.worksheets]) {
+      if (sheet.name !== 'ETANCHEITE') workbook.removeWorksheet(sheet.id);
+    }
+  } catch (err) {
+    console.warn('Template comparatif introuvable, génération depuis un classeur vierge:', err.message);
+  }
+  workbook.creator = 'AO Link';
+  workbook.created = new Date();
+  workbook.calcProperties.fullCalcOnLoad = true;
+
+  const ws = workbook.getWorksheet('ETANCHEITE') || workbook.addWorksheet('ETANCHEITE');
+  unmergeAllCells(ws);
+  clearWorksheetValues(ws);
+
+  const moeStartCol = 5;
+  const firstCompanyCol = 9;
+  const companyWidth = 9;
+  const companyCount = companies.length;
+  const lastCol = Math.max(moeStartCol + 3, getCompanyTableEndColumn(companyCount, firstCompanyCol, companyWidth));
+  const dataStartRow = 19;
+  const lastDataRow = dataStartRow + Math.max(items.length, 1) - 1;
+  const totalRowNumber = lastDataRow + 2;
+  ws.views = [{ state: 'frozen', xSplit: firstCompanyCol - 1, ySplit: 0, topLeftCell: `${ws.getColumn(firstCompanyCol).letter}1`, zoomScale: 55 }];
+
+  if (ws.columnCount > lastCol) {
+    ws.spliceColumns(lastCol + 1, ws.columnCount - lastCol);
+  }
+  resetTableArea(ws, { firstRow: 17, lastRow: Math.max(totalRowNumber, ws.rowCount), lastCol });
+
+  ws.pageSetup = {
+    paperSize: 8,
+    orientation: 'landscape',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 1,
+    horizontalCentered: true,
+    verticalCentered: true,
+    printTitlesRow: '18:18'
+  };
+  ws.pageSetup.printArea = `A1:${ws.getColumn(lastCol).letter}${totalRowNumber + 3}`;
+  const unansweredFill = normalizeHexColor(questionConfig?.unanswered_color, QUESTION_EXPORT_STYLES.unanswered.bg);
+
+  const baseWidths = { 1: 15.6, 2: 4.5, 3: 4.5, 4: 111.4, 5: 10.6, 6: 16.1, 7: 23, 8: 25.5 };
+  for (let c = 1; c <= lastCol; c += 1) {
+    if (baseWidths[c]) {
+      ws.getColumn(c).width = baseWidths[c];
+    } else {
+      const pos = (c - firstCompanyCol) % companyWidth;
+      ws.getColumn(c).width = [6, 16.1, 20, 23, 15.1, 15.1, 22.6, 72, 18.8][pos] || 14;
+    }
+  }
+  for (let r = 5; r <= 18; r += 1) ws.getRow(r).height = r === 18 ? 79.95 : 26.4;
+
+  const titleFont = { name: 'Arial Narrow', size: 18, color: { argb: 'FF000000' } };
+  const headerFont = { name: 'Arial Narrow', size: 18, color: { argb: 'FF000000' } };
+  const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+
+  ws.getCell('D1').value = lot.project_name || 'Nom du projet';
+  ws.getCell('D2').value = lot.reference || 'Déscription de l\'affaire';
+  ws.getCell('D3').value = lot.client || 'Maitre d\'ouvrage';
+  ws.getCell('D4').value = lot.location || 'Maitre d\'œuvre';
+  ws.getCell('D5').value = 'INDICE : 0';
+  ws.getCell('D6').value = `PHASE D'ETUDE : ${lot.study_phase || round?.name || ''}`.trim();
+  ws.getCell('D7').value = new Date();
+  ws.getCell('D7').numFmt = 'dd/mm/yyyy';
+  ws.getCell('D8').value = formatLotLabel(lot);
+  ws.getCell('D9').value = 'TABLEAU D\'ANALYSE DES OFFRES :';
+  ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9'].forEach(addr => {
+    ws.getCell(addr).font = { ...titleFont, bold: addr === 'D1' };
+    ws.getCell(addr).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  });
+
+  ws.mergeCells('B11:D11');
+  ws.getCell('B11').value = 'Légende analyse';
+  ws.getCell('B11').font = { name: 'Calibri', size: 18 };
+  ws.getCell('B11').alignment = { horizontal: 'center', vertical: 'middle' };
+
+  const legend = [
+    ['QUANTITE', 'PRIX UNITAIRE', 'Poste ajouté par MOE', 'FFBDD7EE'],
+    ['Quantité inférieure à 5 %', 'Prix inférieur à 35 %', 'Poste supprimé par MOE', 'FFE2F0D9'],
+    ['Quantité équivalente', 'Prix équivalent', 'Quantité ou prix unitaire à confirmer', 'FFFFF2CC'],
+    ['Quantité supérieure à 2 %', 'Prix supérieur à 10 %', 'Poste non renseigné par l\'entreprise', 'FFFCE4D6']
+  ];
+  legend.forEach(([a, b, cText, color], idx) => {
+    const r = 12 + idx;
+    [a, b, cText].forEach((value, offset) => {
+      const cell = ws.getCell(r, 2 + offset);
+      cell.value = value;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+      cell.font = { name: 'Calibri', size: 18 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      applyBorder(cell, { top: { style: 'medium' }, bottom: { style: 'medium' } });
+    });
+  });
+
+  try { ws.unMergeCells('B11:D11'); } catch (_) {}
+  ws.mergeCells('B11:D11');
+  ws.getCell('B11').value = 'Légende analyse';
+  ws.getCell('B11').font = { name: 'Calibri', size: 18, bold: true };
+  ws.getCell('B11').alignment = { horizontal: 'center', vertical: 'middle' };
+  for (let c = 2; c <= 4; c += 1) {
+    applyBorder(ws.getCell(11, c), {
+      top: { style: 'medium' },
+      bottom: { style: 'medium' },
+      left: c === 2 ? { style: 'medium' } : { style: 'thin' },
+      right: c === 4 ? { style: 'medium' } : { style: 'thin' }
+    });
+  }
+  getQuestionLegendRows(thresholds, questionConfig).forEach((entry, idx) => {
+    const r = 12 + idx;
+    [entry.qty, entry.price, entry.note].forEach((value, offset) => {
+      const c = 2 + offset;
+      const cell = ws.getCell(r, c);
+      cell.value = value;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: entry.bg } };
+      cell.font = { name: 'Calibri', size: 16, bold: idx === 0 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      applyBorder(cell, {
+        top: { style: idx === 0 ? 'medium' : 'thin' },
+        bottom: { style: idx === 4 ? 'medium' : 'thin' },
+        left: c === 2 ? { style: 'medium' } : { style: 'thin' },
+        right: c === 4 ? { style: 'medium' } : { style: 'thin' }
+      });
+    });
+  });
+
+  addDmxLogoAboveMoe(workbook, ws, moeStartCol);
+
+  ws.mergeCells(17, moeStartCol, 17, moeStartCol + 3);
+  ws.getCell(17, moeStartCol).value = 'MOE';
+  ws.getCell(17, moeStartCol).fill = headerFill;
+  ws.getCell(17, moeStartCol).font = headerFont;
+  ws.getCell(17, moeStartCol).alignment = { horizontal: 'center', vertical: 'middle' };
+
+  ['Num', 'Désignation', '', '', '', '', 'U', 'Quantité', 'PU', 'Montant '].forEach((label, idx) => {
+    const cell = ws.getCell(18, idx + 1);
+    cell.value = label;
+    cell.font = headerFont;
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    applyBorder(cell, { top: { style: idx >= 6 ? 'double' : 'thin' } });
+  });
+
+  ['U', 'Quantité', 'PU', 'Montant '].forEach((label, offset) => {
+    const cell = ws.getCell(18, moeStartCol + offset);
+    cell.value = label;
+    cell.font = headerFont;
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    applyBorder(cell, { top: { style: 'double' } });
+  });
+
+  companies.forEach((company, index) => {
+    const start = firstCompanyCol + index * companyWidth;
+    const end = start + companyWidth - 1;
+    ws.mergeCells(17, start, 17, end);
+    const title = ws.getCell(17, start);
+    title.value = company.name || `Entreprise ${index + 1}`;
+    title.fill = headerFill;
+    title.font = { name: 'Calibri', size: 18 };
+    title.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    ['U', 'Quantité', 'PU', 'Montant ', 'Ecart Qtés (en %)', 'Ecart PU (en %)', 'nb remarque', 'Remarque logiciel', 'Questions'].forEach((label, offset) => {
+      const cell = ws.getCell(18, start + offset);
+      cell.value = label;
+      cell.font = headerFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      applyBorder(cell, {
+        left: offset === 0 ? { style: 'double' } : { style: 'thin' },
+        right: offset === companyWidth - 1 ? { style: 'double' } : { style: 'thin' },
+        top: { style: 'double' }
+      });
+    });
+  });
+
+  const rowsToWrite = items.length ? items : [{}];
+  rowsToWrite.forEach((item, idx) => {
+    const rowNumber = dataStartRow + idx;
+    const row = ws.getRow(rowNumber);
+    const questionStyleIntents = [];
+    const moe = moeByItem.get(Number(item.id)) || {};
+    const moeQty = toNumberOrNull(moe.qty);
+    const moePu = toNumberOrNull(moe.unit_price);
+
+    row.getCell(1).value = item.num || '';
+    row.getCell(4).value = item.designation || '';
+    row.getCell(moeStartCol).value = item.unit || '';
+    row.getCell(moeStartCol + 1).value = moeQty;
+    row.getCell(moeStartCol + 2).value = moePu;
+    row.getCell(moeStartCol + 3).value = moeQty !== null && moePu !== null ? moeQty * moePu : null;
+
+    companies.forEach((company, cIdx) => {
+      const start = firstCompanyCol + cIdx * companyWidth;
+      const offer = offersByItemCompany.get(`${Number(item.id)}:${Number(company.id)}`) || {};
+      const qty = toNumberOrNull(offer.qty);
+      const pu = toNumberOrNull(offer.unit_price);
+      const amount = toNumberOrNull(offer.amount) ?? (qty !== null && pu !== null ? qty * pu : null);
+      const remark = offer.comment || '';
+      const hasQty = qty !== null && qty !== 0;
+      const hasPu = pu !== null && pu !== 0;
+      const moeHasTotal = moeQty !== null && moeQty > 0 && moePu !== null && moePu > 0;
+      const isUnanswered = moeHasTotal && !hasQty && !hasPu;
+      const unitMismatch = hasBlockingUnitMismatch(item.unit, offer.unit, amount);
+      const isValidated = validatedQuestions?.has(`${Number(item.id)}:${Number(company.id)}`);
+      const qtyDeviation = moeQty && qty !== null ? ((qty - moeQty) / moeQty) * 100 : null;
+      const puDeviation = moePu && pu !== null ? ((pu - moePu) / moePu) * 100 : null;
+      const moeAmount = moeQty !== null && moePu !== null ? moeQty * moePu : null;
+      const amountDeviation = moeAmount && amount !== null ? ((amount - moeAmount) / moeAmount) * 100 : null;
+      const generatedQuestions = questionsByItemCompany?.get(`${Number(item.id)}:${Number(company.id)}`) || [];
+      const questionTexts = generatedQuestions
+        .map(q => String(q.question_text || '').trim())
+        .filter(Boolean);
+      row.getCell(start).value = offer.unit || item.unit || '';
+      row.getCell(start + 1).value = qty;
+      row.getCell(start + 2).value = pu;
+      row.getCell(start + 3).value = amount;
+      row.getCell(start + 4).value = qtyDeviation !== null ? qtyDeviation / 100 : null;
+      row.getCell(start + 5).value = puDeviation !== null ? puDeviation / 100 : null;
+      row.getCell(start + 6).value = questionTexts.length || (remark ? 1 : null);
+      row.getCell(start + 7).value = questionTexts.length ? questionTexts.join('\n') : remark;
+      row.getCell(start + 8).value = '';
+
+      if (isValidated) {
+        [start, start + 1, start + 2, start + 3, start + 4, start + 5].forEach(col => {
+          questionStyleIntents.push({ col, styleKey: 'validated' });
+        });
+      } else if (isUnanswered) {
+        [start, start + 1, start + 2, start + 3].forEach(col => {
+          questionStyleIntents.push({ col, styleKey: 'unanswered', options: { bg: unansweredFill } });
+        });
+      } else if (unitMismatch) {
+        [start, start + 1, start + 2].forEach(col => {
+          questionStyleIntents.push({ col, styleKey: 'unitMismatch' });
+        });
+      } else {
+        const qtyStyle = getMetricQuestionStyleKey(qtyDeviation, thresholds, 'qty');
+        if (qtyStyle) {
+          questionStyleIntents.push({ col: start + 1, styleKey: qtyStyle });
+          questionStyleIntents.push({ col: start + 4, styleKey: qtyStyle });
+        }
+        const priceStyle = getMetricQuestionStyleKey(puDeviation, thresholds, 'price');
+        if (priceStyle) {
+          questionStyleIntents.push({ col: start + 2, styleKey: priceStyle });
+          questionStyleIntents.push({ col: start + 5, styleKey: priceStyle });
+        }
+        const amountStyle = getMetricQuestionStyleKey(amountDeviation, thresholds, 'amount');
+        if (amountStyle) {
+          questionStyleIntents.push({ col: start + 3, styleKey: amountStyle });
+        }
+      }
+    });
+
+    for (let c = 1; c <= lastCol; c += 1) {
+      const cell = row.getCell(c);
+      cell.font = { name: 'Arial Narrow', size: 12, ...(cell.font || {}) };
+      cell.alignment = {
+        vertical: 'middle',
+        wrapText: c === 4 || (c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 7)
+      };
+      applyBorder(cell, {
+        left: c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 0 ? { style: 'double' } : { style: 'thin' },
+        right: c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === companyWidth - 1 ? { style: 'double' } : { style: 'thin' },
+        bottom: { style: 'hair' }
+      });
+    }
+    for (const intent of questionStyleIntents) {
+      applyQuestionExportStyle(row.getCell(intent.col), intent.styleKey, intent.options || {});
+    }
+    companies.forEach((_, cIdx) => {
+      const remarkCell = row.getCell(firstCompanyCol + cIdx * companyWidth + 7);
+      remarkCell.alignment = { ...(remarkCell.alignment || {}), vertical: 'middle', wrapText: true };
+    });
+  });
+
+  const totalRow = ws.getRow(totalRowNumber);
+  totalRow.getCell(4).value = 'TOTAL';
+  totalRow.font = { name: 'Arial Narrow', size: 18, bold: true };
+  for (let c = 1; c <= lastCol; c += 1) {
+    const cell = totalRow.getCell(c);
+    cell.fill = headerFill;
+    applyBorder(cell, { top: { style: 'double' }, bottom: { style: 'double' } });
+  }
+  [moeStartCol + 3, ...companies.map((_, idx) => firstCompanyCol + idx * companyWidth + 3)].forEach(col => {
+    const letter = ws.getColumn(col).letter;
+    totalRow.getCell(col).value = { formula: `SUM(${letter}${dataStartRow}:${letter}${lastDataRow})` };
+    totalRow.getCell(col).numFmt = EXPORT_CURRENCY_FMT;
+  });
+
+  for (let r = dataStartRow; r <= totalRowNumber; r += 1) {
+    ws.getCell(r, moeStartCol + 1).numFmt = EXPORT_QTY_FMT;
+    ws.getCell(r, moeStartCol + 2).numFmt = EXPORT_CURRENCY_FMT;
+    ws.getCell(r, moeStartCol + 3).numFmt = EXPORT_CURRENCY_FMT;
+    companies.forEach((_, idx) => {
+      const start = firstCompanyCol + idx * companyWidth;
+      ws.getCell(r, start + 1).numFmt = EXPORT_QTY_FMT;
+      ws.getCell(r, start + 2).numFmt = EXPORT_CURRENCY_FMT;
+      ws.getCell(r, start + 3).numFmt = EXPORT_CURRENCY_FMT;
+      ws.getCell(r, start + 4).numFmt = EXPORT_PERCENT_FMT;
+      ws.getCell(r, start + 5).numFmt = EXPORT_PERCENT_FMT;
+    });
+  }
+
+  ws.autoFilter = {
+    from: { row: 18, column: 1 },
+    to: { row: lastDataRow, column: lastCol }
+  };
+
+  if (ws.rowCount > totalRowNumber) {
+    ws.spliceRows(totalRowNumber + 1, ws.rowCount - totalRowNumber);
+  }
+  trimWorksheetAfterColumn(ws, lastCol);
+
+  return workbook;
+}
+
+async function handleLotComparisonExport(req, res) {
+  try {
+    const lotId = Number(req.params.lotId);
+    const roundId = req.query.round_id ? Number(req.query.round_id) : null;
+    if (!Number.isFinite(lotId)) return res.status(400).json({ error: 'lotId invalide' });
+
+    const data = await fetchLotComparisonData({ lotId, roundId, req });
+    const workbook = await buildLotComparisonWorkbook(data);
+    const buffer = await workbook.xlsx.writeBuffer();
+    const lotPart = sanitizeFilenamePart(`${data.lot.code || `Lot_${lotId}`}_${data.lot.name || ''}`, `Lot_${lotId}`);
+    const roundPart = data.round ? `_Tour${data.round.round_number}` : '';
+    const filename = `Comparatif_${lotPart}${roundPart}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Export lot comparison error:', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur lors de l\'export' });
+  }
+}
+
+router.get('/lot-comparison/:lotId', handleLotComparisonExport);
+
 async function handleSummaryExport(req, res) {
   try {
     const { roundId } = req.params;
@@ -310,6 +1049,328 @@ async function handleSummaryExport(req, res) {
 }
 router.get('/summary/:roundId', handleSummaryExport);
 
+function cloneExcelStyle(style) {
+  return style ? JSON.parse(JSON.stringify(style)) : {};
+}
+
+function copyExcelRowStyle(sourceRow, targetRow, lastCol) {
+  targetRow.height = sourceRow.height;
+  targetRow.style = cloneExcelStyle(sourceRow.style);
+  for (let c = 1; c <= lastCol; c += 1) {
+    targetRow.getCell(c).style = cloneExcelStyle(sourceRow.getCell(c).style);
+  }
+}
+
+function getRoundComparisonAmount(offersByLotRoundCompany, lotId, roundId, companyId) {
+  if (!lotId || !roundId || !companyId) return null;
+  const value = offersByLotRoundCompany.get(`${lotId}:${roundId}:${companyId}`);
+  return value === undefined ? null : value;
+}
+
+function getSelectedRoundsForComparison(rounds, roundFromId, roundToId) {
+  const selectedTo = rounds.find(r => Number(r.id) === Number(roundToId)) || rounds[rounds.length - 1] || null;
+  const toIndex = selectedTo ? rounds.findIndex(r => Number(r.id) === Number(selectedTo.id)) : -1;
+  const fallbackFrom = toIndex > 0 ? rounds[toIndex - 1] : rounds[0] || null;
+  const selectedFrom = rounds.find(r => Number(r.id) === Number(roundFromId)) || fallbackFrom;
+  return { selectedFrom, selectedTo };
+}
+
+function getRoundExportLabel(round, fallback = '') {
+  if (!round) return fallback;
+  const number = round.round_number ?? '';
+  const name = round.name ? ` - ${round.name}` : '';
+  return `Tour ${number}${name}`.trim();
+}
+
+async function buildRoundsComparisonWorkbook({
+  project,
+  rounds,
+  lots,
+  moeTotals,
+  offersByLotRoundCompany,
+  companiesByLot,
+  bestPriceByLotRound,
+  roundFromId,
+  roundToId,
+  isEntreprise
+}) {
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.readFile(ROUNDS_COMPARISON_TEMPLATE);
+  } catch (err) {
+    console.warn('Template recapitulatif introuvable, generation depuis un classeur vierge:', err.message);
+  }
+
+  workbook.creator = 'AO Link';
+  workbook.created = new Date();
+  workbook.calcProperties.fullCalcOnLoad = true;
+
+  const ws = workbook.getWorksheet('RECAP') || workbook.addWorksheet('RECAP');
+  unmergeAllCells(ws);
+  clearWorksheetValues(ws);
+
+  const { selectedFrom, selectedTo } = getSelectedRoundsForComparison(rounds, roundFromId, roundToId);
+  const fromId = selectedFrom?.id || null;
+  const toId = selectedTo?.id || null;
+  const lastCol = 17; // A:Q, structure du modele AFFAIRE_TAO_RECAPITULATIF
+  const dataStartRow = 14;
+  const templateDataRow = ws.getRow(14);
+  const templateTotalRow = ws.getRow(37);
+  const generatedRows = [];
+  const lotSpans = [];
+  const lotTotals = [];
+
+  for (const lot of lots) {
+    const companiesMap = companiesByLot.get(lot.id) || new Map();
+    const companies = Array.from(companiesMap.entries())
+      .map(([id, name]) => ({ id: Number(id), name }))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+    const rows = companies.length ? companies : [{ id: null, name: '' }];
+    const moeTotal = isEntreprise ? null : (moeTotals.get(lot.id) || 0);
+    const bestFrom = fromId ? (bestPriceByLotRound.get(`${lot.id}:${fromId}`) ?? null) : null;
+    const bestTo = toId ? (bestPriceByLotRound.get(`${lot.id}:${toId}`) ?? null) : null;
+    const ranking = rows
+      .map(company => ({
+        id: company.id,
+        amount: getRoundComparisonAmount(offersByLotRoundCompany, lot.id, toId, company.id)
+      }))
+      .filter(entry => entry.id && Number.isFinite(entry.amount) && entry.amount > 0)
+      .sort((a, b) => a.amount - b.amount);
+    const rankByCompany = new Map(ranking.map((entry, index) => [entry.id, index + 1]));
+    const spanStart = dataStartRow + generatedRows.length;
+
+    for (const company of rows) {
+      const fromAmount = getRoundComparisonAmount(offersByLotRoundCompany, lot.id, fromId, company.id);
+      const toAmount = getRoundComparisonAmount(offersByLotRoundCompany, lot.id, toId, company.id);
+      generatedRows.push({
+        lot,
+        company,
+        moeTotal,
+        fromAmount,
+        toAmount,
+        rank: rankByCompany.get(company.id) || null,
+        isBest: bestTo !== null && toAmount !== null && Math.abs(toAmount - bestTo) < 0.01
+      });
+    }
+
+    lotSpans.push({ start: spanStart, end: dataStartRow + generatedRows.length - 1 });
+    lotTotals.push({ lot, moeTotal, bestFrom, bestTo });
+  }
+
+  const safeRowsCount = Math.max(generatedRows.length, 1);
+  const lastDataRow = dataStartRow + safeRowsCount - 1;
+  const blankRowNumber = lastDataRow + 1;
+  const totalRowNumber = lastDataRow + 2;
+  const deltaRowNumber = totalRowNumber + 1;
+  const percentRowNumber = totalRowNumber + 2;
+
+  if (ws.columnCount > lastCol) {
+    ws.spliceColumns(lastCol + 1, ws.columnCount - lastCol);
+  }
+
+  for (let r = dataStartRow; r <= percentRowNumber; r += 1) {
+    copyExcelRowStyle(r === totalRowNumber ? templateTotalRow : templateDataRow, ws.getRow(r), lastCol);
+  }
+
+  ws.views = [{ state: 'frozen', xSplit: 5, ySplit: 13, topLeftCell: 'F14', zoomScale: 85 }];
+  ws.pageSetup = {
+    paperSize: 8,
+    orientation: 'landscape',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 1,
+    horizontalCentered: true,
+    verticalCentered: true,
+    printTitlesRow: '12:13'
+  };
+  ws.pageSetup.printArea = `A1:Q${percentRowNumber}`;
+
+  const today = new Date();
+  ws.getCell('A1').value = 'AFFAIRE';
+  ws.getCell('A2').value = project.name || project.reference || '';
+  ws.getCell('A3').value = project.client || project.owner_name || 'MO';
+  ws.getCell('A4').value = 'INDICE : V0';
+  ws.getCell('A5').value = `PHASE D'ETUDE : ${project.study_phase || 'ACT'}`;
+  ws.getCell('A6').value = today;
+  ws.getCell('A6').numFmt = 'dd/mm/yyyy';
+  ws.getCell('A8').value = 'TABLEAU COMPARATIF DES OFFRES TCE';
+  ws.getCell('F10').value = selectedFrom?.round_number || '';
+  ws.getCell('G10').value = getRoundExportLabel(selectedFrom, 'Tour de reference');
+  ws.getCell('L8').value = 'Erreur entreprise';
+  ws.getCell('L9').value = 'Montant fort';
+  ws.getCell('L10').value = 'Montant faible';
+
+  ws.mergeCells('C12:E12');
+  ws.mergeCells('F12:L12');
+  ws.mergeCells('M12:Q12');
+  ws.getCell('C12').value = 'MOE';
+  ws.getCell('F12').value = `ENTREPRISES - ${getRoundExportLabel(selectedTo, 'Tour selectionne')}`;
+  ws.getCell('M12').value = 'ANALYSE';
+
+  const headers = [
+    'NUM',
+    'LISTE DES LOTS',
+    'Tranche ferme',
+    'Variante',
+    'Tranche ferme',
+    'Classement',
+    'ENTREPRISES',
+    'Tranche ferme',
+    'Poste ajoutes par l\'entreprise',
+    'Variante',
+    `Prix ${getRoundExportLabel(selectedFrom, 'reference')}`,
+    `Tranche ferme ${getRoundExportLabel(selectedTo, '')}`.trim(),
+    'Ecart reference / tour',
+    'Ecarts MOE (€)',
+    'Ecarts MOE (%)',
+    'MOINS DISANT',
+    'MIEUX DISANT'
+  ];
+  headers.forEach((label, index) => {
+    const cell = ws.getCell(13, index + 1);
+    cell.value = label;
+    cell.alignment = { ...(cell.alignment || {}), horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+
+  for (let r = 12; r <= 13; r += 1) {
+    for (let c = 1; c <= lastCol; c += 1) {
+      const cell = ws.getCell(r, c);
+      cell.font = { ...(cell.font || {}), bold: true };
+      applyBorder(cell);
+    }
+  }
+
+  const rowsToWrite = generatedRows.length ? generatedRows : [{
+    lot: {},
+    company: {},
+    moeTotal: null,
+    fromAmount: null,
+    toAmount: null,
+    rank: null,
+    isBest: false
+  }];
+
+  rowsToWrite.forEach((entry, index) => {
+    const rowNumber = dataStartRow + index;
+    const row = ws.getRow(rowNumber);
+    const moeTotal = entry.moeTotal;
+    const fromAmount = entry.fromAmount;
+    const toAmount = entry.toAmount;
+    const ecartReference = toAmount !== null && fromAmount !== null ? toAmount - fromAmount : null;
+    const ecartMoe = !isEntreprise && toAmount !== null && moeTotal !== null ? toAmount - moeTotal : null;
+    const ecartMoePct = !isEntreprise && ecartMoe !== null && moeTotal ? ecartMoe / moeTotal : null;
+
+    row.getCell(1).value = entry.lot?.code || '';
+    row.getCell(2).value = entry.lot?.name || '';
+    row.getCell(3).value = moeTotal;
+    row.getCell(4).value = null;
+    row.getCell(5).value = moeTotal;
+    row.getCell(6).value = entry.rank;
+    row.getCell(7).value = entry.company?.name || '';
+    row.getCell(8).value = toAmount;
+    row.getCell(9).value = null;
+    row.getCell(10).value = null;
+    row.getCell(11).value = fromAmount;
+    row.getCell(12).value = toAmount;
+    row.getCell(13).value = ecartReference;
+    row.getCell(14).value = ecartMoe;
+    row.getCell(15).value = ecartMoePct;
+    row.getCell(16).value = entry.isBest ? toAmount : null;
+    row.getCell(17).value = null;
+
+    for (let c = 1; c <= lastCol; c += 1) {
+      const cell = row.getCell(c);
+      cell.alignment = { ...(cell.alignment || {}), vertical: 'middle', wrapText: c === 2 || c === 7 };
+      applyBorder(cell);
+    }
+    [3, 5, 8, 11, 12, 13, 14, 16, 17].forEach(col => {
+      row.getCell(col).numFmt = EXPORT_CURRENCY_FMT;
+    });
+    row.getCell(15).numFmt = EXPORT_PERCENT_FMT;
+    if (entry.isBest) {
+      [6, 7, 8, 12, 16].forEach(col => {
+        row.getCell(col).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAD3' } };
+        row.getCell(col).font = { ...(row.getCell(col).font || {}), bold: true };
+      });
+    }
+  });
+
+  for (const span of lotSpans) {
+    if (span.end <= span.start) continue;
+    [1, 2, 3, 4, 5].forEach(col => {
+      try { ws.mergeCells(span.start, col, span.end, col); } catch (_) {}
+      ws.getCell(span.start, col).alignment = { ...(ws.getCell(span.start, col).alignment || {}), vertical: 'middle', wrapText: true };
+    });
+  }
+
+  const blankRow = ws.getRow(blankRowNumber);
+  for (let c = 1; c <= lastCol; c += 1) {
+    blankRow.getCell(c).value = null;
+    blankRow.getCell(c).border = {};
+  }
+
+  const totalMoe = lotTotals.reduce((sum, item) => sum + (Number(item.moeTotal) || 0), 0);
+  const totalFrom = lotTotals.reduce((sum, item) => sum + (Number(item.bestFrom) || 0), 0);
+  const totalTo = lotTotals.reduce((sum, item) => sum + (Number(item.bestTo) || 0), 0);
+  const totalDeltaReference = totalTo - totalFrom;
+  const totalDeltaMoe = isEntreprise ? null : totalTo - totalMoe;
+  const totalDeltaMoePct = !isEntreprise && totalMoe ? totalDeltaMoe / totalMoe : null;
+
+  const totalRow = ws.getRow(totalRowNumber);
+  totalRow.getCell(2).value = 'TOTAL HT';
+  totalRow.getCell(3).value = isEntreprise ? null : totalMoe;
+  totalRow.getCell(5).value = isEntreprise ? null : totalMoe;
+  totalRow.getCell(11).value = totalFrom || null;
+  totalRow.getCell(12).value = totalTo || null;
+  totalRow.getCell(13).value = totalDeltaReference;
+  totalRow.getCell(14).value = totalDeltaMoe;
+  totalRow.getCell(15).value = totalDeltaMoePct;
+  totalRow.getCell(16).value = totalTo || null;
+  totalRow.font = { ...(totalRow.font || {}), bold: true };
+  for (let c = 1; c <= lastCol; c += 1) {
+    applyBorder(totalRow.getCell(c), { top: { style: 'double' }, bottom: { style: 'double' } });
+  }
+  [3, 5, 8, 11, 12, 13, 14, 16, 17].forEach(col => {
+    totalRow.getCell(col).numFmt = EXPORT_CURRENCY_FMT;
+  });
+  totalRow.getCell(15).numFmt = EXPORT_PERCENT_FMT;
+
+  const deltaRow = ws.getRow(deltaRowNumber);
+  deltaRow.getCell(16).value = !isEntreprise ? totalTo - totalMoe : null;
+  deltaRow.getCell(17).value = null;
+  deltaRow.getCell(16).numFmt = EXPORT_CURRENCY_FMT;
+  deltaRow.getCell(17).numFmt = EXPORT_CURRENCY_FMT;
+
+  const percentRow = ws.getRow(percentRowNumber);
+  percentRow.getCell(16).value = !isEntreprise && totalMoe ? (totalTo - totalMoe) / totalMoe : null;
+  percentRow.getCell(17).value = null;
+  percentRow.getCell(16).numFmt = EXPORT_PERCENT_FMT;
+  percentRow.getCell(17).numFmt = EXPORT_PERCENT_FMT;
+
+  const dataSheet = workbook.getWorksheet('Feuille Donnee') || workbook.getWorksheet('Feuille Donnée');
+  if (dataSheet) {
+    dataSheet.getCell('C3').value = today;
+    dataSheet.getCell('C3').numFmt = 'dd/mm/yyyy';
+    dataSheet.getCell('D3').value = project.study_phase || 'ACT';
+    dataSheet.getCell('E3').value = project.client || '';
+    dataSheet.getCell('F3').value = project.owner_name || '';
+    dataSheet.getCell('G3').value = project.reference || project.name || '';
+    dataSheet.getCell('H3').value = 'RECAPITULATIF';
+    dataSheet.getCell('I3').value = project.name || '';
+    dataSheet.getCell('J3').value = 'V0';
+  }
+
+  for (let c = 1; c <= lastCol; c += 1) {
+    ws.getColumn(c).hidden = false;
+  }
+  trimWorksheetAfterColumn(ws, lastCol);
+  if (ws.rowCount > percentRowNumber) {
+    ws.spliceRows(percentRowNumber + 1, ws.rowCount - percentRowNumber);
+  }
+
+  return workbook;
+}
+
 // Export Excel de la comparaison des tours
 async function handleRoundsComparison(req, res) {
   try {
@@ -444,16 +1505,21 @@ async function handleRoundsComparison(req, res) {
       }
     }
 
-    // Créer le workbook
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Comparaison Tours');
+    const workbook = await buildRoundsComparisonWorkbook({
+      project,
+      rounds,
+      lots,
+      moeTotals,
+      offersByLotRoundCompany,
+      companiesByLot,
+      bestPriceByLotRound,
+      roundFromId,
+      roundToId,
+      isEntreprise
+    });
+    const currencyFmt = EXPORT_CURRENCY_FMT;
 
-    const perRoundCols = isEntreprise ? 1 : 3;
-    const analysisCols = showAnalysis ? 3 : 0;
-    const totalCols = 1 + (isEntreprise ? 0 : 1) + (rounds.length * perRoundCols) + analysisCols;
-    const currencyFmt = '#,##0.00 €';
-    const deltaCurrencyFmt = '+#,##0.00 €;-#,##0.00 €;0.00 €';
-    const deltaPercentFmt = '+0.0%;-0.0%;0.0%';
+    /*
 
     // Titre
     worksheet.mergeCells(1, 1, 1, totalCols);
@@ -697,6 +1763,8 @@ async function handleRoundsComparison(req, res) {
         };
       }
     }
+
+    */
 
     // --- Onglet Simulation (si données fournies en POST) ---
     const simulationData = req.body?.simulations;
@@ -1277,6 +2345,16 @@ async function generateExportFile(req, exportType, exportParams = {}) {
     if (!roundId) throw new Error('roundId requis pour cet export');
     return fetchInternalExport(req, `/api/exports/summary/${roundId}`, {
       fallbackFilename: `AnalyseLot_Tour${roundId}.xlsx`
+    });
+  }
+
+  if (exportType === 'lot-comparison') {
+    const { lotId, roundId } = exportParams;
+    if (!lotId) throw new Error('lotId requis pour cet export');
+    const params = new URLSearchParams();
+    if (roundId) params.set('round_id', roundId);
+    return fetchInternalExport(req, `/api/exports/lot-comparison/${lotId}${params.toString() ? `?${params.toString()}` : ''}`, {
+      fallbackFilename: `Comparatif_Lot_${lotId}.xlsx`
     });
   }
 
