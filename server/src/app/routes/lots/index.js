@@ -73,6 +73,214 @@ function isPdfFile({ mime, name }) {
   return false;
 }
 
+async function mergeLotCompanyInto(client, { lotId, fromCompanyId, toCompanyId }) {
+  if (Number(fromCompanyId) === Number(toCompanyId)) return { merged: false };
+  const optionalTablesRes = await client.query(
+    `SELECT
+       to_regclass('public.round_offers') IS NOT NULL AS has_round_offers,
+       to_regclass('public.question_sheets') IS NOT NULL AS has_question_sheets,
+       to_regclass('public.question_sheet_sends') IS NOT NULL AS has_question_sheet_sends,
+       to_regclass('public.option_item_offers') IS NOT NULL AS has_option_item_offers`
+  );
+  const optionalTables = optionalTablesRes.rows[0] || {};
+
+  await client.query(
+    `INSERT INTO lot_companies (lot_id, company_id, display_name, created_at)
+     SELECT lot_id, $3, NULL, created_at
+     FROM lot_companies
+     WHERE lot_id = $1 AND company_id = $2
+     ON CONFLICT (lot_id, company_id) DO UPDATE
+     SET display_name = NULL`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+
+  await client.query(
+    `UPDATE offers target
+     SET unit = COALESCE(target.unit, source.unit),
+         qty = COALESCE(target.qty, source.qty),
+         unit_price = COALESCE(target.unit_price, source.unit_price),
+         amount = COALESCE(target.amount, source.amount),
+         comment = COALESCE(target.comment, source.comment),
+         offer_designation = COALESCE(target.offer_designation, source.offer_designation)
+     FROM offers source
+     JOIN items i ON i.id = source.item_id
+     WHERE i.lot_id = $1
+       AND source.company_id = $2
+       AND target.company_id = $3
+       AND target.item_id = source.item_id
+       AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+  await client.query(
+    `DELETE FROM offers source
+     USING offers target, items i
+     WHERE i.id = source.item_id
+       AND i.lot_id = $1
+       AND source.company_id = $2
+       AND target.company_id = $3
+       AND target.item_id = source.item_id
+       AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+  await client.query(
+    `UPDATE offers o
+     SET company_id = $3
+     FROM items i
+     WHERE i.id = o.item_id
+       AND i.lot_id = $1
+       AND o.company_id = $2`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+
+  if (optionalTables.has_option_item_offers) {
+    await client.query(
+      `UPDATE option_item_offers target
+       SET qty = COALESCE(target.qty, source.qty),
+           unit_price = COALESCE(target.unit_price, source.unit_price)
+       FROM option_item_offers source
+       JOIN option_items oi ON oi.id = source.option_item_id
+       JOIN options opt ON opt.id = oi.option_id
+       WHERE opt.lot_id = $1
+         AND source.company_id = $2
+         AND target.company_id = $3
+         AND target.option_item_id = source.option_item_id
+         AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+    await client.query(
+      `DELETE FROM option_item_offers source
+       USING option_item_offers target, option_items oi, options opt
+       WHERE oi.id = source.option_item_id
+         AND opt.id = oi.option_id
+         AND opt.lot_id = $1
+         AND source.company_id = $2
+         AND target.company_id = $3
+         AND target.option_item_id = source.option_item_id
+         AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+    await client.query(
+      `UPDATE option_item_offers oio
+       SET company_id = $3
+       FROM option_items oi
+       JOIN options opt ON opt.id = oi.option_id
+       WHERE oi.id = oio.option_item_id
+         AND opt.lot_id = $1
+         AND oio.company_id = $2`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+  }
+
+  await client.query(
+    `UPDATE generated_questions target
+     SET question_text = COALESCE(target.question_text, source.question_text),
+         moe_value = COALESCE(target.moe_value, source.moe_value),
+         offer_value = COALESCE(target.offer_value, source.offer_value),
+         deviation_pct = COALESCE(target.deviation_pct, source.deviation_pct),
+         comment = COALESCE(target.comment, source.comment),
+         answered_at = COALESCE(target.answered_at, source.answered_at)
+     FROM generated_questions source
+     WHERE source.lot_id = $1
+       AND source.company_id = $2
+       AND target.lot_id = source.lot_id
+       AND target.company_id = $3
+       AND target.round_id IS NOT DISTINCT FROM source.round_id
+       AND target.item_id IS NOT DISTINCT FROM source.item_id
+       AND target.option_item_id IS NOT DISTINCT FROM source.option_item_id
+       AND target.question_type = source.question_type`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+  await client.query(
+    `DELETE FROM generated_questions source
+     USING generated_questions target
+     WHERE source.lot_id = $1
+       AND source.company_id = $2
+       AND target.lot_id = source.lot_id
+       AND target.company_id = $3
+       AND target.round_id IS NOT DISTINCT FROM source.round_id
+       AND target.item_id IS NOT DISTINCT FROM source.item_id
+       AND target.option_item_id IS NOT DISTINCT FROM source.option_item_id
+       AND target.question_type = source.question_type`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+  await client.query(
+    `UPDATE generated_questions
+     SET company_id = $3
+     WHERE lot_id = $1 AND company_id = $2`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+
+  if (optionalTables.has_round_offers) {
+    await client.query(
+      `UPDATE round_offers target
+       SET unit = COALESCE(target.unit, source.unit),
+           qty = COALESCE(target.qty, source.qty),
+           unit_price = COALESCE(target.unit_price, source.unit_price),
+           amount = COALESCE(target.amount, source.amount)
+       FROM round_offers source
+       JOIN items i ON i.id = source.item_id
+       WHERE i.lot_id = $1
+         AND source.company_id = $2
+         AND target.company_id = $3
+         AND target.round_id IS NOT DISTINCT FROM source.round_id
+         AND target.item_id = source.item_id`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+    await client.query(
+      `DELETE FROM round_offers source
+       USING round_offers target, items i
+       WHERE i.id = source.item_id
+         AND i.lot_id = $1
+         AND source.company_id = $2
+         AND target.company_id = $3
+         AND target.round_id IS NOT DISTINCT FROM source.round_id
+         AND target.item_id = source.item_id`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+    await client.query(
+      `UPDATE round_offers ro
+       SET company_id = $3
+       FROM items i
+       WHERE i.id = ro.item_id
+         AND i.lot_id = $1
+         AND ro.company_id = $2`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+  }
+
+  if (optionalTables.has_question_sheets) {
+    await client.query(
+      `UPDATE question_sheets qs
+       SET company_id = $3
+       FROM items i
+       WHERE i.id = qs.item_id
+         AND i.lot_id = $1
+         AND qs.company_id = $2`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+  }
+  if (optionalTables.has_question_sheet_sends) {
+    await client.query(
+      `UPDATE question_sheet_sends
+       SET company_id = $3
+       WHERE lot_id = $1 AND company_id = $2`,
+      [lotId, fromCompanyId, toCompanyId]
+    );
+  }
+  await client.query(
+    `UPDATE items
+     SET source_company_id = $3
+     WHERE lot_id = $1 AND source_company_id = $2`,
+    [lotId, fromCompanyId, toCompanyId]
+  );
+  await client.query(
+    'DELETE FROM lot_companies WHERE lot_id = $1 AND company_id = $2',
+    [lotId, fromCompanyId]
+  );
+
+  return { merged: true };
+}
+
 /* ---------- RAW LOT (pour construire le tableur) ---------- */
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
@@ -98,7 +306,14 @@ router.get('/:id', async (req, res) => {
         i.id as item_id, i.num, i.designation, i.unit, i.position, i.source_company_id, i.parent_item_id,
         parent_i.num as parent_num, parent_i.designation as parent_designation,
         ${isEntreprise ? 'NULL AS moe_qty, NULL AS moe_unit_price, NULL AS moe_amount,' : 'm.qty as moe_qty, m.unit_price as moe_unit_price, m.amount as moe_amount,'}
-        (SELECT json_agg(jsonb_build_object('id', c2.id, 'name', c2.name, 'color', c2.color, 'email', c2.email) ORDER BY lc2.created_at, c2.id)
+        (SELECT json_agg(jsonb_build_object(
+           'id', c2.id,
+           'name', COALESCE(NULLIF(lc2.display_name, ''), c2.name),
+           'original_name', c2.name,
+           'display_name', lc2.display_name,
+           'color', c2.color,
+           'email', c2.email
+         ) ORDER BY lc2.created_at, c2.id)
          FROM lot_companies lc2
          JOIN companies c2 ON c2.id = lc2.company_id
          WHERE lc2.lot_id = l.id
@@ -268,7 +483,15 @@ router.get('/:id/table', async (req, res) => {
   const moeByItem = new Map(moeRes.rows.map(r => [r.item_id, r]));
 
   const compsRes = await query(
-    'SELECT c.id, c.name, c.color FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
+    `SELECT c.id,
+            COALESCE(NULLIF(lc.display_name, ''), c.name) AS name,
+            c.name AS original_name,
+            lc.display_name,
+            c.color
+     FROM lot_companies lc
+     JOIN companies c ON c.id=lc.company_id
+     WHERE lc.lot_id=$1
+     ORDER BY lc.created_at, c.id`,
     [id]
   );
   let companies = compsRes.rows;
@@ -311,6 +534,8 @@ router.get('/:id/table', async (req, res) => {
       line.companies.push({
         company_id: c.id,
         name: c.name,
+        original_name: c.original_name || c.name,
+        display_name: c.display_name || null,
         color: c.color || null,
         u: off.unit ?? null,
         qty: off.qty ?? null,
@@ -348,7 +573,17 @@ router.get('/:id/companies', async (req, res) => {
     if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
     const r = await query(
-      'SELECT c.* FROM lot_companies lc JOIN companies c ON c.id=lc.company_id WHERE lc.lot_id=$1 ORDER BY lc.created_at, c.id',
+      `SELECT c.id,
+              COALESCE(NULLIF(lc.display_name, ''), c.name) AS name,
+              c.name AS original_name,
+              lc.display_name,
+              c.created_at,
+              c.color,
+              c.email
+       FROM lot_companies lc
+       JOIN companies c ON c.id=lc.company_id
+       WHERE lc.lot_id=$1
+       ORDER BY lc.created_at, c.id`,
       [id]
     );
     res.json(r.rows);
@@ -407,7 +642,11 @@ router.post('/:id/companies', isResponsableOrAdmin, async (req, res) => {
     );
 
     await client.query('COMMIT');
-    res.json(company);
+    res.json({
+      ...company,
+      original_name: company.name,
+      display_name: null
+    });
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -472,6 +711,88 @@ router.patch('/companies/:companyId/color', isResponsableOrAdmin, async (req, re
   } catch (err) {
     console.error('Erreur mise à jour couleur:', err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour' });
+  }
+});
+
+/* ---------- NOM AFFICHÉ ENTREPRISE PAR LOT ---------- */
+router.patch('/:id/companies/:companyId/display-name', isResponsableOrAdmin, async (req, res) => {
+  const lotId = Number(req.params.id);
+  const companyId = Number(req.params.companyId);
+  const { name } = req.body || {};
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  if (!cleanName) return res.status(400).json({ error: 'Nom requis' });
+
+  const client = await pool.connect();
+  try {
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) {
+      return res.status(404).json({ error: 'Lot introuvable' });
+    }
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) {
+      return res.status(403).json({ error: 'Accès refusé - Vous ne pouvez pas modifier ce lot' });
+    }
+
+    await client.query('BEGIN');
+
+    const currentRes = await client.query(
+      `SELECT lc.lot_id, c.id, c.name
+       FROM lot_companies lc
+       JOIN companies c ON c.id = lc.company_id
+       WHERE lc.lot_id = $1 AND lc.company_id = $2`,
+      [lotId, companyId]
+    );
+    if (currentRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Entreprise introuvable sur ce lot' });
+    }
+
+    const existingRes = await client.query(
+      'SELECT id, name, color, email FROM companies WHERE lower(name) = lower($1) ORDER BY id LIMIT 1',
+      [cleanName]
+    );
+
+    let targetCompany = existingRes.rows[0] || null;
+    let merged = false;
+
+    if (targetCompany && Number(targetCompany.id) !== Number(companyId)) {
+      await mergeLotCompanyInto(client, {
+        lotId,
+        fromCompanyId: companyId,
+        toCompanyId: targetCompany.id
+      });
+      merged = true;
+    } else {
+      const updateRes = await client.query(
+        `UPDATE companies SET name = $2 WHERE id = $1 RETURNING id, name, color, email`,
+        [companyId, cleanName]
+      );
+      targetCompany = updateRes.rows[0];
+      await client.query(
+        `UPDATE lot_companies
+         SET display_name = NULL
+         WHERE lot_id = $1 AND company_id = $2`,
+        [lotId, targetCompany.id]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      id: targetCompany.id,
+      name: targetCompany.name,
+      original_name: targetCompany.name,
+      display_name: null,
+      color: targetCompany.color || null,
+      email: targetCompany.email || null,
+      merged
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Erreur mise à jour nom affiché entreprise:', err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour' });
+  } finally {
+    client.release();
   }
 });
 

@@ -467,7 +467,7 @@ router.get('/:roundId/summary', async (req, res) => {
       
       // Récupérer les entreprises qui répondent à ce lot spécifique
       const lotCompaniesResult = await query(
-        `SELECT c.id, c.name 
+        `SELECT c.id, COALESCE(NULLIF(lc.display_name, ''), c.name) AS name
          FROM companies c
          JOIN lot_companies lc ON lc.company_id = c.id
          WHERE lc.lot_id = $1
@@ -576,7 +576,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
         const companiesResult = await query(
           `SELECT 
              c.id as company_id,
-             c.name as company_name,
+             COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
              COALESCE(SUM(CASE WHEN i.id IS NOT NULL THEN (o.qty * o.unit_price) ELSE 0 END), 0) as total
            FROM lot_companies lc
            JOIN companies c ON c.id = lc.company_id
@@ -584,8 +584,8 @@ router.get('/project/:projectId/compare', async (req, res) => {
            LEFT JOIN items i ON i.id = o.item_id AND i.lot_id = $1
            WHERE lc.lot_id = $1
            ${isEntreprise && req.user?.company_id ? 'AND c.id = $3' : ''}
-           GROUP BY c.id, c.name
-           ORDER BY c.name`,
+           GROUP BY c.id, lc.display_name, c.name
+           ORDER BY company_name`,
           isEntreprise && req.user?.company_id ? [lot.id, round.id, req.user.company_id] :
           [lot.id, round.id]
         );

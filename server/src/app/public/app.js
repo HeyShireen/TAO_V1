@@ -1720,6 +1720,7 @@ async function confirmProjectExport() {
   }
 
   try {
+    const { exportParams = {} } = getRoundsComparisonExportParams() || {};
     await downloadFromApi(`${API_BASE}/exports/project-bundle-zip`, {
       method: 'POST',
       body: {
@@ -1727,7 +1728,14 @@ async function confirmProjectExport() {
         currentRoundId,
         questionLotId,
         questionLotIds,
-        selections
+        selections,
+        roundsComparisonParams: {
+          roundFrom: exportParams.roundFrom,
+          roundTo: exportParams.roundTo,
+          simulations: exportParams.simulations || [],
+          simulationRoundId: exportParams.simulationRoundId,
+          selectedOptions: exportParams.selectedOptions || []
+        }
       },
       filenameFallback: `Exports_Projet_${projectId}.zip`
     });
@@ -7111,9 +7119,28 @@ function renderLotCompanies(){
       chip.style.background = `${c.color}15`;
     }
     if (!isEntreprise()) {
-      chip.innerHTML = `<input type="color" value="${c.color || '#6b7280'}" title="Couleur" style="width:18px;height:18px;border:none;cursor:pointer;padding:0;background:none;vertical-align:middle;margin-right:4px">${c.name}<button data-id="${c.id}" title="Retirer">×</button>`;
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = c.color || '#6b7280';
+      colorInput.title = 'Couleur';
+      colorInput.style.cssText = 'width:18px;height:18px;border:none;cursor:pointer;padding:0;background:none;vertical-align:middle;margin-right:4px';
+      chip.appendChild(colorInput);
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'company-chip-name-input';
+      nameInput.value = c.name || '';
+      nameInput.title = c.original_name && c.original_name !== c.name ? `Nom d'origine : ${c.original_name}` : 'Nom affiché';
+      nameInput.dataset.originalValue = c.name || '';
+      chip.appendChild(nameInput);
+
+      const removeButton = document.createElement('button');
+      removeButton.dataset.id = c.id;
+      removeButton.title = 'Retirer';
+      removeButton.textContent = '×';
+      chip.appendChild(removeButton);
       // Color picker
-      chip.querySelector('input[type="color"]').addEventListener('change', async (e) => {
+      colorInput.addEventListener('change', async (e) => {
         const newColor = e.target.value;
         try {
           await api(`/lots/companies/${c.id}/color`, { method:'PATCH', body:{ color: newColor } });
@@ -7124,7 +7151,75 @@ function renderLotCompanies(){
           showNotify({ title:'Erreur', message:'Couleur: ' + err.message, type:'error' });
         }
       });
-      chip.querySelector('button').addEventListener('click', async () => {
+      const saveDisplayName = async () => {
+        const nextName = nameInput.value.trim();
+        const previousName = nameInput.dataset.originalValue || '';
+        if (!nextName) {
+          nameInput.value = previousName;
+          return;
+        }
+        if (nextName === previousName) return;
+
+        nameInput.disabled = true;
+        try {
+          const previousId = c.id;
+          const updated = await api(`/lots/${currentLot.id}/companies/${c.id}/display-name`, {
+            method: 'PATCH',
+            body: { name: nextName }
+          });
+          const nextCompany = {
+            ...c,
+            id: updated.id || c.id,
+            name: updated.name || nextName,
+            original_name: updated.original_name || updated.name || c.original_name || nextName,
+            display_name: updated.display_name || null,
+            color: updated.color || c.color || null,
+            email: updated.email || c.email || null
+          };
+
+          const existingIndex = lotCompanies.findIndex(company => Number(company.id) === Number(nextCompany.id));
+          const previousIndex = lotCompanies.findIndex(company => Number(company.id) === Number(previousId));
+          if (existingIndex >= 0 && Number(nextCompany.id) !== Number(previousId)) {
+            lotCompanies[existingIndex] = { ...lotCompanies[existingIndex], ...nextCompany };
+            if (previousIndex >= 0) lotCompanies.splice(previousIndex, 1);
+          } else if (previousIndex >= 0) {
+            lotCompanies[previousIndex] = nextCompany;
+          }
+
+          for (const row of sheetRows) {
+            if (Number(row?.source_company_id) === Number(previousId)) row.source_company_id = nextCompany.id;
+            if (row?.offers && previousId !== nextCompany.id) {
+              if (!row.offers[nextCompany.id] && row.offers[previousId]) row.offers[nextCompany.id] = row.offers[previousId];
+              delete row.offers[previousId];
+            }
+          }
+
+          nameInput.dataset.originalValue = nextCompany.name || '';
+          nameInput.value = nextCompany.name || '';
+          renderLotCompanies();
+          buildColModel();
+          renderSheetInitial();
+          refreshCompare();
+        } catch (err) {
+          nameInput.value = previousName;
+          showNotify({ title:'Erreur', message:'Nom entreprise: ' + err.message, type:'error' });
+        } finally {
+          nameInput.disabled = false;
+        }
+      };
+
+      nameInput.addEventListener('blur', saveDisplayName);
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          nameInput.blur();
+        } else if (e.key === 'Escape') {
+          nameInput.value = nameInput.dataset.originalValue || '';
+          nameInput.blur();
+        }
+      });
+
+      removeButton.addEventListener('click', async () => {
         const companyName = c.name;
         const companyId = c.id;
         

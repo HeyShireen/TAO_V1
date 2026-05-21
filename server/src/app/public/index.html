@@ -147,8 +147,8 @@
             <!-- Sélecteurs de tours pour l'analyse -->
             <div class="row gap" style="margin-top:12px;margin-bottom:12px;align-items:flex-end;flex-wrap:wrap;gap:8px">
               <span style="font-weight:600"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-search"></use></svg>Analyser l'évolution du tour :</span>
-              <div class="field" style="margin:0">
-                <select id="compare-round" name="compare-round" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);min-width:140px;max-width:100%;flex:1 1 20px">
+              <div class="field compare-round-field" style="margin:0">
+                <select id="compare-round" name="compare-round">
                   <option value="">Selectionner un tour...</option>
                 </select>
               </div>
@@ -623,7 +623,7 @@
             <!-- Section Incohérence d'Unité -->
             <div style="margin-top:20px">
               <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-alert-triangle"></use></svg>Incohérence d'Unité</h4>
-              <div style="border-radius:12px;border:2px solid #fd7e14;background:rgba(253, 126, 20, 0.08);padding:16px;max-width:760px">
+              <div style="border-radius:12px;border:2px solid #6f42c1;background:rgba(111, 66, 193, 0.08);padding:16px;max-width:760px">
                 <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Question posée automatiquement lorsque l'unité de chiffrage d'une entreprise est différente de l'unité MOE (et que le montant est non nul). Utilisez <code>{unit}</code> pour insérer l'unité MOE dans la question.</p>
                 <label style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">Question automatique :</label>
                 <input id="q-unit-mismatch" name="q-unit-mismatch" type="text" value="Pourquoi l'unité de chiffrage est-elle différente de l'unité MOE ({unit}) ?" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem" />
@@ -870,7 +870,7 @@
 
             <div style="display:flex;flex-direction:column;gap:10px;padding:12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
               <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-rounds-compare" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter la comparaison des tours (Excel)</span></label>
-              <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-lot-analysis" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter l'analyse par lot du tour (Excel)</span></label>
+              <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-lot-analysis" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter les récapitulatifs et comparatifs par lot (Excel)</span></label>
               <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="project-export-question-sheets" style="width:auto;flex:0 0 auto;margin:0" /> <span>Exporter les fiches questions (Excel)</span></label>
             </div>
 

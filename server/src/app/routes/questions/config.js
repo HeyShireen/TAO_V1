@@ -6,6 +6,34 @@ import { requireAuth } from '../../middleware/auth.js';
 const router = express.Router();
 router.use(requireAuth);
 
+function excelNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeExportUnit(unit) {
+  return String(unit || '')
+    .trim()
+    .replace(/m2/gi, 'm²')
+    .replace(/m3/gi, 'm³');
+}
+
+function escapeExcelFormatText(value) {
+  return String(value || '').replace(/"/g, '""');
+}
+
+function questionValueNumberFormat(questionType, unit) {
+  const normalizedUnit = normalizeExportUnit(unit);
+  const suffix = (() => {
+    if (String(questionType || '').startsWith('qty_')) return normalizedUnit;
+    if (String(questionType || '').startsWith('price_')) return normalizedUnit ? `€/${normalizedUnit}` : '€';
+    if (String(questionType || '').startsWith('amount_') || questionType === 'unit_mismatch') return '€';
+    return normalizedUnit;
+  })();
+  return suffix ? `#,##0.0000 "${escapeExcelFormatText(suffix)}"` : '#,##0.0000';
+}
+
 function normalizeUnitLabel(value) {
   if (!value) return '';
   return String(value).trim().toLowerCase()
@@ -833,12 +861,13 @@ router.get('/lot/:lotId', async (req, res) => {
           ELSE i.designation END AS designation,
         COALESCE(i.unit, oi.unit) AS unit,
         (gq.option_item_id IS NOT NULL) AS is_option,
-        c.name as company_name
+        COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name
       FROM generated_questions gq
       LEFT JOIN items i ON i.id = gq.item_id
       LEFT JOIN option_items oi ON oi.id = gq.option_item_id
       LEFT JOIN options o ON o.id = oi.option_id
       JOIN companies c ON c.id = gq.company_id
+      LEFT JOIN lot_companies lc ON lc.lot_id = gq.lot_id AND lc.company_id = gq.company_id
       WHERE gq.lot_id = $1
     `;
     
@@ -863,7 +892,7 @@ router.get('/lot/:lotId', async (req, res) => {
       params.push(company_id);
     }
     
-    sql += ` ORDER BY c.name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, oi.num), gq.question_type`;
+    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, oi.num), gq.question_type`;
     
     const result = await query(sql, params);
     res.json(result.rows);
@@ -1195,7 +1224,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           ELSE i.designation END AS designation,
         COALESCE(i.unit, oi.unit) AS unit,
         (gq.option_item_id IS NOT NULL) AS is_option,
-        c.name as company_name,
+        COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         l.name as lot_name,
         p.name as project_name
       FROM generated_questions gq
@@ -1203,6 +1232,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       LEFT JOIN option_items oi ON oi.id = gq.option_item_id
       LEFT JOIN options o ON o.id = oi.option_id
       JOIN companies c ON c.id = gq.company_id
+      LEFT JOIN lot_companies lc ON lc.lot_id = gq.lot_id AND lc.company_id = gq.company_id
       JOIN lots l ON l.id = gq.lot_id
       JOIN projects p ON p.id = l.project_id
       WHERE gq.lot_id = $1
@@ -1229,7 +1259,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       params.push(company_id);
     }
     
-    sql += ` ORDER BY c.name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, oi.num), gq.question_type`;
+    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, oi.num), gq.question_type`;
     
     const result = await query(sql, params);
     const questions = result.rows;
@@ -1269,7 +1299,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         { header: 'Écart (%)', key: 'deviation', width: 12 },
         { header: 'Valeur MOE', key: 'moe_value', width: 14 },
         { header: 'Valeur Offre', key: 'offer_value', width: 14 },
-        { header: 'Commentaire', key: 'comment', width: 40 },
+        { header: 'Réponse', key: 'comment', width: 40 },
         { header: 'Statut', key: 'status', width: 14 }
       ];
       
@@ -1301,7 +1331,11 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           'price_very_low': 'Prix Très Bas',
           'price_low': 'Prix Bas',
           'price_high': 'Prix Haut',
-          'price_very_high': 'Prix Très Haut'
+          'price_very_high': 'Prix Très Haut',
+          'amount_very_low': 'Montant Très Bas',
+          'amount_low': 'Montant Bas',
+          'amount_high': 'Montant Haut',
+          'amount_very_high': 'Montant Très Haut'
         }[q.question_type] || q.question_type;
         
         const statusLabel = {
@@ -1318,9 +1352,9 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           article: articleLabel,
           type: typeLabel,
           question: q.question_text,
-          deviation: q.deviation_pct ? Number(q.deviation_pct) : null,
-          moe_value: q.moe_value || '',
-          offer_value: q.offer_value || '',
+          deviation: excelNumber(q.deviation_pct),
+          moe_value: excelNumber(q.moe_value),
+          offer_value: excelNumber(q.offer_value),
           comment: q.comment || '',
           status: statusLabel
         });
@@ -1336,10 +1370,11 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         
         // Colonne Écart (%) - Format et coloration selon la valeur
         const deviationCell = row.getCell(5);
-        if (q.deviation_pct) {
-          deviationCell.numFmt = '0.0"%"';
+        const deviationValue = excelNumber(q.deviation_pct);
+        if (deviationValue !== null) {
+          deviationCell.numFmt = '0.0000"%"';
           deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
-          const ecartAbs = Math.abs(Number(q.deviation_pct));
+          const ecartAbs = Math.abs(deviationValue);
           if (ecartAbs > 20) {
             deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
             deviationCell.font = { color: { argb: 'FFCC0000' }, bold: true };
@@ -1352,12 +1387,13 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         // Colonnes Valeur MOE et Valeur Offre - Format numérique
         const moeCell = row.getCell(6);
         const offerCell = row.getCell(7);
-        if (q.moe_value) {
-          moeCell.numFmt = '#,##0.00';
+        const valueNumFmt = questionValueNumberFormat(q.question_type, q.unit);
+        if (excelNumber(q.moe_value) !== null) {
+          moeCell.numFmt = valueNumFmt;
           moeCell.alignment = { horizontal: 'right', vertical: 'top' };
         }
-        if (q.offer_value) {
-          offerCell.numFmt = '#,##0.00';
+        if (excelNumber(q.offer_value) !== null) {
+          offerCell.numFmt = valueNumFmt;
           offerCell.alignment = { horizontal: 'right', vertical: 'top' };
         }
         

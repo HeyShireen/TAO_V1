@@ -20,11 +20,12 @@ router.get('/round/:roundId', async (req, res) => {
     let sql = `
       SELECT qs.*, 
         i.num, i.designation, i.unit,
-        c.name as company_name,
+        COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         r.name as round_name
       FROM question_sheets qs
       JOIN items i ON i.id = qs.item_id
       JOIN companies c ON c.id = qs.company_id
+      LEFT JOIN lot_companies lc ON lc.lot_id = i.lot_id AND lc.company_id = qs.company_id
       JOIN rounds r ON r.id = qs.round_id
       WHERE qs.round_id = $1
     `;
@@ -66,11 +67,12 @@ router.get('/lot/:lotId', async (req, res) => {
     
     let sql = `SELECT qs.*, 
         i.num, i.designation, i.unit,
-        c.name as company_name,
+        COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         r.name as round_name, r.round_number
       FROM question_sheets qs
       JOIN items i ON i.id = qs.item_id
       JOIN companies c ON c.id = qs.company_id
+      LEFT JOIN lot_companies lc ON lc.lot_id = i.lot_id AND lc.company_id = qs.company_id
       JOIN rounds r ON r.id = qs.round_id
       WHERE r.lot_id = $1`;
     const params = [lotId];
@@ -204,11 +206,12 @@ router.get('/round/:roundId/export', async (req, res) => {
     
     let sql = `SELECT qs.*, 
         i.num, i.designation, i.unit,
-        c.name as company_name,
+        COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         r.name as round_name
       FROM question_sheets qs
       JOIN items i ON i.id = qs.item_id
       JOIN companies c ON c.id = qs.company_id
+      LEFT JOIN lot_companies lc ON lc.lot_id = i.lot_id AND lc.company_id = qs.company_id
       JOIN rounds r ON r.id = qs.round_id
       WHERE qs.round_id = $1`;
     const params = [roundId];
@@ -216,7 +219,7 @@ router.get('/round/:roundId/export', async (req, res) => {
       sql += ' AND qs.company_id = $2';
       params.push(companyId);
     }
-    sql += ' ORDER BY c.name, i.num';
+    sql += ' ORDER BY company_name, i.num';
     const questions = await query(sql, params);
     
     if (format === 'json') {

@@ -248,6 +248,15 @@ function sanitizeFilenamePart(value, fallback = 'Export') {
     .slice(0, 80) || fallback;
 }
 
+function sanitizeWorksheetName(value, fallback = 'Feuille') {
+  const cleaned = String(value || fallback)
+    .replace(/[\[\]\*\/\\\?:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 31);
+  return cleaned || fallback;
+}
+
 function applyBorder(cell, border = {}) {
   const existing = cell.border || {};
   const keepStrong = (provided, current, fallback) => {
@@ -278,10 +287,29 @@ function clearWorksheetValues(worksheet) {
   worksheet.conditionalFormattings = [];
 }
 
+function clearWorkbookDefinedNames(workbook) {
+  if (workbook.definedNames) {
+    workbook.definedNames.model = [];
+    workbook.definedNames.matrixMap = {};
+  }
+}
+
+function clearWorksheetDrawings(worksheet) {
+  if (Array.isArray(worksheet._media)) {
+    worksheet._media = [];
+  }
+}
+
 function formatLotLabel(lot) {
   const code = lot?.code ? `LOT ${lot.code}` : `LOT ${lot?.id || ''}`;
   const name = lot?.name ? ` : ${String(lot.name).toUpperCase()}` : '';
   return `${code}${name}`.trim();
+}
+
+function formatLotWorksheetName(lot) {
+  const code = lot?.code ? `Lot ${lot.code}` : `Lot ${lot?.id || ''}`;
+  const name = lot?.name ? ` ${lot.name}` : '';
+  return sanitizeWorksheetName(`${code}${name}`.trim(), code);
 }
 
 // Transporteur email (réutilise la même config que utils/email.js)
@@ -359,7 +387,7 @@ async function fetchLotComparisonData({ lotId, roundId, req }) {
     companyWhere = 'AND c.id = $2';
   }
   const companiesRes = await query(
-    `SELECT c.id, c.name, c.color
+    `SELECT c.id, COALESCE(NULLIF(lc.display_name, ''), c.name) AS name, c.color
      FROM lot_companies lc
      JOIN companies c ON c.id = lc.company_id
      WHERE lc.lot_id = $1 ${companyWhere}
@@ -442,6 +470,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     for (const sheet of [...workbook.worksheets]) {
       if (sheet.name !== 'ETANCHEITE') workbook.removeWorksheet(sheet.id);
     }
+    clearWorkbookDefinedNames(workbook);
   } catch (err) {
     console.warn('Template comparatif introuvable, génération depuis un classeur vierge:', err.message);
   }
@@ -450,7 +479,9 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   workbook.calcProperties.fullCalcOnLoad = true;
 
   const ws = workbook.getWorksheet('ETANCHEITE') || workbook.addWorksheet('ETANCHEITE');
+  ws.name = formatLotWorksheetName(lot);
   unmergeAllCells(ws);
+  clearWorksheetDrawings(ws);
   clearWorksheetValues(ws);
 
   const moeStartCol = 5;
@@ -1099,6 +1130,10 @@ async function buildRoundsComparisonWorkbook({
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.readFile(ROUNDS_COMPARISON_TEMPLATE);
+    clearWorkbookDefinedNames(workbook);
+    for (const sheet of [...workbook.worksheets]) {
+      if (sheet.name !== 'RECAP') workbook.removeWorksheet(sheet.id);
+    }
   } catch (err) {
     console.warn('Template recapitulatif introuvable, generation depuis un classeur vierge:', err.message);
   }
@@ -1109,6 +1144,7 @@ async function buildRoundsComparisonWorkbook({
 
   const ws = workbook.getWorksheet('RECAP') || workbook.addWorksheet('RECAP');
   unmergeAllCells(ws);
+  clearWorksheetDrawings(ws);
   clearWorksheetValues(ws);
 
   const { selectedFrom, selectedTo } = getSelectedRoundsForComparison(rounds, roundFromId, roundToId);
@@ -1251,6 +1287,7 @@ async function buildRoundsComparisonWorkbook({
     rank: null,
     isBest: false
   }];
+  const percentBarRefs = [];
 
   rowsToWrite.forEach((entry, index) => {
     const rowNumber = dataStartRow + index;
@@ -1277,6 +1314,7 @@ async function buildRoundsComparisonWorkbook({
     row.getCell(13).value = ecartReference;
     row.getCell(14).value = ecartMoe;
     row.getCell(15).value = ecartMoePct;
+    if (ecartMoePct !== null) percentBarRefs.push(row.getCell(15).address);
     row.getCell(16).value = entry.isBest ? toAmount : null;
     row.getCell(17).value = null;
 
@@ -1327,6 +1365,7 @@ async function buildRoundsComparisonWorkbook({
   totalRow.getCell(13).value = totalDeltaReference;
   totalRow.getCell(14).value = totalDeltaMoe;
   totalRow.getCell(15).value = totalDeltaMoePct;
+  if (totalDeltaMoePct !== null) percentBarRefs.push(totalRow.getCell(15).address);
   totalRow.getCell(16).value = totalTo || null;
   totalRow.font = { ...(totalRow.font || {}), bold: true };
   for (let c = 1; c <= lastCol; c += 1) {
@@ -1348,6 +1387,7 @@ async function buildRoundsComparisonWorkbook({
   percentRow.getCell(17).value = null;
   percentRow.getCell(16).numFmt = EXPORT_PERCENT_FMT;
   percentRow.getCell(17).numFmt = EXPORT_PERCENT_FMT;
+  if (percentRow.getCell(16).value !== null) percentBarRefs.push(percentRow.getCell(16).address);
 
   const dataSheet = workbook.getWorksheet('Feuille Donnee') || workbook.getWorksheet('Feuille Donnée');
   if (dataSheet) {
@@ -1365,6 +1405,7 @@ async function buildRoundsComparisonWorkbook({
   for (let c = 1; c <= lastCol; c += 1) {
     ws.getColumn(c).hidden = false;
   }
+  addDivergingPercentDataBars(ws, percentBarRefs, 1);
   trimWorksheetAfterColumn(ws, lastCol);
   if (ws.rowCount > percentRowNumber) {
     ws.spliceRows(percentRowNumber + 1, ws.rowCount - percentRowNumber);
@@ -1444,7 +1485,8 @@ async function handleRoundsComparison(req, res) {
       offersWhere = 'AND o.company_id = $2';
     }
     const offersRes = await query(
-      `SELECT i.lot_id, o.round_id, o.company_id, c.name as company_name,
+      `SELECT i.lot_id, o.round_id, o.company_id,
+              COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
               COALESCE(SUM(o.qty * o.unit_price), 0) as total
        FROM offers o
        JOIN items i ON i.id = o.item_id
@@ -1453,7 +1495,7 @@ async function handleRoundsComparison(req, res) {
        JOIN lot_companies lc ON lc.company_id = o.company_id AND lc.lot_id = i.lot_id
        WHERE r.project_id = $1
        ${offersWhere}
-       GROUP BY i.lot_id, o.round_id, o.company_id, c.name`,
+       GROUP BY i.lot_id, o.round_id, o.company_id, lc.display_name, c.name`,
       offersParams
     );
 
@@ -1490,12 +1532,12 @@ async function handleRoundsComparison(req, res) {
       lcWhere = 'AND c.id = $2';
     }
     const lotCompaniesRes = await query(
-      `SELECT lc.lot_id, c.id as company_id, c.name as company_name
+      `SELECT lc.lot_id, c.id as company_id, COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name
        FROM lot_companies lc
        JOIN companies c ON c.id = lc.company_id
        JOIN lots l ON l.id = lc.lot_id
        WHERE l.project_id = $1 ${lcWhere}
-       ORDER BY c.name`,
+       ORDER BY company_name`,
       lotCompaniesParams
     );
     for (const row of lotCompaniesRes.rows) {
@@ -1769,21 +1811,24 @@ async function handleRoundsComparison(req, res) {
     */
 
     // --- Onglet Simulation (si données fournies en POST) ---
-    const simulationData = req.body?.simulations;
+    const simulationData = Array.isArray(req.body?.simulations)
+      ? req.body.simulations.filter(sim => sim && typeof sim === 'object')
+      : [];
     const simulationRoundId = Number(req.body?.simulationRoundId);
     const selectedOptionIds = (req.body?.selectedOptions || []).map(Number).filter(Number.isFinite);
 
-    if (Array.isArray(simulationData) && simulationData.length > 0 && Number.isFinite(simulationRoundId)) {
+    if (simulationData.length > 0 && Number.isFinite(simulationRoundId)) {
       // Calculer les totaux d'offres par lot/entreprise pour le tour de simulation
       const simOffersRes = await query(
-        `SELECT i.lot_id, o.company_id, c.name as company_name,
+        `SELECT i.lot_id, o.company_id,
+                COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
                 COALESCE(SUM(o.qty * o.unit_price), 0) as total
          FROM offers o
          JOIN items i ON i.id = o.item_id
          JOIN companies c ON c.id = o.company_id
          JOIN lot_companies lc ON lc.company_id = o.company_id AND lc.lot_id = i.lot_id
          WHERE o.round_id = $1 AND i.lot_id = ANY($2::int[])
-         GROUP BY i.lot_id, o.company_id, c.name`,
+         GROUP BY i.lot_id, o.company_id, lc.display_name, c.name`,
         [simulationRoundId, lots.map(l => l.id)]
       );
 
@@ -1792,6 +1837,7 @@ async function handleRoundsComparison(req, res) {
       for (const row of simOffersRes.rows) {
         const key = `${row.lot_id}:${row.company_id}`;
         simOffersByLotCompany.set(key, parseFloat(row.total) || 0);
+        allCompanyNames.set(key, row.company_name);
         allCompanyNames.set(Number(row.company_id), row.company_name);
       }
 
@@ -1820,6 +1866,8 @@ async function handleRoundsComparison(req, res) {
         return base + opt;
       }
 
+      const existingSimulationSheet = workbook.getWorksheet('Simulation');
+      if (existingSimulationSheet) workbook.removeWorksheet(existingSimulationSheet.id);
       const simSheet = workbook.addWorksheet('Simulation');
       const simPerCol = isEntreprise ? 1 : 2;
       const simTotalCols = 1 + (isEntreprise ? 0 : 1) + (simulationData.length * simPerCol);
@@ -1900,7 +1948,7 @@ async function handleRoundsComparison(req, res) {
             const compTotal = getCompanyLotTotal(lot.id, selectedCompanyId);
             if (compTotal > 0) {
               amount = compTotal;
-              companyName = allCompanyNames.get(selectedCompanyId) || `Entreprise ${selectedCompanyId}`;
+              companyName = allCompanyNames.get(`${lot.id}:${selectedCompanyId}`) || allCompanyNames.get(selectedCompanyId) || `Entreprise ${selectedCompanyId}`;
             } else {
               amount = moeTotal > 0 ? moeTotal : null;
               companyName = 'MOE (pas d\'offre)';
@@ -2010,14 +2058,16 @@ function wordRun(value, { bold = false, color = '000000', highlight = false } = 
 }
 
 function wordParagraph(runs, { style = null, spacingAfter = 120 } = {}) {
-  const body = Array.isArray(runs) ? runs.join('') : wordRun(runs);
+  const body = Array.isArray(runs)
+    ? runs.join('')
+    : (typeof runs === 'string' && runs.trim().startsWith('<w:') ? runs : wordRun(runs));
   const pStyle = style ? `<w:pStyle w:val="${style}"/>` : '';
   return `<w:p><w:pPr>${pStyle}<w:spacing w:after="${spacingAfter}"/></w:pPr>${body}</w:p>`;
 }
 
 function wordCell(content, { header = false, placeholder = false } = {}) {
   const fill = header ? 'D9EAF7' : (placeholder ? 'FFF2CC' : 'FFFFFF');
-  return `<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/><w:shd w:fill="${fill}"/></w:tcPr>${content}</w:tc>`;
+  return `<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${fill}"/></w:tcPr>${content}</w:tc>`;
 }
 
 function wordTable(rows) {
@@ -2034,11 +2084,26 @@ function wordSimpleCell(value, options = {}) {
 }
 
 function appendWordSection(documentXml, sectionXml) {
-  const marker = documentXml.match(/<w:sectPr[\s\S]*?<\/w:sectPr>\s*<\/w:body>/);
-  if (marker) {
-    return documentXml.replace(marker[0], `${sectionXml}${marker[0]}`);
+  const bodyEnd = documentXml.lastIndexOf('</w:body>');
+  if (bodyEnd === -1) return documentXml;
+
+  const beforeBodyEnd = documentXml.slice(0, bodyEnd);
+  const sectPrIndex = beforeBodyEnd.lastIndexOf('<w:sectPr');
+  if (sectPrIndex === -1) {
+    return `${beforeBodyEnd}${sectionXml}${documentXml.slice(bodyEnd)}`;
   }
-  return documentXml.replace('</w:body>', `${sectionXml}</w:body>`);
+
+  let paragraphStart = -1;
+  const paragraphStartPattern = /<w:p(?:\s|>)/g;
+  let match;
+  while ((match = paragraphStartPattern.exec(beforeBodyEnd.slice(0, sectPrIndex))) !== null) {
+    paragraphStart = match.index;
+  }
+  const previousParagraphEnd = beforeBodyEnd.lastIndexOf('</w:p>', sectPrIndex);
+  const insertIndex = paragraphStart !== -1 && paragraphStart > previousParagraphEnd
+    ? paragraphStart
+    : sectPrIndex;
+  return `${documentXml.slice(0, insertIndex)}${sectionXml}${documentXml.slice(insertIndex)}`;
 }
 
 function replaceTemplateText(documentXml, replacements) {
@@ -2048,6 +2113,234 @@ function replaceTemplateText(documentXml, replacements) {
     xml = xml.split(xmlEscape(needle)).join(xmlEscape(value));
   }
   return xml;
+}
+
+function replaceTextRunSequence(documentXml, sequence, replacements, maxOccurrences = Infinity) {
+  const runRegex = /<w:t\b[^>]*>[\s\S]*?<\/w:t>/g;
+  const nodes = [];
+  let match;
+  while ((match = runRegex.exec(documentXml)) !== null) {
+    const full = match[0];
+    const openEnd = full.indexOf('>') + 1;
+    const closeStart = full.lastIndexOf('</w:t>');
+    nodes.push({
+      start: match.index,
+      contentStart: match.index + openEnd,
+      contentEnd: match.index + closeStart,
+      text: full.slice(openEnd, closeStart)
+    });
+  }
+
+  const edits = [];
+  let occurrences = 0;
+  for (let i = 0; i <= nodes.length - sequence.length && occurrences < maxOccurrences; i += 1) {
+    let ok = true;
+    for (let j = 0; j < sequence.length; j += 1) {
+      if (nodes[i + j].text !== sequence[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    for (let j = 0; j < sequence.length; j += 1) {
+      edits.push({
+        start: nodes[i + j].contentStart,
+        end: nodes[i + j].contentEnd,
+        value: xmlEscape(replacements[j] ?? '')
+      });
+    }
+    occurrences += 1;
+    i += sequence.length - 1;
+  }
+
+  let xml = documentXml;
+  edits.sort((a, b) => b.start - a.start).forEach(edit => {
+    xml = `${xml.slice(0, edit.start)}${edit.value}${xml.slice(edit.end)}`;
+  });
+  return xml;
+}
+
+function applyRaoCoverVariables(documentXml, { project, rounds }) {
+  const phase = project.study_phase || rounds[rounds.length - 1]?.name || 'ACT';
+  const today = formatDateFr(new Date());
+  const reference = project.reference || `TAO${project.id}`;
+
+  let xml = replaceTemplateText(documentXml, [
+    ['SKY CENTER', project.name],
+    ['BATI10401', reference],
+    ['Rapport d\'analyse ACT', `Rapport d'analyse ${phase}`]
+  ]);
+
+  xml = replaceTextRunSequence(xml, ['17', '/1', '2', '/202', '4'], [today, '', '', '', ''], 1);
+  xml = replaceTextRunSequence(xml, ['17', '/1', '2', '/2024'], [today, '', '', ''], 1);
+  xml = replaceTextRunSequence(xml, [
+    'Masselot / Silveira / Chamaa / Seutin / Tadjine / Yanogo\u00A0/ Starop',
+    'oli',
+    ' / Demassieux'
+  ], ['', '', ''], 1);
+  xml = replaceTemplateText(xml, [
+    ['Roudani\u00A0/ Latour', ''],
+    ['Christian KOPP', ''],
+    ['Victor SANCHEZ', ''],
+    ['Paul-Henri BONJEAN', ''],
+    ['KD', '']
+  ]);
+
+  return xml;
+}
+
+function getRaoLatestRound(rounds) {
+  return rounds[rounds.length - 1] || null;
+}
+
+function getRaoCompanyTotals({ companies, lots, latestRound, offersByRoundCompanyLot }) {
+  if (!latestRound) return [];
+  return companies.map(company => {
+    const total = lots.reduce((sum, lot) => sum + Number(offersByRoundCompanyLot[latestRound.id]?.[company.id]?.[lot.id] || 0), 0);
+    return { ...company, total };
+  }).filter(company => company.total > 0);
+}
+
+function getRaoLotCompanyNames({ lot, rounds, companies, offersByRoundCompanyLot }) {
+  return companies
+    .filter(company => rounds.some(round => offersByRoundCompanyLot[round.id]?.[company.id]?.[lot.id] !== undefined))
+    .map(company => company.name)
+    .join(', ');
+}
+
+function firstOrPlaceholder(values, index, placeholder) {
+  const value = values[index];
+  return value === null || value === undefined || value === '' ? placeholder : value;
+}
+
+function applyRaoBusinessPlaceholders(documentXml, { project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
+  const latestRound = getRaoLatestRound(rounds);
+  const companyTotals = getRaoCompanyTotals({ companies, lots, latestRound, offersByRoundCompanyLot })
+    .sort((a, b) => a.total - b.total);
+  const totalMoe = lots.reduce((sum, lot) => sum + Number(moeTotals[lot.id] || 0), 0);
+  const bestOfferTotal = companyTotals[0]?.total || 0;
+  const deltaBest = bestOfferTotal && totalMoe ? bestOfferTotal - totalMoe : null;
+  const deltaBestPct = deltaBest !== null && totalMoe ? `${deltaBest >= 0 ? '+' : ''}${((deltaBest / totalMoe) * 100).toFixed(1).replace('.', ',')} %` : '[+/- X %]';
+  const lotsSorted = [...lots].sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'fr', { numeric: true }));
+  const lotLabels = lotsSorted.map(lot => `${lot.code || `Lot ${lot.id}`} : ${lot.name || ''}`.trim());
+  const latestRoundLabel = latestRound ? `Tour ${latestRound.round_number}${latestRound.name ? ` - ${latestRound.name}` : ''}` : '[DATE]';
+  const offerAnalysisDate = latestRound ? formatDateFr(latestRound.created_at || latestRound.updated_at || project.study_date) || latestRoundLabel : '[DATE]';
+  const projectLocation = project.location || '[ADRESSE]';
+  const [firstLocationPart, ...restLocationParts] = String(projectLocation).split(',');
+  const city = restLocationParts.join(',').trim() || project.location || '[VILLE]';
+  const firstLot = lotsSorted[0] || {};
+  const firstLotCompanies = firstLot.id ? getRaoLotCompanyNames({ lot: firstLot, rounds, companies, offersByRoundCompanyLot }) : '';
+  const questionsByCompany = new Map();
+  for (const q of questions || []) {
+    if (!q.company_id) continue;
+    questionsByCompany.set(Number(q.company_id), (questionsByCompany.get(Number(q.company_id)) || 0) + 1);
+  }
+  const retainedCompany = companyTotals[0] || null;
+  const variantsPlaceholder = '[A COMPLETER - variantes non renseignees dans TAO]';
+  const unknownPlaceholder = '[A COMPLETER]';
+  const consultationLotsText = lotLabels.length ? lotLabels.join('\n') : '[LOT 1] : [INTITULÉ DU LOT 1]';
+  const designationDate = latestRound ? offerAnalysisDate : '[DATE]';
+
+  const replacements = new Map([
+    ['[NOM OPÉRATION]', project.name || '[NOM OPÉRATION]'],
+    ['[ADRESSE]', firstLocationPart || projectLocation],
+    ['[VILLE]', city],
+    ['[DESCRIPTION SUCCINCTE DU PROJET]', `${project.name || 'Projet'}${project.reference ? ` - affaire ${project.reference}` : ''}`],
+    ['[DATE LANCEMENT CONSULTATION]', formatDateFr(project.study_date) || '[DATE LANCEMENT CONSULTATION]'],
+    ['[DATE LIMITE REMISE OFFRES]', latestRound ? offerAnalysisDate : '[DATE LIMITE REMISE OFFRES]'],
+    ['[DATE REMISE OFFRE]', latestRound ? offerAnalysisDate : '[DATE REMISE OFFRE]'],
+    ['[DATE]', offerAnalysisDate],
+    ['[LOT 1]', lotsSorted[0]?.code || '[LOT 1]'],
+    ['[INTITULÉ DU LOT 1]', lotsSorted[0]?.name || '[INTITULÉ DU LOT 1]'],
+    ['[LOT 2]', lotsSorted[1]?.code || '[LOT 2]'],
+    ['[INTITULÉ DU LOT 2]', lotsSorted[1]?.name || '[INTITULÉ DU LOT 2]'],
+    ['[LOT N]', lotsSorted.length > 2 ? lotsSorted.slice(2).map(lot => lot.code || `Lot ${lot.id}`).join(', ') : '[LOT N]'],
+    ['[INTITULÉ DU LOT N]', lotsSorted.length > 2 ? lotsSorted.slice(2).map(lot => lot.name || '').filter(Boolean).join(', ') : '[INTITULÉ DU LOT N]'],
+    ['[INTITULÉ DU LOT]', firstLot.name || '[INTITULÉ DU LOT]'],
+    ['[MONTANT ESTIMATION GLOBALE €]', formatMoneyFr(totalMoe)],
+    ['[MONTANT TOTAL €]', formatMoneyFr(totalMoe)],
+    ['[POSITIONNEMENT DES OFFRES PAR RAPPORT À L’ESTIMATION — homogénéité, dispersion, postes critiques]', companyTotals.length ? `Offres recues sur ${latestRoundLabel}. Offre la mieux disante : ${companyTotals[0].name} (${formatMoneyFr(companyTotals[0].total)} HT), ecart vs estimation MOE : ${deltaBestPct}.` : '[POSITIONNEMENT DES OFFRES PAR RAPPORT À L’ESTIMATION — homogénéité, dispersion, postes critiques]'],
+    ['[ENTREPRISE N]', companies.map(c => c.name).join(', ') || '[ENTREPRISE N]'],
+    ['[ENTREPRISE RETENUE]', retainedCompany?.name || '[ENTREPRISE RETENUE]'],
+    ['[ENTREPRISE X]', retainedCompany?.name || companyTotals[0]?.name || companies[0]?.name || '[ENTREPRISE X]'],
+    ['[MONTANT €]', bestOfferTotal ? formatMoneyFr(bestOfferTotal) : '[MONTANT €]'],
+    ['[+/- X %]', deltaBestPct],
+    ['[+/- MONTANT €]', deltaBest !== null ? formatMoneyFr(deltaBest) : '[+/- MONTANT €]'],
+    ['[PRÉSENTATION GÉNÉRALE DE L’OFFRE]', 'Analyse qualitative a completer par la MOE. Les montants et questions disponibles sont repris dans les tableaux TAO.'],
+    ['[CONFORME / NON CONFORME / RÉSERVES — préciser]', 'A confirmer apres analyse technique.'],
+    ['[DURÉE D’EXÉCUTION]', '[DURÉE D’EXÉCUTION]'],
+    ['[OUI / NON – préciser]', '[OUI / NON – préciser]'],
+    ['[LISTE DES SOUS-TRAITANTS]', '[LISTE DES SOUS-TRAITANTS]'],
+    ['[POSTE / VARIANTE]', variantsPlaceholder],
+    ['[INTITULÉ]', variantsPlaceholder],
+    ['[DESCRIPTION]', variantsPlaceholder],
+    ['[FAVORABLE / DÉFAVORABLE / À ÉTUDIER]', '[A COMPLETER - avis MOE]'],
+    ['[JUSTIFICATION]', retainedCompany ? `${retainedCompany.name} est actuellement l'offre la mieux disante sur les montants renseignes dans TAO.` : '[JUSTIFICATION]'],
+    ['[JUSTIFICATION TECHNIQUE ET FINANCIÈRE]', retainedCompany ? `Proposition a confirmer apres analyse technique. A date, ${retainedCompany.name} presente le meilleur montant renseigne (${formatMoneyFr(retainedCompany.total)} HT).` : '[JUSTIFICATION TECHNIQUE ET FINANCIÈRE]'],
+    ['[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]', questions?.length ? `${questions.length} question(s) / reserve(s) generee(s) dans TAO, a traiter avant finalisation.` : '[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]'],
+    ['[POINT D’ATTENTION 1 — risque planning, dépendance entre lots, validation MOA…]', '[A COMPLETER - point planning / interfaces]'],
+    ['[POINT D’ATTENTION 2]', '[A COMPLETER - point contractuel / technique]'],
+    ['[PLANNING DE DÉSIGNATION ET DE MISE AU POINT DES MARCHÉS]', `Designation cible : ${designationDate}. Planning de mise au point des marches a completer.`],
+    ['[OPÉRATION DE RÉFÉRENCE 1]', '[OPÉRATION DE RÉFÉRENCE 1]'],
+    ['[OPÉRATION DE RÉFÉRENCE 2]', '[OPÉRATION DE RÉFÉRENCE 2]'],
+    ['[À COMMENTER]', unknownPlaceholder],
+    ['[PRÉCISER]', unknownPlaceholder],
+    ['[À COMPLÉTER]', unknownPlaceholder],
+    ['[À COMPLÉTER — variantes à retenir / écarter et justification]', variantsPlaceholder]
+  ]);
+
+  for (let i = 0; i < 5; i += 1) {
+    const lot = lotsSorted[i];
+    replacements.set(`[POSTE ${i + 1}]`, lot ? `${lot.code || `Lot ${lot.id}`} - ${lot.name || ''}`.trim() : `[POSTE ${i + 1}]`);
+    replacements.set(`[MONTANT ${i + 1} €]`, lot ? formatMoneyFr(moeTotals[lot.id] || 0) : `[MONTANT ${i + 1} €]`);
+  }
+
+  for (let i = 0; i < 4; i += 1) {
+    const company = companyTotals[i] || companies[i];
+    const name = company?.name || `[ENTREPRISE ${i + 1}]`;
+    const total = company?.total || 0;
+    const delta = total && totalMoe ? total - totalMoe : null;
+    const deltaPct = delta !== null && totalMoe ? `${delta >= 0 ? '+' : ''}${((delta / totalMoe) * 100).toFixed(1).replace('.', ',')} %` : '[+/- X %]';
+    replacements.set(`[ENTREPRISE ${i + 1}]`, name);
+    replacements.set(`[POINT FORT ${i + 1}]`, '[A COMPLETER - point fort]');
+    replacements.set(`[POINT DE VIGILANCE ${i + 1}]`, questionsByCompany.get(Number(company?.id)) ? `${questionsByCompany.get(Number(company.id))} question(s) / reserve(s) identifiee(s) dans TAO.` : '[POINT DE VIGILANCE A COMPLETER]');
+    replacements.set(`[MONTANT OFFRE ENTREPRISE ${i + 1}]`, total ? formatMoneyFr(total) : '[MONTANT €]');
+    replacements.set(`${name} : [MONTANT €] – écart vs estimation MOE : [+/- X %]`, `${name} : ${total ? formatMoneyFr(total) : '[MONTANT €]'} - ecart vs estimation MOE : ${deltaPct}`);
+  }
+
+  if (firstLotCompanies) {
+    replacements.set('[ENTREPRISE 1]', companyTotals[0]?.name || companies[0]?.name || firstLotCompanies.split(', ')[0] || '[ENTREPRISE 1]');
+  }
+
+  let xml = documentXml;
+  xml = xml.replace('[LOT 1] : [INTITULÉ DU LOT 1]\n[LOT 2] : [INTITULÉ DU LOT 2]\n[LOT N] : [INTITULÉ DU LOT N]', xmlEscape(consultationLotsText));
+  for (const [key, value] of replacements.entries()) {
+    xml = replaceTemplateText(xml, [[key, value]]);
+  }
+  xml = xml.replace(/Macrolot XX/g, `Macrolot ${firstLot.code || firstLot.id || 'XX'}`);
+  xml = xml.replace(/macrolot\s+XX/g, `macrolot ${firstLot.code || firstLot.id || 'XX'}`);
+  return xml;
+}
+
+function highlightRemainingRaoPlaceholders(documentXml) {
+  return documentXml.replace(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g, run => {
+    if (!/<w:t\b[^>]*>[^<]*\[[^\]]+\][^<]*<\/w:t>/.test(run)) return run;
+    if (run.includes('<w:highlight ')) return run;
+    if (run.includes('<w:rPr>')) {
+      return run.replace('</w:rPr>', '<w:highlight w:val="yellow"/><w:color w:val="9C6500"/></w:rPr>');
+    }
+    const openEnd = run.indexOf('>') + 1;
+    return `${run.slice(0, openEnd)}<w:rPr><w:highlight w:val="yellow"/><w:color w:val="9C6500"/></w:rPr>${run.slice(openEnd)}`;
+  });
+}
+
+async function replaceRaoCoverLogo(zip) {
+  const relsFile = zip.file('word/_rels/document.xml.rels');
+  if (!relsFile) return;
+  let rels = await relsFile.async('string');
+  rels = rels.replace('Target="media/image4.emf"', 'Target="media/dmx-logo.png"');
+  zip.file('word/_rels/document.xml.rels', rels);
+  zip.file('word/media/dmx-logo.png', await fs.readFile(DMX_LOGO_PATH));
 }
 
 function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
@@ -2161,12 +2454,18 @@ async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeT
   if (!documentFile) throw new Error('Template RAO invalide: word/document.xml introuvable');
 
   let documentXml = await documentFile.async('string');
-  const phase = project.study_phase || rounds[rounds.length - 1]?.name || 'ACT';
-  documentXml = replaceTemplateText(documentXml, [
-    ['SKY CENTER', project.name],
-    ['BATI10401', project.reference || `TAO${project.id}`],
-    ['Rapport d\'analyse ACT', `Rapport d'analyse ${phase}`]
-  ]);
+  documentXml = applyRaoCoverVariables(documentXml, { project, rounds });
+  documentXml = applyRaoBusinessPlaceholders(documentXml, {
+    project,
+    lots,
+    rounds,
+    companies,
+    moeTotals,
+    offersByRoundCompanyLot,
+    questions
+  });
+  documentXml = highlightRemainingRaoPlaceholders(documentXml);
+  await replaceRaoCoverLogo(zip);
 
   const generatedSection = buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions });
   documentXml = appendWordSection(documentXml, generatedSection);
@@ -2609,17 +2908,107 @@ function sanitizeZipSegment(value, fallback = 'Sans_nom') {
   return clean || fallback;
 }
 
-function getZipStructure({ projectId, projectName, roundLabel }) {
-  const root = `Affaire_${sanitizeZipSegment(projectName || `Projet_${projectId}`)}`;
+function getZipStructure({ projectId, projectName, projectReference, roundLabel }) {
+  const projectFolderName = sanitizeZipSegment(
+    [projectReference, projectName].filter(Boolean).join('_'),
+    `Projet_${projectId}`
+  );
+  const root = `Affaire_${projectFolderName}`;
   const roundFolder = sanitizeZipSegment(roundLabel || 'Tour_non_defini');
 
   return {
     root,
     rao: `${root}/01_RAO`,
-    roundsComparison: `${root}/02_Comparaison_Tours`,
-    lotAnalysis: `${root}/03_Analyses_Lots/${roundFolder}`,
-    questionSheets: `${root}/04_Fiches_Questions/${roundFolder}`
+    roundsComparison: `${root}/02_Comparaison_des_tours`,
+    roundSummaries: `${root}/03_Recapitulatifs_par_tour/${roundFolder}`,
+    lotComparisons: `${root}/04_Comparatifs_par_lot/${roundFolder}`,
+    questionSheets: `${root}/05_Fiches_questions/${roundFolder}`
   };
+}
+
+function getMaxAbsCellValue(worksheet, refs) {
+  let max = 0;
+  for (const ref of refs) {
+    const value = worksheet.getCell(ref).value;
+    const numeric = typeof value === 'object' && value?.result !== undefined ? Number(value.result) : Number(value);
+    if (Number.isFinite(numeric)) {
+      max = Math.max(max, Math.abs(numeric));
+    }
+  }
+  return max;
+}
+
+function blendArgbColor(fromArgb, toArgb, ratio) {
+  const amount = Math.max(0, Math.min(1, ratio));
+  const from = normalizeHexColor(fromArgb, 'FFFFFFFF').slice(2);
+  const to = normalizeHexColor(toArgb, 'FFFFFFFF').slice(2);
+  const channels = [0, 2, 4].map(offset => {
+    const start = parseInt(from.slice(offset, offset + 2), 16);
+    const end = parseInt(to.slice(offset, offset + 2), 16);
+    return Math.round(start + (end - start) * amount).toString(16).padStart(2, '0');
+  });
+  return `FF${channels.join('').toUpperCase()}`;
+}
+
+function addDivergingPercentDataBars(worksheet, refs, priority = 1) {
+  const filteredRefs = refs.filter(ref => worksheet.getCell(ref).value !== null && worksheet.getCell(ref).value !== undefined);
+  if (!filteredRefs.length) return;
+  const maxAbs = Math.max(getMaxAbsCellValue(worksheet, filteredRefs), 0.01);
+
+  filteredRefs.forEach(ref => {
+    const cell = worksheet.getCell(ref);
+    const numeric = typeof cell.value === 'object' && cell.value?.result !== undefined
+      ? Number(cell.value.result)
+      : Number(cell.value);
+    if (!Number.isFinite(numeric) || numeric === 0) return;
+    const ratio = Math.min(Math.abs(numeric) / maxAbs, 1);
+    const targetColor = numeric > 0 ? 'FFE06666' : 'FF63BE7B';
+    const textColor = numeric > 0 ? 'FF9C0006' : 'FF006100';
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: blendArgbColor('FFFFFFFF', targetColor, 0.25 + ratio * 0.55) }
+    };
+    cell.font = {
+      ...(cell.font || {}),
+      color: { argb: textColor },
+      bold: Math.abs(numeric) >= maxAbs * 0.66
+    };
+  });
+}
+
+async function getBundleLotSelection({ projectId, questionLotId, questionLotIds }) {
+  const projectLotsRes = await query(
+    `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+    [projectId]
+  );
+  const projectLots = projectLotsRes.rows || [];
+  const projectLotIds = new Set(projectLots.map(l => Number(l.id)).filter(Number.isFinite));
+
+  const explicitLotIds = Array.isArray(questionLotIds)
+    ? [...new Set(questionLotIds.map(id => Number(id)).filter(Number.isFinite))]
+    : [];
+
+  let lotIdsToExport = [];
+  if (explicitLotIds.length > 0) {
+    lotIdsToExport = explicitLotIds;
+  } else {
+    const lotSelection = String(questionLotId || '').trim().toLowerCase();
+    if (!lotSelection || lotSelection === 'all') {
+      lotIdsToExport = projectLots.map(l => Number(l.id)).filter(Number.isFinite);
+    } else {
+      const singleLotId = Number(questionLotId);
+      if (!Number.isFinite(singleLotId)) {
+        const err = new Error('questionLotId invalide');
+        err.status = 400;
+        throw err;
+      }
+      lotIdsToExport = [singleLotId];
+    }
+  }
+
+  lotIdsToExport = lotIdsToExport.filter(lotId => projectLotIds.has(lotId));
+  return { projectLots, lotIdsToExport };
 }
 
 router.post('/project-bundle-zip', async (req, res) => {
@@ -2640,7 +3029,7 @@ router.post('/project-bundle-zip', async (req, res) => {
     }
 
     const projectMetaRes = await query(
-      `SELECT name FROM projects WHERE id = $1`,
+      `SELECT name, reference FROM projects WHERE id = $1`,
       [projectId]
     );
     if (projectMetaRes.rowCount === 0) {
@@ -2659,7 +3048,7 @@ router.post('/project-bundle-zip', async (req, res) => {
         [currentRoundId, projectId]
       );
       if (r.rowCount > 0) roundsToProcess.push(r.rows[0]);
-    } else if (selections.lotAnalysis || selections.questionSheets) {
+    } else if (selections.lotAnalysis || selections.lotComparisons || selections.questionSheets) {
       const r = await query(
         `SELECT id, round_number, name FROM rounds WHERE project_id = $1 ORDER BY round_number`,
         [projectId]
@@ -2672,10 +3061,19 @@ router.post('/project-bundle-zip', async (req, res) => {
       ? `Tour_${firstRound.round_number}${firstRound.name ? `_${firstRound.name}` : ''}`
       : 'Tour_non_defini';
     const projectName = projectMetaRes.rows[0]?.name;
+    const projectReference = projectMetaRes.rows[0]?.reference;
 
-    const zipStructure = getZipStructure({ projectId, projectName, roundLabel: mainRoundLabel });
+    const zipStructure = getZipStructure({ projectId, projectName, projectReference, roundLabel: mainRoundLabel });
 
     const zip = new JSZip();
+    const needsLotScopedExports = selections.lotAnalysis || selections.lotComparisons || selections.questionSheets;
+    const bundleLotSelection = needsLotScopedExports
+      ? await getBundleLotSelection({ projectId, questionLotId, questionLotIds })
+      : { projectLots: [], lotIdsToExport: [] };
+
+    if (needsLotScopedExports && bundleLotSelection.lotIdsToExport.length === 0) {
+      return res.status(400).json({ error: 'Aucun lot valide sélectionné pour les exports par lot' });
+    }
 
     if (selections.rao) {
       const file = await generateExportFile(req, 'rao', { projectId });
@@ -2690,57 +3088,45 @@ router.post('/project-bundle-zip', async (req, res) => {
     if (selections.lotAnalysis) {
       for (const round of roundsToProcess) {
         const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
-        const rStruct = getZipStructure({ projectId, projectName, roundLabel: roundLbl });
+        const rStruct = getZipStructure({ projectId, projectName, projectReference, roundLabel: roundLbl });
         try {
           const file = await generateExportFile(req, 'summary', { roundId: round.id });
-          zip.file(`${rStruct.lotAnalysis}/${sanitizeZipSegment(file.filename, `Analyse_Tour_${round.id}.xlsx`)}`, file.buffer);
+          zip.file(`${rStruct.roundSummaries}/${sanitizeZipSegment(file.filename, `Recapitulatif_Tour_${round.id}.xlsx`)}`, file.buffer);
         } catch (e) {
           if (e.status !== 404) throw e;
         }
       }
     }
 
-    if (selections.questionSheets && roundsToProcess.length > 0) {
-      const projectLotsRes = await query(
-        `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
-        [projectId]
-      );
-      const projectLots = projectLotsRes.rows || [];
-      const projectLotIds = new Set(projectLots.map(l => Number(l.id)).filter(Number.isFinite));
-
-      const explicitLotIds = Array.isArray(questionLotIds)
-        ? [...new Set(questionLotIds.map(id => Number(id)).filter(Number.isFinite))]
-        : [];
-
-      let lotIdsToExport = [];
-      if (explicitLotIds.length > 0) {
-        lotIdsToExport = explicitLotIds;
-      } else {
-        const lotSelection = String(questionLotId || '').trim().toLowerCase();
-        if (!lotSelection || lotSelection === 'all') {
-          lotIdsToExport = projectLots.map(l => Number(l.id)).filter(Number.isFinite);
-        } else {
-          const singleLotId = Number(questionLotId);
-          if (!Number.isFinite(singleLotId)) {
-            return res.status(400).json({ error: 'questionLotId invalide' });
+    if ((selections.lotAnalysis || selections.lotComparisons) && roundsToProcess.length > 0) {
+      const byId = new Map(bundleLotSelection.projectLots.map(l => [Number(l.id), l]));
+      for (const round of roundsToProcess) {
+        const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
+        const rStruct = getZipStructure({ projectId, projectName, projectReference, roundLabel: roundLbl });
+        for (const lotId of bundleLotSelection.lotIdsToExport) {
+          const lot = byId.get(Number(lotId));
+          const lotPrefix = sanitizeZipSegment(`${lot?.code || `Lot_${lotId}`}_${lot?.name || ''}`, `Lot_${lotId}`);
+          try {
+            const file = await generateExportFile(req, 'lot-comparison', { lotId, roundId: round.id });
+            const filename = sanitizeZipSegment(file.filename, `Comparatif_Lot_${lotId}_Tour_${round.round_number}.xlsx`);
+            zip.file(`${rStruct.lotComparisons}/${lotPrefix}/${filename}`, file.buffer);
+          } catch (e) {
+            if (e.status !== 404) throw e;
           }
-          lotIdsToExport = [singleLotId];
         }
       }
+    }
 
-      lotIdsToExport = lotIdsToExport.filter(lotId => projectLotIds.has(lotId));
-
-      if (lotIdsToExport.length === 0) {
-        return res.status(400).json({ error: 'Aucun lot valide sélectionné pour les fiches questions' });
-      }
-
+    if (selections.questionSheets && roundsToProcess.length > 0) {
+      const projectLots = bundleLotSelection.projectLots;
+      const lotIdsToExport = bundleLotSelection.lotIdsToExport;
       const byId = new Map(projectLots.map(l => [Number(l.id), l]));
       const lotCompaniesRes = await query(
-        `SELECT lc.lot_id, c.id as company_id, c.name as company_name
+        `SELECT lc.lot_id, c.id as company_id, COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name
          FROM lot_companies lc
          JOIN companies c ON c.id = lc.company_id
          WHERE lc.lot_id = ANY($1::bigint[])
-         ORDER BY lc.created_at, c.name`,
+         ORDER BY lc.created_at, company_name`,
         [lotIdsToExport]
       );
       const companiesByLotId = new Map();
@@ -2755,7 +3141,7 @@ router.post('/project-bundle-zip', async (req, res) => {
 
       for (const round of roundsToProcess) {
         const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
-        const rStruct = getZipStructure({ projectId, projectName, roundLabel: roundLbl });
+        const rStruct = getZipStructure({ projectId, projectName, projectReference, roundLabel: roundLbl });
         for (const lotId of lotIdsToExport) {
           const lotCompanies = companiesByLotId.get(Number(lotId)) || [];
           if (lotCompanies.length === 0) continue;
@@ -2828,7 +3214,7 @@ router.get('/questions-send-status', async (req, res) => {
 
     // Récupérer les entreprises du lot + leur dernier envoi
     const result = await query(
-      `SELECT c.id, c.name, c.email, c.color,
+      `SELECT c.id, COALESCE(NULLIF(lc.display_name, ''), c.name) AS name, c.email, c.color,
               s.sent_at AS last_sent_at,
               s.sent_to_email AS last_sent_to_email,
               u.email AS sent_by_email,
@@ -2846,7 +3232,7 @@ router.get('/questions-send-status', async (req, res) => {
        ) s ON true
        LEFT JOIN users u ON u.id = s.sent_by
        WHERE lc.lot_id = $1
-       ORDER BY lc.created_at, c.name`,
+       ORDER BY lc.created_at, name`,
       [lotId, roundId]
     );
 
@@ -2894,11 +3280,11 @@ router.get('/questions-by-company/:lotId', async (req, res) => {
     }
 
     const companiesRes = await query(
-      `SELECT c.id, c.name
+      `SELECT c.id, COALESCE(NULLIF(lc.display_name, ''), c.name) AS name
        FROM lot_companies lc
        JOIN companies c ON c.id = lc.company_id
        WHERE lc.lot_id = $1${companyWhere}
-       ORDER BY lc.created_at, c.name`,
+       ORDER BY lc.created_at, name`,
       params
     );
 

@@ -802,6 +802,13 @@ input:focus,textarea:focus,select:focus{
   box-shadow:0 0 0 3px rgba(var(--accent-rgb),.15);
   outline:none;
 }
+#rounds-compare-view .compare-round-field{
+  flex:0 1 280px;
+  min-width:220px;
+}
+#rounds-compare-view #compare-round{
+  min-width:220px;
+}
 
 /* Anciens tabs (deprecated mais gardés pour compatibilité) */
 .tabs{ display:flex; gap:8px; margin-left:16px }
@@ -816,6 +823,20 @@ input:focus,textarea:focus,select:focus{
        padding:6px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:8px }
 .chip button{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; }
 .chip button:hover{ color:#fff }
+.company-chip-name-input{
+  width:min(190px,34vw);
+  min-width:82px;
+  border:none;
+  background:transparent;
+  color:var(--fg);
+  font:inherit;
+  padding:1px 2px;
+  border-radius:4px;
+}
+.company-chip-name-input:focus{
+  outline:1px solid var(--accent);
+  background:rgba(var(--accent-rgb), .12);
+}
 
 /* Tables */
 .table-wrapper{
@@ -1829,9 +1850,10 @@ body.demo-tutorial [data-demo-tip]::after {
   font-weight: 600;
 }
 #questions-editor-table .unit-mismatch-cell {
-  background: rgba(245, 158, 11, 0.10);
-  color: var(--warning);
+  background: rgba(111, 66, 193, 0.12);
+  color: #6f42c1;
   font-weight: 600;
+  border-left: 3px solid #6f42c1;
 }
 #questions-editor-table .unit-mismatch-note {
   display: inline-flex;
@@ -1859,6 +1881,15 @@ body.demo-tutorial [data-demo-tip]::after {
 }
 #questions-editor-table tbody tr:hover td.target-company-highlight {
   background: rgba(245, 158, 11, 0.18);
+}
+#questions-editor-table td.unit-mismatch-cell.target-company-highlight {
+  background: rgba(111, 66, 193, 0.16);
+  color: #6f42c1;
+  border-left: 3px solid #6f42c1;
+  border-right: 3px solid var(--warning);
+}
+#questions-editor-table tbody tr:hover td.unit-mismatch-cell.target-company-highlight {
+  background: rgba(111, 66, 193, 0.20);
 }
 
 /* Les couleurs d'écart ont la priorité sur la surbrillance */
@@ -2612,6 +2643,10 @@ body.demo-tutorial [data-demo-tip]::after {
     align-items:stretch !important;
   }
   #rounds-compare-view .row .spacer{ display:none }
+  #rounds-compare-view .compare-round-field{
+    min-width:0;
+    width:100%;
+  }
   #rounds-compare-view select{
     width:100% !important;
     max-width:100% !important;
