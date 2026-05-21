@@ -55,6 +55,7 @@ let dataExportContext = 'data-sheet';
 let currentProjectExport = { projectId: null, projectName: '', lots: [], scopeLevel: 'project', scopeLotId: null };
 let nextSimulationId = 1;
 const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
+const TABLE_COLUMN_WIDTHS_STORAGE_KEY = 'tableColumnWidths.v1';
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -87,6 +88,276 @@ const hide = (sel) => {
 };
 const setText = (sel, t) => { const el = qs(sel); if (el) el.textContent = t; };
 const setHtml = (sel, html) => { const el = qs(sel); if (el) el.innerHTML = html; };
+
+function getSavedTableColumnWidths(tableKey) {
+  try {
+    const raw = localStorage.getItem(TABLE_COLUMN_WIDTHS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return Array.isArray(parsed[tableKey]) ? parsed[tableKey] : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTableColumnWidths(tableKey, widths) {
+  try {
+    const raw = localStorage.getItem(TABLE_COLUMN_WIDTHS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[tableKey] = widths.map(w => Math.round(Number(w) || 0));
+    localStorage.setItem(TABLE_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(parsed));
+  } catch (err) {
+    console.warn('Impossible de sauvegarder les largeurs de colonnes:', err);
+  }
+}
+
+function clampColumnWidth(value, min = 48, max = 900) {
+  return Math.max(min, Math.min(max, Math.round(Number(value) || min)));
+}
+
+function getTableColumnCount(table) {
+  let count = 0;
+  table.querySelectorAll('tr').forEach(row => {
+    const rowCount = Array.from(row.cells).reduce((sum, cell) => sum + (cell.colSpan || 1), 0);
+    count = Math.max(count, rowCount);
+  });
+  return count;
+}
+
+function ensureTableColGroup(table, columnCount) {
+  let colgroup = table.querySelector(':scope > colgroup[data-resizable-cols="1"]');
+  if (!colgroup) {
+    colgroup = document.createElement('colgroup');
+    colgroup.dataset.resizableCols = '1';
+    table.insertBefore(colgroup, table.firstChild);
+  }
+  while (colgroup.children.length < columnCount) colgroup.appendChild(document.createElement('col'));
+  while (colgroup.children.length > columnCount) colgroup.lastElementChild.remove();
+  return colgroup;
+}
+
+function getHeaderLeafCells(table) {
+  const rows = Array.from(table.tHead?.rows || []);
+  if (!rows.length) return [];
+  const grid = [];
+  rows.forEach((row, rowIndex) => {
+    grid[rowIndex] = grid[rowIndex] || [];
+    let visualCol = 0;
+    Array.from(row.cells).forEach(cell => {
+      while (grid[rowIndex][visualCol]) visualCol += 1;
+      const colSpan = cell.colSpan || 1;
+      const rowSpan = cell.rowSpan || 1;
+      cell.dataset.visualColumn = String(visualCol);
+      for (let r = 0; r < rowSpan; r += 1) {
+        grid[rowIndex + r] = grid[rowIndex + r] || [];
+        for (let c = 0; c < colSpan; c += 1) {
+          grid[rowIndex + r][visualCol + c] = cell;
+        }
+      }
+      visualCol += colSpan;
+    });
+  });
+
+  const lastRowIndex = rows.length - 1;
+  const leafCells = [];
+  const seen = new Set();
+  rows.forEach((row, rowIndex) => {
+    Array.from(row.cells).forEach(cell => {
+      const start = Number(cell.dataset.visualColumn || 0);
+      const colSpan = cell.colSpan || 1;
+      const reachesBottom = rowIndex + (cell.rowSpan || 1) - 1 >= lastRowIndex;
+      if (colSpan === 1 && reachesBottom && !seen.has(cell)) {
+        seen.add(cell);
+        leafCells.push({ cell, column: start });
+      }
+    });
+  });
+  return leafCells.sort((a, b) => a.column - b.column);
+}
+
+function eachVisualTableCell(table, callback) {
+  const rows = Array.from(table.rows || []);
+  const grid = [];
+  rows.forEach((row, rowIndex) => {
+    grid[rowIndex] = grid[rowIndex] || [];
+    let visualCol = 0;
+    Array.from(row.cells).forEach(cell => {
+      while (grid[rowIndex][visualCol]) visualCol += 1;
+      const colSpan = cell.colSpan || 1;
+      const rowSpan = cell.rowSpan || 1;
+      callback(cell, visualCol, colSpan, row);
+      for (let r = 0; r < rowSpan; r += 1) {
+        grid[rowIndex + r] = grid[rowIndex + r] || [];
+        for (let c = 0; c < colSpan; c += 1) {
+          grid[rowIndex + r][visualCol + c] = cell;
+        }
+      }
+      visualCol += colSpan;
+    });
+  });
+}
+
+function tableCellText(cell) {
+  const textarea = cell.querySelector?.('textarea');
+  if (textarea) return textarea.value || textarea.placeholder || '';
+  const input = cell.querySelector?.('input,select');
+  if (input) return input.value || input.textContent || '';
+  return cell.textContent || '';
+}
+
+function estimateColumnTextWidth(text, { header = false, unitLike = false, numericLike = false } = {}) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return header ? 58 : 46;
+  const headerLimit = unitLike ? 8 : 18;
+  const effectiveLength = header ? Math.min(normalized.length, headerLimit) : normalized.length;
+  const charWidth = numericLike ? 7 : 7.4;
+  return Math.ceil(effectiveLength * charWidth + (header ? 26 : 30));
+}
+
+function computeAutoTableColumnWidths(table, columnCount, options = {}) {
+  const widths = Array.from({ length: columnCount }, () => 54);
+  const bodyMaxLen = Array.from({ length: columnCount }, () => 0);
+  const headerByCol = new Map(getHeaderLeafCells(table).map(({ cell, column }) => [column, tableCellText(cell)]));
+
+  eachVisualTableCell(table, (cell, column, colSpan, row) => {
+    if (colSpan !== 1 || column >= columnCount) return;
+    const text = tableCellText(cell);
+    if (row.parentElement?.tagName === 'TBODY' || row.parentElement?.tagName === 'TFOOT') {
+      bodyMaxLen[column] = Math.max(bodyMaxLen[column], String(text || '').trim().length);
+    }
+  });
+
+  eachVisualTableCell(table, (cell, column, colSpan, row) => {
+    if (colSpan !== 1 || column >= columnCount) return;
+    const headerText = String(headerByCol.get(column) || '').toLowerCase();
+    const cellText = tableCellText(cell);
+    const unitLike = /\bunite\b|\bunit\b|unité|qt[eé]|m²|m2|ml\b/.test(headerText) && bodyMaxLen[column] <= 8;
+    const numericLike = cell.classList.contains('amount') || /montant|prix|pu|qt[eé]|delta|ecart|%|€/.test(headerText);
+    const isHeader = row.parentElement?.tagName === 'THEAD';
+    widths[column] = Math.max(widths[column], estimateColumnTextWidth(cellText, { header: isHeader, unitLike, numericLike }));
+  });
+
+  const minWidths = options.minWidths || {};
+  const maxWidths = options.maxWidths || {};
+  for (let i = 0; i < widths.length; i += 1) {
+    let min = minWidths[i] || 48;
+    let max = maxWidths[i] || 320;
+    if (table.id === 'questions-editor-table') {
+      if (i === 0) { min = 72; max = Math.min(max, 140); }
+      if (i === 1) { min = 72; max = Math.min(max, 86); }
+      if (i === 2) { min = 180; max = Math.max(max, 420); }
+      if (i === 3) { min = 300; max = Math.max(max, 460); }
+      if (i === 4) max = Math.min(max, 90);
+    } else {
+      if (i === 0) min = Math.max(min, 70);
+      if (i === 1) { min = Math.max(min, 160); max = Math.max(max, 460); }
+      if (i === 2) max = Math.min(max, 90);
+    }
+    widths[i] = clampColumnWidth(widths[i], min, max);
+  }
+  return widths;
+}
+
+function applyTableColumnWidths(table, widths) {
+  const colgroup = ensureTableColGroup(table, widths.length);
+  widths.forEach((width, index) => {
+    const px = `${clampColumnWidth(width)}px`;
+    const col = colgroup.children[index];
+    col.style.width = px;
+  });
+  table.dataset.columnWidths = JSON.stringify(widths.map(w => clampColumnWidth(w)));
+  updateStickyColumnOffsets(table);
+}
+
+function getCurrentColumnWidth(table, columnIndex) {
+  const col = table.querySelector(`:scope > colgroup[data-resizable-cols="1"] col:nth-child(${columnIndex + 1})`);
+  const fromCol = parseFloat(col?.style.width || '');
+  if (Number.isFinite(fromCol) && fromCol > 0) return fromCol;
+  const leaf = getHeaderLeafCells(table).find(entry => entry.column === columnIndex)?.cell;
+  return leaf?.getBoundingClientRect().width || 80;
+}
+
+function updateStickyColumnOffsets(table) {
+  if (!table) return;
+  const widthAt = (index, fallback) => getCurrentColumnWidth(table, index) || fallback;
+  if (table.id === 'questions-editor-table') {
+    const numWidth = widthAt(0, 90);
+    const actionWidth = widthAt(1, 72);
+    const desigWidth = table.classList.contains('desig-collapsed') ? 32 : widthAt(2, 320);
+    table.style.setProperty('--questions-sticky-actions-left', `${numWidth}px`);
+    table.style.setProperty('--questions-sticky-col2-left', `${numWidth + actionWidth}px`);
+    table.style.setProperty('--questions-sticky-question-left', `${numWidth + actionWidth + desigWidth}px`);
+    table.style.setProperty('--questions-sticky-question-left-collapsed', `${numWidth + actionWidth + 32}px`);
+    return;
+  }
+
+  if (table.querySelector('.sticky-col2')) {
+    const firstWidth = widthAt(0, 120);
+    table.style.setProperty('--sticky-col2-left', `${firstWidth}px`);
+  }
+}
+
+function addColumnResizeHandles(table, tableKey, widths) {
+  table.querySelectorAll('.col-resize-handle').forEach(handle => handle.remove());
+  getHeaderLeafCells(table).forEach(({ cell, column }) => {
+    if (column >= widths.length) return;
+    cell.classList.add('has-column-resizer');
+    cell.dataset.resizeColumn = String(column);
+    const handle = document.createElement('span');
+    handle.className = 'col-resize-handle';
+    handle.title = 'Redimensionner la colonne';
+    handle.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = getCurrentColumnWidth(table, column);
+      const activeWidths = JSON.parse(table.dataset.columnWidths || '[]');
+      document.body.classList.add('is-resizing-column');
+
+      const onMove = (moveEvent) => {
+        const nextWidth = clampColumnWidth(startWidth + moveEvent.clientX - startX);
+        activeWidths[column] = nextWidth;
+        applyTableColumnWidths(table, activeWidths);
+        recalcCompareHeaderOffsets();
+        recalcQuestionsHeaderOffsets();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.classList.remove('is-resizing-column');
+        saveTableColumnWidths(tableKey, activeWidths);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    cell.appendChild(handle);
+  });
+}
+
+function setupResizableTable(tableSelector, tableKey, options = {}) {
+  const table = typeof tableSelector === 'string' ? qs(tableSelector) : tableSelector;
+  if (!table) return;
+  const columnCount = getTableColumnCount(table);
+  if (!columnCount) return;
+
+  table.classList.add('table-resizable');
+  const saved = getSavedTableColumnWidths(tableKey);
+  const autoWidths = computeAutoTableColumnWidths(table, columnCount, options);
+  const widths = Array.from({ length: columnCount }, (_, index) => {
+    const savedWidth = saved?.[index];
+    return Number.isFinite(savedWidth) && savedWidth > 0 ? clampColumnWidth(savedWidth) : autoWidths[index];
+  });
+
+  applyTableColumnWidths(table, widths);
+  addColumnResizeHandles(table, tableKey, widths);
+  if (window.requestAnimationFrame) {
+    requestAnimationFrame(() => {
+      updateStickyColumnOffsets(table);
+      recalcCompareHeaderOffsets();
+      recalcQuestionsHeaderOffsets();
+    });
+  }
+}
 
 /* ====== Delete Confirmation Modal ====== */
 let deleteConfirmationCallback = null;
@@ -2565,6 +2836,7 @@ async function loadRoundsComparison(){
     }
 
     tfoot.appendChild(totalRow);
+    setupResizableTable('#rounds-compare-table', `rounds-compare:${currentProject?.id || 'global'}`);
     
   } catch (err) {
     console.error('Erreur chargement comparaison tours:', err);
@@ -4893,6 +5165,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   qs('#questions-desig-toggle')?.addEventListener('click', () => {
     questionsDesigCollapsed = !questionsDesigCollapsed;
     qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
+    updateStickyColumnOffsets(qs('#questions-editor-table'));
     recalcQuestionsHeaderOffsets();
   });
 
@@ -5136,6 +5409,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   }
   
   tbody.innerHTML = html || `<tr><td colspan="${emptyColspan}" style="text-align:center;padding:40px;color:var(--muted)">Aucune ligne correspondante</td></tr>`;
+  setupResizableTable('#questions-editor-table', `questions-editor:${currentLot?.id || 'global'}:${currentRound?.id || 'all'}`);
   
   // Bind events
   if (!isVisionneur() && !isEntreprise()) {
@@ -5715,6 +5989,7 @@ async function refreshCompare({ silent = false } = {}){
 
   // Rendre le tableau des options séparé (sous le total)
   renderOptionsCompareTable(data.companies, entrepriseMode);
+  setupResizableTable('#compare-table', `lot-compare:${currentLot?.id || 'global'}:${currentRound?.id || 'all'}`);
   } catch (err) {
     console.error('[refreshCompare] Erreur:', err);
     const head = qs('#compare-head'), body = qs('#compare-body');
@@ -5746,10 +6021,12 @@ function recalcCompareHeaderOffsets(){
 
 window.addEventListener('resize', () => {
   // Recalcule l'offset en cas de changement de taille/zoom
+  qsa('table.table-resizable').forEach(updateStickyColumnOffsets);
   recalcCompareHeaderOffsets();
   recalcQuestionsHeaderOffsets();
 });
 window.addEventListener('load', () => {
+  qsa('table.table-resizable').forEach(updateStickyColumnOffsets);
   recalcCompareHeaderOffsets();
   recalcQuestionsHeaderOffsets();
 });
@@ -5839,6 +6116,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
   }
   totalRow += '</tr>';
   body.insertAdjacentHTML('beforeend', totalRow);
+  setupResizableTable('#options-compare-table', `options-compare:${currentLot?.id || 'global'}:${currentRound?.id || 'all'}`);
 }
 
   /** ======= Options Sheet — Model-based (like main table) ======= */
@@ -6240,6 +6518,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
 
     attachOptionsSheetDelegates();
     for (let r=0; r<optionsSheetRows.length; r++) recalcOptionsAmountsRow(r);
+    setupResizableTable('#options-sheet-table', `options-sheet:${currentLot?.id || 'global'}:${currentRound?.id || 'all'}`);
   }
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
@@ -6403,6 +6682,7 @@ function renderSheetInitial(){
   attachSheetDelegates();
   // recalcul initial
   for (let r=0; r<sheetRows.length; r++) recalcRowAmountsRow(r);
+  setupResizableTable('#sheet-table', `sheet:${currentLot?.id || 'global'}:${currentRound?.id || 'all'}`);
 }
 
 /** appendRowDOM : ne rerend PAS tout */

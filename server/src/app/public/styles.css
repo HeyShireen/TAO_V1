@@ -865,6 +865,24 @@ table{
   font-size: 13px;
   table-layout: auto;
 }
+table.table-resizable{
+  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+}
+table.table-resizable th,
+table.table-resizable td{
+  min-width: 0;
+}
+table.table-resizable .sticky-col,
+table.table-resizable .sticky-col2,
+table.table-resizable .sticky-actions,
+table.table-resizable .sticky-question,
+table.table-resizable .lot-name-cell{
+  min-width:0;
+  width:auto;
+  max-width:none;
+}
 th,td{
   padding:10px 14px;
   border-right:1px solid var(--border);
@@ -879,6 +897,38 @@ th,td{
   transition: all 0.2s;
   /* Permettre le retour à la ligne si le contenu est trop long */
   word-break: break-word;
+}
+th.has-column-resizer{
+  position: sticky;
+  padding-right: 18px !important;
+}
+.col-resize-handle{
+  position:absolute;
+  top:0;
+  right:-4px;
+  width:8px;
+  height:100%;
+  cursor:col-resize;
+  z-index:120;
+  touch-action:none;
+}
+.col-resize-handle::after{
+  content:'';
+  position:absolute;
+  top:8px;
+  bottom:8px;
+  left:3px;
+  width:2px;
+  border-radius:2px;
+  background:transparent;
+}
+.has-column-resizer:hover .col-resize-handle::after,
+body.is-resizing-column .col-resize-handle::after{
+  background:var(--accent);
+}
+body.is-resizing-column{
+  cursor:col-resize;
+  user-select:none;
 }
 thead tr:first-child th{ border-top:1px solid var(--border); }
 th:first-child, td:first-child{ border-left:1px solid var(--border); }
@@ -929,7 +979,7 @@ thead th{
 }
 .sticky-col2{
   position:sticky;
-  left:120px;
+  left:var(--sticky-col2-left, 120px);
   z-index:40;
   background:var(--card);
   min-width:320px;
@@ -978,7 +1028,7 @@ tbody tr:hover .sticky-col2{
 
 .summary-table .sticky-col2 {
   position: sticky;
-  left: 120px;
+  left: var(--sticky-col2-left, 120px);
   z-index: 40;
   background: var(--card);
   min-width: 150px;
@@ -1049,7 +1099,7 @@ tbody tr:hover .sticky-col2{
   background: rgba(var(--accent-rgb),0.12);
   border-right: 2px solid var(--accent) !important;
   position: sticky;
-  left: 120px;
+  left: var(--sticky-col2-left, 120px);
   z-index: 40;
 }
 /* Multi-lignes header sticky : la seconde ligne est décalée */
@@ -1661,7 +1711,7 @@ body.demo-tutorial [data-demo-tip]::after {
 }
 #questions-editor-table .sticky-col2 {
   position: sticky;
-  left: 162px;
+  left: var(--questions-sticky-col2-left, 162px);
   z-index: 40;
   background: var(--card);
   width: 320px;
@@ -1673,7 +1723,7 @@ body.demo-tutorial [data-demo-tip]::after {
 }
 #questions-editor-table .sticky-actions {
   position: sticky;
-  left: 90px;
+  left: var(--questions-sticky-actions-left, 90px);
   z-index: 40;
   background: var(--card);
   width: 72px;
@@ -1715,7 +1765,7 @@ body.demo-tutorial [data-demo-tip]::after {
 }
 #questions-editor-table .sticky-question {
   position: sticky;
-  left: 482px; /* 90 + 72 + 320 */
+  left: var(--questions-sticky-question-left, 482px);
   z-index: 40;
   background: var(--card);
   width: 360px;
@@ -1759,7 +1809,7 @@ body.demo-tutorial [data-demo-tip]::after {
   display: none;
 }
 #questions-editor-table.desig-collapsed .sticky-question {
-  left: 194px !important; /* 90 + 72 + 32 */
+  left: var(--questions-sticky-question-left-collapsed, 194px) !important;
   width: 600px;
   min-width: 480px;
   max-width: 780px;
