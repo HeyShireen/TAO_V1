@@ -5,6 +5,7 @@ import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, Borde
 import JSZip from 'jszip';
 import nodemailer from 'nodemailer';
 import path from 'path';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
@@ -15,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const LOT_COMPARISON_TEMPLATE = path.join(__dirname, '../../templates/comparatif-etancheite-template.xlsx');
 const ROUNDS_COMPARISON_TEMPLATE = path.join(__dirname, '../../templates/recapitulatif-template.xlsx');
+const RAO_TEMPLATE = path.join(__dirname, '../../templates/rao-template.docx');
 const DMX_LOGO_PATH = path.join(__dirname, '../../public/assets/logo.png');
 
 // Toutes les routes nécessitent authentification
@@ -1971,6 +1973,208 @@ async function handleRoundsComparison(req, res) {
 router.get('/rounds-comparison/:projectId', handleRoundsComparison);
 router.post('/rounds-comparison/:projectId', handleRoundsComparison);
 
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function formatDateFr(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('fr-FR');
+}
+
+function formatMoneyFr(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '-';
+  return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+
+function raoValue(value, placeholder) {
+  const text = value === null || value === undefined || value === '' ? placeholder : value;
+  return {
+    text: String(text),
+    placeholder: value === null || value === undefined || value === ''
+  };
+}
+
+function wordRun(value, { bold = false, color = '000000', highlight = false } = {}) {
+  const safe = typeof value === 'object' && value !== null ? value : { text: value, placeholder: false };
+  const effectiveHighlight = highlight || safe.placeholder;
+  return `<w:r><w:rPr>${bold ? '<w:b/>' : ''}<w:color w:val="${effectiveHighlight ? '9C6500' : color}"/>${effectiveHighlight ? '<w:highlight w:val="yellow"/>' : ''}</w:rPr><w:t xml:space="preserve">${xmlEscape(safe.text)}</w:t></w:r>`;
+}
+
+function wordParagraph(runs, { style = null, spacingAfter = 120 } = {}) {
+  const body = Array.isArray(runs) ? runs.join('') : wordRun(runs);
+  const pStyle = style ? `<w:pStyle w:val="${style}"/>` : '';
+  return `<w:p><w:pPr>${pStyle}<w:spacing w:after="${spacingAfter}"/></w:pPr>${body}</w:p>`;
+}
+
+function wordCell(content, { header = false, placeholder = false } = {}) {
+  const fill = header ? 'D9EAF7' : (placeholder ? 'FFF2CC' : 'FFFFFF');
+  return `<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/><w:shd w:fill="${fill}"/></w:tcPr>${content}</w:tc>`;
+}
+
+function wordTable(rows) {
+  const border = '<w:top w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:left w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:right w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="808080"/>';
+  return `<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>${border}</w:tblBorders></w:tblPr>${rows.map(row => `<w:tr>${row.join('')}</w:tr>`).join('')}</w:tbl>`;
+}
+
+function wordSimpleCell(value, options = {}) {
+  const safe = typeof value === 'object' && value !== null ? value : { text: value, placeholder: false };
+  return wordCell(wordParagraph(wordRun(safe, { bold: options.header }), { spacingAfter: 0 }), {
+    header: options.header,
+    placeholder: safe.placeholder
+  });
+}
+
+function appendWordSection(documentXml, sectionXml) {
+  const marker = documentXml.match(/<w:sectPr[\s\S]*?<\/w:sectPr>\s*<\/w:body>/);
+  if (marker) {
+    return documentXml.replace(marker[0], `${sectionXml}${marker[0]}`);
+  }
+  return documentXml.replace('</w:body>', `${sectionXml}</w:body>`);
+}
+
+function replaceTemplateText(documentXml, replacements) {
+  let xml = documentXml;
+  for (const [needle, value] of replacements) {
+    if (!needle || value === null || value === undefined || value === '') continue;
+    xml = xml.split(xmlEscape(needle)).join(xmlEscape(value));
+  }
+  return xml;
+}
+
+function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
+  const latestRound = rounds[rounds.length - 1] || null;
+  const projectRows = [
+    ['Variable', 'Valeur'],
+    ['Nom affaire', raoValue(project.name, '{{NOM_AFFAIRE}}')],
+    ['Reference', raoValue(project.reference, '{{REFERENCE_AFFAIRE}}')],
+    ['Maitre d\'ouvrage / Client', raoValue(project.client, '{{MAITRE_OUVRAGE}}')],
+    ['Localisation', raoValue(project.location, '{{ADRESSE_OPERATION}}')],
+    ['Phase d\'etude', raoValue(project.study_phase || latestRound?.name, '{{PHASE_ETUDE}}')],
+    ['Date d\'etude', raoValue(formatDateFr(project.study_date), '{{DATE_ETUDE}}')],
+    ['Date edition RAO', formatDateFr(new Date())],
+    ['Auteur(s)', raoValue('', '{{AUTEURS_RAO}}')],
+    ['Verificateur(s)', raoValue('', '{{VERIFICATEURS_RAO}}')],
+    ['Destinataires', raoValue('', '{{DESTINATAIRES_RAO}}')],
+    ['Process consultation', raoValue('', '{{PROCESS_CONSULTATION}}')],
+    ['Criteres de jugement', raoValue('', '{{CRITERES_JUGEMENT_OFFRES}}')]
+  ];
+
+  const lotRows = [
+    ['Lot', 'Nom', 'MOE', 'Entreprises consultees']
+  ];
+  for (const lot of lots) {
+    const lotCompanyNames = companies
+      .filter(company => rounds.some(round => offersByRoundCompanyLot[round.id]?.[company.id]?.[lot.id] !== undefined))
+      .map(company => company.name)
+      .join(', ');
+    lotRows.push([
+      lot.code || `Lot ${lot.id}`,
+      lot.name || '',
+      formatMoneyFr(moeTotals[lot.id] || 0),
+      raoValue(lotCompanyNames, '{{ENTREPRISES_CONSULTEES}}')
+    ]);
+  }
+
+  const offerRows = [
+    ['Tour', 'Lot', 'Entreprise', 'Montant offre']
+  ];
+  for (const round of rounds) {
+    for (const lot of lots) {
+      for (const company of companies) {
+        const amount = offersByRoundCompanyLot[round.id]?.[company.id]?.[lot.id];
+        if (amount === undefined) continue;
+        offerRows.push([
+          `Tour ${round.round_number}${round.name ? ` - ${round.name}` : ''}`,
+          `${lot.code || ''} ${lot.name || ''}`.trim(),
+          company.name,
+          formatMoneyFr(amount)
+        ]);
+      }
+    }
+  }
+  if (offerRows.length === 1) {
+    offerRows.push(['{{TOUR}}', '{{LOT}}', '{{ENTREPRISE}}', raoValue('', '{{MONTANT_OFFRE}}')]);
+  }
+
+  const questionRows = [
+    ['Lot', 'Entreprise', 'Article', 'Question / reserve']
+  ];
+  questions.slice(0, 250).forEach(q => {
+    const company = companies.find(c => Number(c.id) === Number(q.company_id));
+    const lot = lots.find(l => Number(l.id) === Number(q.lot_id));
+    questionRows.push([
+      lot ? `${lot.code || ''} ${lot.name || ''}`.trim() : '',
+      company?.name || `Entreprise ${q.company_id || ''}`,
+      `${q.num || ''} ${q.designation || ''}`.trim(),
+      q.question_text || q.comment || ''
+    ]);
+  });
+  if (questionRows.length === 1) {
+    questionRows.push([raoValue('', '{{LOT}}'), raoValue('', '{{ENTREPRISE}}'), raoValue('', '{{ARTICLE}}'), raoValue('', '{{QUESTION_OU_RESERVE}}')]);
+  }
+
+  const toTable = rows => wordTable(rows.map((row, rowIndex) => row.map(value => wordSimpleCell(value, { header: rowIndex === 0 }))));
+
+  return [
+    wordParagraph(wordRun('DONNEES TAO GENEREES', { bold: true }), { style: 'Titre1', spacingAfter: 180 }),
+    wordParagraph([
+      wordRun('Les champs surlignes en jaune sont des variables metier non encore disponibles dans TAO. '),
+      wordRun('Ils restent volontairement visibles pour etre completes ou raccordes plus tard.', { color: '9C6500', highlight: true })
+    ], { spacingAfter: 180 }),
+    wordParagraph(wordRun('Variables projet', { bold: true }), { style: 'Titre2' }),
+    toTable(projectRows),
+    wordParagraph('', { spacingAfter: 160 }),
+    wordParagraph(wordRun('Lots et entreprises', { bold: true }), { style: 'Titre2' }),
+    toTable(lotRows),
+    wordParagraph('', { spacingAfter: 160 }),
+    wordParagraph(wordRun('Montants d\'offres par tour', { bold: true }), { style: 'Titre2' }),
+    toTable(offerRows),
+    wordParagraph('', { spacingAfter: 160 }),
+    wordParagraph(wordRun('Questions et reserves', { bold: true }), { style: 'Titre2' }),
+    toTable(questionRows),
+    wordParagraph('', { spacingAfter: 160 }),
+    wordParagraph(wordRun('Placeholders RAO a raccorder', { bold: true }), { style: 'Titre2' }),
+    toTable([
+      ['Champ', 'Placeholder'],
+      ['Synthese operation', raoValue('', '{{SYNTHESE_OPERATION}}')],
+      ['Planning consultation', raoValue('', '{{PLANNING_CONSULTATION}}')],
+      ['Ateliers / negociations', raoValue('', '{{ATELIERS_NEGOCIATIONS}}')],
+      ['Analyse qualitative par entreprise', raoValue('', '{{ANALYSE_QUALITATIVE_ENTREPRISE}}')],
+      ['Conclusion / attribution proposee', raoValue('', '{{CONCLUSION_ATTRIBUTION}}')]
+    ])
+  ].join('');
+}
+
+async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
+  const templateBuffer = await fs.readFile(RAO_TEMPLATE);
+  const zip = await JSZip.loadAsync(templateBuffer);
+  const documentFile = zip.file('word/document.xml');
+  if (!documentFile) throw new Error('Template RAO invalide: word/document.xml introuvable');
+
+  let documentXml = await documentFile.async('string');
+  const phase = project.study_phase || rounds[rounds.length - 1]?.name || 'ACT';
+  documentXml = replaceTemplateText(documentXml, [
+    ['SKY CENTER', project.name],
+    ['BATI10401', project.reference || `TAO${project.id}`],
+    ['Rapport d\'analyse ACT', `Rapport d'analyse ${phase}`]
+  ]);
+
+  const generatedSection = buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions });
+  documentXml = appendWordSection(documentXml, generatedSection);
+  zip.file('word/document.xml', documentXml);
+
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
 // Générer le RAO (Rapport d'Analyse d'Offre) complet pour un projet en Word
 router.get('/rao/:projectId', async (req, res) => {
   try {
@@ -2046,7 +2250,7 @@ router.get('/rao/:projectId', async (req, res) => {
 
     // Offres par phase / entreprise / lot
     const offersRes = await query(
-      `SELECT o.company_id, o.round_id, o.amount, i.lot_id
+      `SELECT o.company_id, o.round_id, COALESCE(o.amount, COALESCE(o.qty, 0) * COALESCE(o.unit_price, 0)) AS amount, i.lot_id
        FROM offers o
        JOIN items i ON i.id = o.item_id
        JOIN rounds r ON r.id = o.round_id
@@ -2080,6 +2284,20 @@ router.get('/rao/:projectId', async (req, res) => {
       [projectId]
     );
     const questions = questionsRes.rows;
+
+    const raoBuffer = await buildRaoTemplateDocument({
+      project,
+      lots,
+      rounds,
+      companies,
+      moeTotals,
+      offersByRoundCompanyLot,
+      questions
+    });
+    const raoFilename = `RAO_${project.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${raoFilename}"`);
+    return res.send(raoBuffer);
 
     // Construire le document Word
     const children = [];

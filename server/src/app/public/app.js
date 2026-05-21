@@ -3885,24 +3885,9 @@ async function sendQuestionsToAll(onlyUnsent = false) {
 async function exportRAO(){
   if (!currentProject) return;
   try {
-    const response = await fetch(`${API_BASE}/exports/rao/${currentProject.id}`, {
-      credentials: 'include'
+    await downloadFromApi(`${API_BASE}/exports/rao/${currentProject.id}`, {
+      filenameFallback: `RAO_${currentProject.name}_${new Date().toISOString().split('T')[0]}.docx`
     });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Erreur serveur' }));
-      throw new Error(error.error || 'Erreur lors de la génération');
-    }
-    
-    const blob = await response.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `RAO_${currentProject.name}_${new Date().toISOString().split('T')[0]}.docx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(downloadUrl);
     showNotify({ title: 'Succès', message: 'RAO généré avec succès', type: 'success' });
   } catch (err) {
     showNotify({ title:'Erreur', message: err.message, type:'error' });
