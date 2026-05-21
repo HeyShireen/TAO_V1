@@ -1768,13 +1768,38 @@ body.demo-tutorial [data-demo-tip]::after {
   left: var(--questions-sticky-question-left, 482px);
   z-index: 40;
   background: var(--card);
-  width: 360px;
+  width: var(--questions-question-width, 360px);
   overflow: visible;
-  min-width: 320px;
-  max-width: 500px;
+  min-width: var(--questions-question-width, 320px);
+  max-width: var(--questions-question-width, 900px);
   white-space: normal;
   word-wrap: break-word;
   border-right: 2px solid var(--accent) !important;
+}
+#questions-editor-table .question-text-col {
+  padding-right: 18px;
+}
+#questions-editor-table .question-column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 90;
+}
+#questions-editor-table .question-column-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+#questions-editor-table .question-text-col:hover .question-column-resize-handle::after {
+  background: var(--accent);
 }
 /* Bouton rétraction colonne Désignation */
 .desig-toggle-btn {
@@ -1810,9 +1835,9 @@ body.demo-tutorial [data-demo-tip]::after {
 }
 #questions-editor-table.desig-collapsed .sticky-question {
   left: var(--questions-sticky-question-left-collapsed, 194px) !important;
-  width: 600px;
-  min-width: 480px;
-  max-width: 780px;
+  width: var(--questions-question-width, 600px);
+  min-width: var(--questions-question-width, 480px);
+  max-width: var(--questions-question-width, 900px);
 }
 #questions-editor-table thead .sticky-col,
 #questions-editor-table thead .sticky-col2,
@@ -3272,6 +3297,244 @@ tbody tr:hover,
 .rounds-list{
   grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
   gap:10px;
+}
+
+/* Tableaux lot: garder les séparateurs derrière les colonnes figées au scroll horizontal */
+#compare-table,
+#options-compare-table,
+#sheet-table,
+#options-sheet-table{
+  border-collapse:separate;
+  border-spacing:0;
+}
+
+#compare-table thead,
+#options-compare-table thead,
+#sheet-table thead,
+#options-sheet-table thead{
+  position:sticky;
+  top:0;
+  z-index:1200 !important;
+  isolation:isolate;
+}
+
+#compare-table tbody,
+#options-compare-table tbody,
+#sheet-table tbody,
+#options-sheet-table tbody{
+  position:relative;
+  z-index:0;
+}
+
+#compare-table .moe-border,
+#compare-table .company-border,
+#compare-table .moe-col,
+#compare-table .company-col,
+#options-compare-table .moe-border,
+#options-compare-table .company-border,
+#options-compare-table .moe-col,
+#options-compare-table .company-col,
+#sheet-table .moe-col,
+#sheet-table .company-col,
+#sheet-table .company-border,
+#options-sheet-table .moe-col,
+#options-sheet-table .company-col,
+#options-sheet-table .company-border{
+  border-left:2px solid var(--accent) !important;
+  box-shadow:none;
+}
+
+#compare-table tr > :has(+ .moe-border),
+#compare-table tr > :has(+ .company-border),
+#compare-table tr > :has(+ .moe-col),
+#compare-table tr > :has(+ .company-col),
+#options-compare-table tr > :has(+ .moe-border),
+#options-compare-table tr > :has(+ .company-border),
+#options-compare-table tr > :has(+ .moe-col),
+#options-compare-table tr > :has(+ .company-col),
+#sheet-table tr > :has(+ .moe-col),
+#sheet-table tr > :has(+ .company-col),
+#sheet-table tr > :has(+ .company-border),
+#options-sheet-table tr > :has(+ .moe-col),
+#options-sheet-table tr > :has(+ .company-col),
+#options-sheet-table tr > :has(+ .company-border){
+  border-right-color:transparent !important;
+}
+
+#compare-table thead th,
+#options-compare-table thead th,
+#sheet-table thead th,
+#options-sheet-table thead th{
+  position:relative !important;
+  top:auto !important;
+  background:var(--sticky);
+  background-clip:padding-box;
+  z-index:10;
+}
+
+#compare-table thead tr.head-row-1 th,
+#options-compare-table thead tr.head-row-1 th{
+  z-index:20;
+}
+
+#compare-table thead tr.head-row-2 th,
+#options-compare-table thead tr.head-row-2 th{
+  z-index:10;
+}
+
+#compare-table .sticky-col,
+#compare-table .sticky-col2,
+#options-compare-table .sticky-col,
+#options-compare-table .sticky-col2{
+  position:sticky !important;
+  background:var(--input-bg) !important;
+  background-clip:border-box;
+  isolation:isolate;
+  transform:translateZ(0);
+  border-right:2px solid var(--accent) !important;
+  box-shadow:none;
+}
+
+#compare-table .sticky-col,
+#options-compare-table .sticky-col{
+  left:0 !important;
+  z-index:940 !important;
+}
+
+#compare-table .sticky-col2,
+#options-compare-table .sticky-col2{
+  left:var(--sticky-col2-left, 120px) !important;
+  z-index:930 !important;
+}
+
+#compare-table .sticky-col + .sticky-col2,
+#options-compare-table .sticky-col + .sticky-col2,
+#compare-table .sticky-col2 + th,
+#compare-table .sticky-col2 + td,
+#options-compare-table .sticky-col2 + th,
+#options-compare-table .sticky-col2 + td{
+  border-left-color:transparent !important;
+}
+
+#compare-table thead .sticky-col,
+#compare-table thead .sticky-col2,
+#options-compare-table thead .sticky-col,
+#options-compare-table thead .sticky-col2{
+  background:var(--sticky) !important;
+  top:auto !important;
+  border-right:2px solid var(--accent) !important;
+  box-shadow:none;
+}
+
+#compare-table thead .sticky-col,
+#options-compare-table thead .sticky-col{
+  z-index:1320 !important;
+}
+
+#compare-table thead .sticky-col2,
+#options-compare-table thead .sticky-col2{
+  z-index:1310 !important;
+}
+
+#sheet-table thead tr:first-child th[rowspan="2"],
+#options-sheet-table thead tr:first-child th[rowspan="2"]{
+  z-index:80;
+}
+
+#sheet-table thead tr:first-child th:nth-child(1),
+#sheet-table tbody td:nth-child(1){
+  position:sticky !important;
+  left:0 !important;
+  min-width:40px;
+  width:40px;
+  max-width:40px;
+  background:var(--input-bg) !important;
+  background-clip:border-box;
+  z-index:950 !important;
+  isolation:isolate;
+  transform:translateZ(0);
+}
+
+#sheet-table thead tr:first-child th:nth-child(2),
+#sheet-table tbody td:nth-child(2){
+  position:sticky !important;
+  left:40px !important;
+  min-width:90px;
+  width:90px;
+  max-width:90px;
+  background:var(--input-bg) !important;
+  background-clip:border-box;
+  z-index:960 !important;
+  isolation:isolate;
+  transform:translateZ(0);
+  border-right:2px solid var(--accent) !important;
+  box-shadow:none;
+}
+
+#sheet-table thead tr:first-child th:nth-child(3),
+#sheet-table tbody td:nth-child(3){
+  position:sticky !important;
+  left:130px !important;
+  min-width:320px;
+  width:320px;
+  max-width:520px;
+  background:var(--input-bg) !important;
+  background-clip:border-box;
+  z-index:940 !important;
+  isolation:isolate;
+  transform:translateZ(0);
+  border-right:2px solid var(--accent) !important;
+  box-shadow:none;
+}
+
+#sheet-table thead tr:first-child th:nth-child(1),
+#sheet-table thead tr:first-child th:nth-child(2),
+#sheet-table thead tr:first-child th:nth-child(3){
+  top:0 !important;
+  background:var(--sticky) !important;
+}
+
+#sheet-table thead tr:first-child th:nth-child(1){
+  top:auto !important;
+  z-index:1330 !important;
+}
+
+#sheet-table thead tr:first-child th:nth-child(2){
+  top:auto !important;
+  z-index:1340 !important;
+}
+
+#sheet-table thead tr:first-child th:nth-child(3){
+  top:auto !important;
+  z-index:1320 !important;
+}
+
+#sheet-table tr > :nth-child(3),
+#sheet-table tr > :nth-child(4){
+  border-left-color:transparent !important;
+}
+
+#sheet-table thead th:not(:nth-child(1)):not(:nth-child(2)):not(:nth-child(3)),
+#sheet-table tbody td:nth-child(n+4),
+#compare-table thead th:not(.sticky-col):not(.sticky-col2),
+#compare-table tbody td:not(.sticky-col):not(.sticky-col2),
+#options-compare-table thead th:not(.sticky-col):not(.sticky-col2),
+#options-compare-table tbody td:not(.sticky-col):not(.sticky-col2){
+  position:relative;
+  z-index:1 !important;
+}
+
+#sheet-table tbody tr:hover td:nth-child(1),
+#sheet-table tbody tr:hover td:nth-child(2),
+#sheet-table tbody tr:hover td:nth-child(3){
+  background:var(--input-bg) !important;
+}
+
+#compare-table tbody tr:hover .sticky-col,
+#compare-table tbody tr:hover .sticky-col2,
+#options-compare-table tbody tr:hover .sticky-col,
+#options-compare-table tbody tr:hover .sticky-col2{
+  background:var(--input-bg) !important;
 }
 
 .round-card{
