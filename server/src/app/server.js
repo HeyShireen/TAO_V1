@@ -47,15 +47,26 @@ if (isDemoMode()) {
   console.log('Mode DEMO active - actions destructives limitees');
 }
 
+const DEFAULT_DEMO_EMAIL = 'demo@ao-link.fr';
+const DEFAULT_DEMO_PASSWORD = 'DemoAoLink2026!';
+
 function isBetaAccessMode() {
   return process.env.BETA_ACCESS_MODE === 'true' || isDemoMode();
+}
+
+function getBetaAccessCredentials() {
+  const email = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase();
+  const password = process.env.BETA_USER_PASSWORD
+    || process.env.DEMO_USER_PASSWORD
+    || (isDemoMode() ? DEFAULT_DEMO_PASSWORD : '');
+
+  return { email, password };
 }
 
 async function ensureBetaAccessUser() {
   if (!isBetaAccessMode()) return;
 
-  const email = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim().toLowerCase();
-  const password = process.env.BETA_USER_PASSWORD || process.env.DEMO_USER_PASSWORD || '';
+  const { email, password } = getBetaAccessCredentials();
   const role = process.env.BETA_USER_ROLE || 'responsable';
 
   if (!password) {
@@ -195,14 +206,13 @@ app.use(demoModeMiddleware)
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
 app.get('/api/public-config', (_req, res) => {
   const betaAccessEnabled = isBetaAccessMode();
-  const betaEmail = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim();
-  const betaPassword = process.env.BETA_USER_PASSWORD || process.env.DEMO_USER_PASSWORD || '';
+  const betaCredentials = getBetaAccessCredentials();
 
   res.json({
     betaAccess: {
       enabled: betaAccessEnabled,
-      email: betaAccessEnabled ? betaEmail : '',
-      password: betaAccessEnabled ? betaPassword : '',
+      email: betaAccessEnabled ? betaCredentials.email : '',
+      password: betaAccessEnabled ? betaCredentials.password : '',
       registrationDisabled: betaAccessEnabled || process.env.DISABLE_PUBLIC_REGISTRATION === 'true',
     },
   });

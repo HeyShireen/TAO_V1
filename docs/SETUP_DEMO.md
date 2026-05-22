@@ -40,12 +40,12 @@
    DEMO_MODE=true
    BETA_ACCESS_MODE=true
    DEMO_USER_EMAIL=demo@ao-link.fr
-   DEMO_USER_PASSWORD=un-mot-de-passe-beta-de-12-caracteres-minimum
+   DEMO_USER_PASSWORD=DemoAoLink2026!
    ALLOWED_ORIGINS=https://demo.ao-link.fr,https://ao-link.fr
    HTTPS_PROXY=true
    ```
 
-   Quand `BETA_ACCESS_MODE=true` ou `DEMO_MODE=true`, la page `/login` pre-remplit le compte beta et masque la creation de compte. L'API `/api/auth/register` refuse aussi les inscriptions publiques.
+   Quand `BETA_ACCESS_MODE=true` ou `DEMO_MODE=true`, la page `/login` pre-remplit le compte beta et masque la creation de compte. L'API `/api/auth/register` refuse aussi les inscriptions publiques. Si `DEMO_USER_PASSWORD` n'est pas defini en mode demo, l'application utilise `DemoAoLink2026!`.
 
 ---
 
@@ -114,7 +114,7 @@ server {
 
 ## ÉTAPE 5 : Créer un compte utilisateur démo
 
-1. Definir `DEMO_USER_EMAIL` et `DEMO_USER_PASSWORD` dans `.env.demo`.
+1. Definir `DEMO_USER_EMAIL` et `DEMO_USER_PASSWORD` dans `.env.demo`, ou conserver les valeurs demo par defaut.
 2. Le serveur cree ou met a jour automatiquement ce compte au demarrage quand le mode beta/demo est actif.
 3. Pour charger aussi les donnees demo, lancer :
    ```bash

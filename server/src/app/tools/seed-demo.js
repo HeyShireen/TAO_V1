@@ -4,7 +4,7 @@ import { ensureSchema, pool } from '../db.js';
 import { hashPassword } from '../utils/hash.js';
 
 const DEMO_EMAIL = (process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim().toLowerCase();
-const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD;
+const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || 'DemoAoLink2026!';
 const DEMO_REFERENCE = 'DEMO-2026-001';
 
 if (!DEMO_PASSWORD || DEMO_PASSWORD.length < 12) {

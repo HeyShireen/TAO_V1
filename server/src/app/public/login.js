@@ -158,8 +158,12 @@
 
     showLogin();
 
-    if (betaAccessConfig.email) emailEl.value = betaAccessConfig.email;
-    if (betaAccessConfig.password) passEl.value = betaAccessConfig.password;
+    const prefillBetaCredentials = () => {
+      if (betaAccessConfig.email) emailEl.value = betaAccessConfig.email;
+      if (betaAccessConfig.password) passEl.value = betaAccessConfig.password;
+    };
+    prefillBetaCredentials();
+    setTimeout(prefillBetaCredentials, 100);
 
     const subtitle = qs('.max-480 > p.muted');
     if (subtitle) {
