@@ -1,10 +1,34 @@
 // server/src/routes/question-config.js
 import express from 'express';
-import { query } from '../../db.js';
+import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { canEditProject, canViewProject } from '../../utils/permissions.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+const DEFAULT_LOT_THRESHOLDS = {
+  qty_very_low_threshold: 25,
+  qty_low_threshold: 10,
+  qty_high_threshold: 10,
+  qty_very_high_threshold: 25,
+  price_very_low_threshold: 25,
+  price_low_threshold: 10,
+  price_high_threshold: 10,
+  price_very_high_threshold: 25,
+  amount_very_low_threshold: 25,
+  amount_low_threshold: 10,
+  amount_high_threshold: 10,
+  amount_very_high_threshold: 25
+};
+
+const LOT_THRESHOLD_FIELDS = Object.keys(DEFAULT_LOT_THRESHOLDS);
+
+function normalizeThreshold(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, number);
+}
 
 function excelNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -179,6 +203,81 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
 });
 
 // ========== Configuration Lot (seuils) ==========
+
+// Obtenir les seuils de tous les lots d'un projet
+router.get('/project/:projectId/lot-thresholds', requireManager, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Acces refuse' });
+
+    const result = await query(
+      `SELECT
+         l.id AS lot_id,
+         l.code,
+         l.name,
+         ${LOT_THRESHOLD_FIELDS.map(field => `COALESCE(ltc.${field}, ${DEFAULT_LOT_THRESHOLDS[field]}) AS ${field}`).join(',\n         ')}
+       FROM lots l
+       LEFT JOIN lot_threshold_config ltc ON ltc.lot_id = l.id
+       WHERE l.project_id = $1
+       ORDER BY l.sort_order ASC, l.id ASC`,
+      [projectId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur recuperation seuils projet:', err);
+    res.status(500).json({ error: 'Impossible de recuperer les seuils des lots' });
+  }
+});
+
+// Mettre a jour les seuils de plusieurs lots d'un projet
+router.put('/project/:projectId/lot-thresholds', requireManager, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const thresholds = Array.isArray(req.body?.thresholds) ? req.body.thresholds : [];
+    if (thresholds.length === 0) {
+      return res.status(400).json({ error: 'Liste de seuils vide' });
+    }
+
+    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+    if (!canEdit) return res.status(403).json({ error: 'Acces refuse' });
+
+    await client.query('BEGIN');
+
+    const lotsRes = await client.query('SELECT id FROM lots WHERE project_id = $1', [projectId]);
+    const projectLotIds = new Set(lotsRes.rows.map(row => Number(row.id)));
+
+    let updated = 0;
+    for (const row of thresholds) {
+      const lotId = Number(row?.lot_id);
+      if (!Number.isFinite(lotId) || !projectLotIds.has(lotId)) continue;
+
+      const values = LOT_THRESHOLD_FIELDS.map(field => normalizeThreshold(row[field], DEFAULT_LOT_THRESHOLDS[field]));
+      await client.query(
+        `INSERT INTO lot_threshold_config
+          (lot_id, ${LOT_THRESHOLD_FIELDS.join(', ')}, updated_at)
+         VALUES ($1, ${LOT_THRESHOLD_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, now())
+         ON CONFLICT (lot_id)
+         DO UPDATE SET
+           ${LOT_THRESHOLD_FIELDS.map(field => `${field} = EXCLUDED.${field}`).join(',\n           ')},
+           updated_at = now()`,
+        [lotId, ...values]
+      );
+      updated += 1;
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, updated });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Erreur mise a jour seuils projet:', err);
+    res.status(500).json({ error: 'Impossible de mettre a jour les seuils des lots' });
+  } finally {
+    client.release();
+  }
+});
 
 // Obtenir les seuils pour un lot
 router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {

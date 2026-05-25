@@ -28,6 +28,7 @@ let currentProject = null;
 let currentRound = null;    // Tour/phase actuel
 let currentLot = null;
 let currentProjectLots = [];
+let globalLotThresholds = [];
 
 let lotCompanies = [];      // [{id,name}]
 let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
@@ -50,12 +51,32 @@ let sheetSelection = {
 };
 const DEFAULT_SIMULATIONS = 3;
 let roundsSimulations = [];
+let roundsSimulationsInitialized = false;
 let pendingEmailExport = null;
 let dataExportContext = 'data-sheet';
 let currentProjectExport = { projectId: null, projectName: '', lots: [], scopeLevel: 'project', scopeLotId: null };
 let nextSimulationId = 1;
 const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
 const QUESTION_COLUMN_WIDTH_STORAGE_KEY = 'questionsEditorQuestionColumnWidth';
+const LOT_THRESHOLD_FIELDS = [
+  'qty_very_low_threshold', 'qty_low_threshold', 'qty_high_threshold', 'qty_very_high_threshold',
+  'price_very_low_threshold', 'price_low_threshold', 'price_high_threshold', 'price_very_high_threshold',
+  'amount_very_low_threshold', 'amount_low_threshold', 'amount_high_threshold', 'amount_very_high_threshold'
+];
+const LOT_THRESHOLD_DEFAULTS = {
+  qty_very_low_threshold: 25,
+  qty_low_threshold: 10,
+  qty_high_threshold: 10,
+  qty_very_high_threshold: 25,
+  price_very_low_threshold: 25,
+  price_low_threshold: 10,
+  price_high_threshold: 10,
+  price_very_high_threshold: 25,
+  amount_very_low_threshold: 25,
+  amount_low_threshold: 10,
+  amount_high_threshold: 10,
+  amount_very_high_threshold: 25
+};
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -606,6 +627,8 @@ function activateTourTab(id){
   // Charger les données selon l'onglet
   if (id === 'tour-lots') {
     loadLotsForRound();
+  } else if (id === 'tour-config') {
+    loadGlobalLotThresholds();
   }
 }
 
@@ -2009,11 +2032,20 @@ async function selectRound(round, cardElement = null){
   
   // Afficher le contenu du tour avec les sous-onglets
   activateTab('round-content');
+  const tourConfigBtn = qs('[data-tour-tab="tour-config"]');
+  const tourQuestionsBtn = qs('[data-tour-tab="tour-questions"]');
+  if (tourConfigBtn) tourConfigBtn.style.display = isEntreprise() ? 'none' : '';
+  if (tourQuestionsBtn) tourQuestionsBtn.style.display = isEntreprise() ? 'none' : '';
   activateTourTab('tour-lots');
   setText('#current-round-name', `${round.name}`);
   
   // Désactiver Config Questions et Fiches Questions jusqu'à la sélection d'un lot
-  disableTourTabs(['tour-config', 'tour-questions']);
+  if (isVisionneur() || isEntreprise()) {
+    disableTourTabs(['tour-config', 'tour-questions']);
+  } else {
+    enableTourTabs(['tour-config']);
+    disableTourTabs(['tour-questions']);
+  }
   
   // Charger les lots pour ce tour
   await loadLotsForRound();
@@ -2681,6 +2713,11 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
 
   ensureRoundSimulations(companies, sortedLots, roundId, optionsData);
 
+  if (roundsSimulations.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--muted)">Aucune simulation. Utilisez le bouton Ajouter simulation.</td></tr>';
+    return;
+  }
+
   const headerRow1 = document.createElement('tr');
   const headerRow2 = document.createElement('tr');
   const thLot = document.createElement('th'); thLot.className = 'sticky-col'; thLot.rowSpan = 2; thLot.textContent = 'Lot';
@@ -2693,8 +2730,15 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
   for (const sim of roundsSimulations) {
     const thSim = document.createElement('th');
     thSim.colSpan = 2;
-    thSim.className = 'amount';
-    thSim.textContent = sim.name;
+    thSim.className = 'amount simulation-header-cell';
+    thSim.innerHTML = `
+      <div class="simulation-header-content">
+        <span>${escapeHtml(sim.name)}</span>
+        <button class="btn ghost btn-delete-simulation" type="button" data-simulation-id="${sim.id}" title="Supprimer la simulation" aria-label="Supprimer la simulation">
+          ${icon('trash', 'icon-only')}
+        </button>
+      </div>
+    `;
     headerRow1.appendChild(thSim);
 
     const thAmount = document.createElement('th'); thAmount.className = 'amount'; thAmount.textContent = 'Montant (€)';
@@ -2705,6 +2749,14 @@ function renderRoundsSimulation(lots, rounds, optionsData) {
 
   thead.appendChild(headerRow1);
   thead.appendChild(headerRow2);
+
+  qsa('.btn-delete-simulation').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSimulation(Number(btn.dataset.simulationId));
+      renderRoundsSimulation(sortedLots, rounds, optionsData);
+    });
+  });
 
   const totalBySim = new Map();
   const missingMoeBySim = new Map();
@@ -2870,7 +2922,7 @@ function getLotTotalsByCompany(lot, roundId, optionsData) {
 }
 
 function ensureRoundSimulations(companies, lots = [], roundId = null, optionsData = null) {
-  if (!roundsSimulations.length) {
+  if (!roundsSimulationsInitialized && !roundsSimulations.length) {
     for (let i = 0; i < DEFAULT_SIMULATIONS; i++) {
       roundsSimulations.push({
         id: nextSimulationId++,
@@ -2879,6 +2931,7 @@ function ensureRoundSimulations(companies, lots = [], roundId = null, optionsDat
         defaultCompanyId: null
       });
     }
+    roundsSimulationsInitialized = true;
   }
 
   roundsSimulations.forEach((sim, idx) => {
@@ -2938,6 +2991,14 @@ function addSimulation() {
     selections: new Map(),
     defaultCompanyId: null
   });
+  roundsSimulationsInitialized = true;
+}
+
+function deleteSimulation(simulationId) {
+  const id = Number(simulationId);
+  if (!Number.isFinite(id)) return;
+  roundsSimulations = roundsSimulations.filter(sim => Number(sim.id) !== id);
+  roundsSimulationsInitialized = true;
 }
 
 function buildCompaniesIndex(lots, rounds) {
@@ -3338,7 +3399,8 @@ function parseOptionNum(raw) {
 const autosaveTimers = {};
 const autosaveHandlers = {
   thresholds: () => debounceAutoSave('thresholds', autoSaveLotThresholds),
-  projectQuestions: () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig)
+  projectQuestions: () => debounceAutoSave('project-questions', autoSaveProjectQuestionConfig),
+  globalThresholds: () => debounceAutoSave('global-thresholds', saveGlobalLotThresholds, 700)
 };
 
 function debounceAutoSave(key, fn, delay = 600) {
@@ -3652,6 +3714,109 @@ async function saveLotThresholds(){
   } catch (err) {
     showNotify({ title: 'Erreur', message: err.message, type: 'error' });
   }
+}
+
+function formatThresholdValue(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(fallback);
+  return Number.isInteger(number) ? String(number) : String(Math.round(number * 100) / 100);
+}
+
+function readGlobalThresholdRowsFromDom() {
+  return qsa('#global-thresholds-body tr[data-lot-id]').map(row => {
+    const lotId = Number(row.dataset.lotId);
+    const data = { lot_id: lotId };
+    LOT_THRESHOLD_FIELDS.forEach(field => {
+      const input = row.querySelector(`[data-field="${field}"]`);
+      const value = Number(input?.value);
+      data[field] = Number.isFinite(value) ? Math.max(0, value) : LOT_THRESHOLD_DEFAULTS[field];
+    });
+    return data;
+  });
+}
+
+function renderGlobalLotThresholds(rows = []) {
+  const tbody = qs('#global-thresholds-body');
+  if (!tbody) return;
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--muted)">Aucun lot dans ce projet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(row => {
+    const lotLabel = [row.code, row.name].filter(Boolean).join(' - ') || `Lot ${row.lot_id}`;
+    const inputs = LOT_THRESHOLD_FIELDS.map(field => `
+      <td>
+        <input class="global-threshold-input" type="number" min="0" max="100" step="1"
+          data-lot-id="${row.lot_id}" data-field="${field}"
+          value="${formatThresholdValue(row[field], LOT_THRESHOLD_DEFAULTS[field])}" />
+      </td>
+    `).join('');
+
+    return `
+      <tr data-lot-id="${row.lot_id}">
+        <td class="global-threshold-lot-cell">
+          <strong>${escapeHtml(lotLabel)}</strong>
+          <span class="muted">#${row.lot_id}</span>
+        </td>
+        ${inputs}
+      </tr>
+    `;
+  }).join('');
+
+  qsa('.global-threshold-input').forEach(input => {
+    input.removeEventListener('input', autosaveHandlers.globalThresholds);
+    input.addEventListener('input', autosaveHandlers.globalThresholds);
+  });
+}
+
+async function loadGlobalLotThresholds() {
+  if (!currentProject || isVisionneur() || isEntreprise()) return;
+  try {
+    globalLotThresholds = await api(`/question-config/project/${currentProject.id}/lot-thresholds`);
+    renderGlobalLotThresholds(globalLotThresholds);
+  } catch (err) {
+    console.error('Erreur chargement seuils globaux:', err);
+  }
+}
+
+async function saveGlobalLotThresholds() {
+  if (!currentProject || isVisionneur() || isEntreprise()) return;
+  const thresholds = readGlobalThresholdRowsFromDom();
+  if (!thresholds.length) return;
+
+  showSaveStatus('#save-global-thresholds', 'saving');
+  try {
+    await api(`/question-config/project/${currentProject.id}/lot-thresholds`, {
+      method: 'PUT',
+      body: { thresholds },
+      showLoader: false
+    });
+    globalLotThresholds = thresholds;
+    showSaveStatus('#save-global-thresholds', 'saved');
+  } catch (err) {
+    console.error('Erreur sauvegarde seuils globaux:', err);
+    showSaveStatus('#save-global-thresholds', 'error');
+    resetSaveButton('#save-global-thresholds');
+  }
+}
+
+function copyFirstGlobalThresholdsToAll() {
+  const rows = qsa('#global-thresholds-body tr[data-lot-id]');
+  if (rows.length < 2) return;
+  const firstValues = {};
+  LOT_THRESHOLD_FIELDS.forEach(field => {
+    firstValues[field] = rows[0].querySelector(`[data-field="${field}"]`)?.value ?? LOT_THRESHOLD_DEFAULTS[field];
+  });
+
+  rows.slice(1).forEach(row => {
+    LOT_THRESHOLD_FIELDS.forEach(field => {
+      const input = row.querySelector(`[data-field="${field}"]`);
+      if (input) input.value = firstValues[field];
+    });
+  });
+  autosaveHandlers.globalThresholds();
 }
 
 async function generateQuestions(){
@@ -10697,6 +10862,8 @@ function bindUI(){
 
   // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
   qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
+  qs('#save-global-thresholds')?.addEventListener('click', saveGlobalLotThresholds);
+  qs('#copy-first-thresholds-to-all')?.addEventListener('click', copyFirstGlobalThresholdsToAll);
 
   // Sous-onglets des lots (données, config, questions)
   qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));
@@ -10712,6 +10879,10 @@ function bindUI(){
   // Bouton de retour vers lots
   qs('#back-to-lots')?.addEventListener('click', () => {
     if (currentRound) {
+      const tourConfigBtn = qs('[data-tour-tab="tour-config"]');
+      const tourQuestionsBtn = qs('[data-tour-tab="tour-questions"]');
+      if (tourConfigBtn) tourConfigBtn.style.display = isEntreprise() ? 'none' : '';
+      if (tourQuestionsBtn) tourQuestionsBtn.style.display = isEntreprise() ? 'none' : '';
       activateTab('round-content');
       activateTourTab('tour-lots');
     }
@@ -10770,7 +10941,12 @@ qs('#lot-modal-delete')?.addEventListener('click', async ()=>{
         await api(`/projects/lots/${editingLotId}`, { method:'DELETE' });
         if (currentLot?.id === editingLotId) {
           currentLot = null;
-          disableTourTabs(['tour-config', 'tour-questions']);
+          if (isVisionneur() || isEntreprise()) {
+            disableTourTabs(['tour-config', 'tour-questions']);
+          } else {
+            enableTourTabs(['tour-config']);
+            disableTourTabs(['tour-questions']);
+          }
         }
         const m = qs('#lot-modal');
         m.classList.add('hidden');

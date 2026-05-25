@@ -237,6 +237,40 @@
 
           <!-- Panels placeholders to align avec app.js (désactivés par rôle) -->
           <div id="tour-config" class="tour-tabpanel hidden">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+              <div>
+                <h4 style="margin:0"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Seuils des fiches questions par lot</h4>
+                <p class="muted" style="margin:4px 0 0 0">Modifiez les seuils de tous les lots depuis ce tableau.</p>
+              </div>
+              <div class="row gap" style="align-items:center;flex-wrap:wrap">
+                <button id="copy-first-thresholds-to-all" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-copy"></use></svg>Copier le premier lot</button>
+                <button id="save-global-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Enregistrement auto</button>
+              </div>
+            </div>
+            <div class="table-wrapper tall">
+              <table id="global-thresholds-table" class="summary-table">
+                <thead>
+                  <tr>
+                    <th>Lot</th>
+                    <th>Qte tres basse</th>
+                    <th>Qte basse</th>
+                    <th>Qte haute</th>
+                    <th>Qte tres haute</th>
+                    <th>PU tres bas</th>
+                    <th>PU bas</th>
+                    <th>PU haut</th>
+                    <th>PU tres haut</th>
+                    <th>Mt tres bas</th>
+                    <th>Mt bas</th>
+                    <th>Mt haut</th>
+                    <th>Mt tres haut</th>
+                  </tr>
+                </thead>
+                <tbody id="global-thresholds-body">
+                  <tr><td colspan="13" style="text-align:center;padding:30px;color:var(--muted)">Selectionnez un projet</td></tr>
+                </tbody>
+              </table>
+            </div>
             <p class="muted">Configuration des questions (désactivé tant qu’aucun lot n’est sélectionné).</p>
           </div>
           <div id="tour-questions" class="tour-tabpanel hidden">
