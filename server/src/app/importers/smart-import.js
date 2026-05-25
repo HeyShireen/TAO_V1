@@ -405,7 +405,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
             ON CONFLICT (item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment
           `, [matchedItem.id, qty, pu, mt, moeComment]);
           itemsUpdated++;
-        } else if (!updateOnly) {
+        } else {
           // Nouvel item
           const pos = i + 1;
           const insRes = await client.query(
@@ -418,29 +418,25 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
             [insRes.rows[0].id, qty, pu, mt, moeComment]
           );
           itemsImported++;
-        } else {
-          itemsSkipped++;
         }
       }
       await reconcileAddedItemsWithDpgf(client, lotId, touchedItemIds);
-      if (!updateOnly) {
-        await client.query(
-          `DELETE FROM items
-           WHERE lot_id = $1
-             AND source_company_id IS NOT NULL
-             AND parent_item_id IS NOT NULL
-             AND NOT (parent_item_id = ANY($2::bigint[]))`,
-          [lotId, touchedItemIds]
-        );
-        await client.query(
-          `DELETE FROM items
-           WHERE lot_id = $1
-             AND source_company_id IS NULL
-             AND NOT (id = ANY($2::bigint[]))`,
-          [lotId, touchedItemIds]
-        );
-      }
-    } else if (!updateOnly) {
+      await client.query(
+        `DELETE FROM items
+         WHERE lot_id = $1
+           AND source_company_id IS NOT NULL
+           AND parent_item_id IS NOT NULL
+           AND NOT (parent_item_id = ANY($2::bigint[]))`,
+        [lotId, touchedItemIds]
+      );
+      await client.query(
+        `DELETE FROM items
+         WHERE lot_id = $1
+           AND source_company_id IS NULL
+           AND NOT (id = ANY($2::bigint[]))`,
+        [lotId, touchedItemIds]
+      );
+    } else {
       // INSERT mode : créer tous les items
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
@@ -476,8 +472,6 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         itemsImported++;
       }
       await reconcileAddedItemsWithDpgf(client, lotId, touchedItemIds);
-    } else {
-      itemsSkipped = dataRows.length;
     }
 
     await client.query('COMMIT');
