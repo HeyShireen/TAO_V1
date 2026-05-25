@@ -871,6 +871,7 @@ async function handleSummaryExport(req, res) {
          i.unit,
          m.qty as moe_qty,
          m.unit_price as moe_pu,
+         m.amount as moe_amount,
          o.company_id,
          o.qty as offer_qty,
          o.unit_price as offer_pu
@@ -897,6 +898,7 @@ async function handleSummaryExport(req, res) {
           unit: row.unit,
           moe_qty: row.moe_qty,
           moe_pu: row.moe_pu,
+          moe_amount: row.moe_amount,
           offers: {}
         };
         lotData[row.lot_id].push(item);
@@ -950,9 +952,8 @@ async function handleSummaryExport(req, res) {
       // Total MOE
       let moeTotal = 0;
       for (const item of items) {
-        const qty = parseFloat(item.moe_qty) || 0;
-        const pu = parseFloat(item.moe_pu) || 0;
-        moeTotal += qty * pu;
+        const amount = parseFloat(item.moe_amount);
+        if (Number.isFinite(amount)) moeTotal += amount;
       }
 
       // Totaux par entreprise
@@ -1018,9 +1019,8 @@ async function handleSummaryExport(req, res) {
     for (const lot of lots) {
       const items = lotData[lot.id] || [];
       for (const item of items) {
-        const qty = parseFloat(item.moe_qty) || 0;
-        const pu = parseFloat(item.moe_pu) || 0;
-        moeGrandTotal += qty * pu;
+        const amount = parseFloat(item.moe_amount);
+        if (Number.isFinite(amount)) moeGrandTotal += amount;
 
         companies.forEach((company, idx) => {
           const offer = item.offers[company.id];
@@ -1464,7 +1464,7 @@ async function handleRoundsComparison(req, res) {
     const moeTotals = new Map();
     if (!isEntreprise) {
       const moeRes = await query(
-        `SELECT i.lot_id, COALESCE(SUM(m.qty * m.unit_price), 0) as total
+        `SELECT i.lot_id, COALESCE(SUM(m.amount), 0) as total
          FROM items i
          LEFT JOIN moe_items m ON m.item_id = i.id
          JOIN lots l ON l.id = i.lot_id
@@ -2535,16 +2535,15 @@ router.get('/rao/:projectId', async (req, res) => {
     // Totaux MOE par lot
     const moeTotals = {};
     const moeRes = await query(
-      `SELECT i.lot_id, m.qty, m.unit_price
+      `SELECT i.lot_id, m.amount
        FROM items i
        LEFT JOIN moe_items m ON m.item_id = i.id
        WHERE i.lot_id = ANY($1::int[])`,
       [lots.map(l => l.id)]
     );
     moeRes.rows.forEach(r => {
-      const qty = Number(r.qty) || 0;
-      const pu = Number(r.unit_price) || 0;
-      moeTotals[r.lot_id] = (moeTotals[r.lot_id] || 0) + qty * pu;
+      const amount = Number(r.amount);
+      if (Number.isFinite(amount)) moeTotals[r.lot_id] = (moeTotals[r.lot_id] || 0) + amount;
     });
 
     // Offres par phase / entreprise / lot

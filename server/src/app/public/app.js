@@ -4962,12 +4962,11 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const moe = moeByItem.get(item.id) || {};
     const parsedMoeQty = parseNum(moe.qty);
     const parsedMoePU = parseNum(moe.unit_price);
+    const parsedMoeAmount = parseNum(moe.amount);
     const moeQty = Number.isFinite(parsedMoeQty) ? parsedMoeQty : null;
     const moePU = Number.isFinite(parsedMoePU) ? parsedMoePU : null;
-    const moeTotal = Number.isFinite(moeQty) && Number.isFinite(moePU)
-      ? (moeQty * moePU)
-      : null;
-    const moeHasTotal = moeQty > 0 && moePU > 0;
+    const moeTotal = Number.isFinite(parsedMoeAmount) ? parsedMoeAmount : null;
+    const moeHasTotal = moeTotal > 0;
     
     // Collecter les offres de toutes les entreprises pour cet item
     const itemOffers = (offersByItemId.get(Number(item.id)) || []).map(offer => {
@@ -6323,7 +6322,8 @@ function buildSheetModel(raw){
       parent_designation: it.parent_designation || null,
       moe: { 
         qty: moe.qty != null ? String(moe.qty) : '', 
-        pu: moe.unit_price != null ? String(moe.unit_price) : '' 
+        pu: moe.unit_price != null ? String(moe.unit_price) : '',
+        mt: moe.amount != null ? String(moe.amount) : ''
       },
       offers: {}
     };
@@ -6538,7 +6538,7 @@ function valueForCell(row, key){
   if (key === 'unit') return row.unit ?? '';
   if (key === 'moe.qty') return row.moe?.qty ?? '';
   if (key === 'moe.pu')  return row.moe?.pu  ?? '';
-  if (key === 'moe.mt')  return amountOf(row.moe?.qty, row.moe?.pu);
+  if (key === 'moe.mt')  return row.moe?.mt ?? '';
   if (key.startsWith('c.')){
     const [, cid, sub] = key.split('.');
     const o = row.offers?.[cid] || {};
@@ -6604,7 +6604,7 @@ function recalcRowAmountsRow(r){
     const qty = moeQtyVal;
     const pu  = moePuVal;
     const mt  = getCell(r,cMt );
-    if (mt) mt.textContent = amountOf(qty, pu);
+    if (mt) mt.textContent = sheetRows[r]?.moe?.mt ?? '';
   }
   // Entreprises
   for (const c of lotCompanies){
@@ -7130,6 +7130,29 @@ let hasUnsavedChanges = false;
 let isSaving = false;
 let _gridChangeGen = 0;
 
+function applySavedGridItemIds(result) {
+  if (!result || !Array.isArray(result.items)) return;
+  result.items.forEach((item, fallbackIndex) => {
+    const rowIndex = Number.isInteger(item?.rowIndex) ? item.rowIndex : fallbackIndex;
+    if (sheetRows[rowIndex] && item?.id) {
+      sheetRows[rowIndex].item_id = item.id;
+    }
+  });
+}
+
+function waitForGridSaveCompletion(timeoutMs = 5000) {
+  if (!isSaving) return Promise.resolve();
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (!isSaving || Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 50);
+  });
+}
+
 function markAsChanged() {
   hasUnsavedChanges = true;
   _gridChangeGen++;
@@ -7389,6 +7412,7 @@ async function autoSaveGrid(){
       const unit = getByKey('unit');
       const moeQty = getByKey('moe.qty');
       const moePu  = getByKey('moe.pu');
+      const moeMt  = getByKey('moe.mt');
 
       // Validation et conversion PU MOE
       if (moePu !== '') {
@@ -7403,7 +7427,7 @@ async function autoSaveGrid(){
       const row = {
         item_id: sheetRows[r]?.item_id || null,
         num, designation, unit,
-        moe: { qty: moeQty, pu: moePu },
+        moe: { qty: moeQty, pu: moePu, mt: moeMt },
         offers: {}
       };
 
@@ -7442,14 +7466,7 @@ async function autoSaveGrid(){
       showLoader: false 
     });
 
-    // Synchroniser les item_id
-    if (result && result.items && Array.isArray(result.items)) {
-      for (let i = 0; i < Math.min(result.items.length, sheetRows.length); i++) {
-        if (sheetRows[i] && result.items[i] && result.items[i].id) {
-          sheetRows[i].item_id = result.items[i].id;
-        }
-      }
-    }
+    applySavedGridItemIds(result);
     
     // Rafraîchir sans bruit
     await refreshCompare({ silent: true });
@@ -7487,6 +7504,7 @@ async function saveGrid(){
     const unit = getByKey('unit');
     const moeQty = getByKey('moe.qty');
     const moePu  = getByKey('moe.pu');
+    const moeMt  = getByKey('moe.mt');
 
     // Validation et conversion PU MOE
     if (moePu !== '') {
@@ -7504,7 +7522,7 @@ async function saveGrid(){
     const row = {
       item_id: sheetRows[r]?.item_id || null,
       num, designation, unit,
-      moe: { qty: moeQty, pu: moePu },
+      moe: { qty: moeQty, pu: moePu, mt: moeMt },
       offers: {}
     };
 
@@ -7553,13 +7571,7 @@ async function saveGrid(){
 
     // Le serveur retourne les items créés avec leurs IDs
     // Synchroniser uniquement les item_id sans toucher aux données affichées
-    if (result && result.items && Array.isArray(result.items)) {
-      for (let i = 0; i < Math.min(result.items.length, sheetRows.length); i++) {
-        if (sheetRows[i] && result.items[i] && result.items[i].id) {
-          sheetRows[i].item_id = result.items[i].id;
-        }
-      }
-    }
+    applySavedGridItemIds(result);
     
     // Rafraîchir uniquement le comparatif (vue lecture seule)
     await refreshCompare({ silent: true });
@@ -7616,8 +7628,14 @@ function renderSheetBindings(){
 
   // bascule modes
   qs('#mode-compare')?.addEventListener('click', async () => {
+    if (isSaving) {
+      await waitForGridSaveCompletion();
+    }
     if (hasUnsavedChanges) {
       await autoSaveGrid();
+    }
+    if (isSaving) {
+      await waitForGridSaveCompletion();
     }
     if (typeof hasUnsavedOptionsChanges !== 'undefined' && hasUnsavedOptionsChanges) {
       await autoSaveOptionsGrid();

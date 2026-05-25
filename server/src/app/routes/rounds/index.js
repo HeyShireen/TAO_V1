@@ -457,7 +457,7 @@ router.get('/:roundId/summary', async (req, res) => {
     for (const lot of lots) {
       // Montant MOE du lot
       const moeResult = await query(
-        `SELECT COALESCE(SUM(m.qty * m.unit_price), 0) as total
+        `SELECT COALESCE(SUM(m.amount), 0) as total
          FROM moe_items m
          JOIN items i ON i.id = m.item_id
          WHERE i.lot_id = $1`,
@@ -550,7 +550,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
     for (const lot of lots) {
       // Montant MOE du lot
       const moeResult = await query(
-        `SELECT COALESCE(SUM(m.qty * m.unit_price), 0) as total
+        `SELECT COALESCE(SUM(m.amount), 0) as total
          FROM moe_items m
          JOIN items i ON i.id = m.item_id
          WHERE i.lot_id = $1`,

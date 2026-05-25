@@ -885,8 +885,8 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
       if (r.moe?.pu != null && r.moe.pu !== '' && !isNaN(Number(r.moe.pu))) {
         pu = Number(r.moe.pu);
       }
-      if (q != null && pu != null) {
-        mt = q * pu;
+      if (r.moe?.mt != null && r.moe.mt !== '' && !isNaN(Number(r.moe.mt))) {
+        mt = Number(r.moe.mt);
       }
       moeData.push({ itemId, q, pu, mt, rowIndex });
 
@@ -1003,7 +1003,7 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
       itemIdsByRowIndex.set(newItem.rowIndex, newItem.id);
     }
     const allItems = rows
-      .map((row, index) => ({ id: itemIdsByRowIndex.get(index) || null, designation: row.designation || '' }))
+      .map((row, index) => ({ rowIndex: index, id: itemIdsByRowIndex.get(index) || null, designation: row.designation || '' }))
       .filter((item) => item.id);
     
     res.json({ ok: true, saved: pos, items: allItems });

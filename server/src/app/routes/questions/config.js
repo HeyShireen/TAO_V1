@@ -336,9 +336,11 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     
     // 4. Générer les questions
     const generated = [];
-    const getComparableAmount = (row) => {
+    const getComparableAmount = (row, options = {}) => {
+      const allowCalculated = options.allowCalculated !== false;
       const directAmount = Number.parseFloat(row?.amount);
       if (Number.isFinite(directAmount)) return directAmount;
+      if (!allowCalculated) return null;
       const qty = Number.parseFloat(row?.qty);
       const unitPrice = Number.parseFloat(row?.unit_price);
       if (Number.isFinite(qty) && Number.isFinite(unitPrice)) {
@@ -555,7 +557,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         }
       }
 
-      const moeAmount = getComparableAmount(moe);
+      const moeAmount = getComparableAmount(moe, { allowCalculated: false });
       if (!shouldSkipUnitAnalysis && moeAmount != null && offerAmount != null && moeAmount !== 0) {
         const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
 

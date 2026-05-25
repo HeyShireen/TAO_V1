@@ -359,7 +359,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
-        const mt = mapping.amount ? parseNumber(row[mapping.amount]) : (qty != null && pu != null ? qty * pu : null);
+        const mt = mapping.amount ? parseNumber(row[mapping.amount]) : null;
         
         // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
         const moeComments = [];
@@ -446,7 +446,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
-        const mt = mapping.amount ? parseNumber(row[mapping.amount]) : (qty != null && pu != null ? qty * pu : null);
+        const mt = mapping.amount ? parseNumber(row[mapping.amount]) : null;
         
         // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
         const moeComments = [];
