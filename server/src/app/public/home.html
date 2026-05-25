@@ -696,7 +696,7 @@
 <body class="home-page">
   <header class="home-topbar">
     <a class="home-brand" href="/" aria-label="Accueil AO Link">
-      <img src="./assets/logo.png" alt="AO Link" onerror="this.style.display='none'" />
+      <img id="home-brand-logo" src="./assets/logo.png" alt="AO Link" />
       <span>AO Link</span>
     </a>
     <nav class="home-nav" aria-label="Navigation principale">
@@ -1049,6 +1049,13 @@
         window.location.reload();
       }
     });
+
+    const brandLogo = document.getElementById('home-brand-logo');
+    const hideBrandLogo = () => {
+      if (brandLogo) brandLogo.style.display = 'none';
+    };
+    brandLogo?.addEventListener('error', hideBrandLogo);
+    if (brandLogo?.complete && brandLogo.naturalWidth === 0) hideBrandLogo();
 
     updateAuthLinks();
   </script>

@@ -1169,8 +1169,11 @@ async function loadEditExistingShares(projectId) {
       const userId = share.shared_with_user_id;
       badge.innerHTML = `
         <span>${escapeHtml(share.shared_with_email || share.viewer_email)} ${share.can_edit ? '(édition)' : '(lecture)'}</span>
-        <button class="btn ghost" style="font-size:12px;padding:2px;margin:0;" onclick="removeProjectShare(${userId})">×</button>
+        <button class="btn ghost" type="button" style="font-size:12px;padding:2px;margin:0;" data-remove-project-share="${userId}">×</button>
       `;
+      badge.querySelector('[data-remove-project-share]')?.addEventListener('click', () => {
+        removeProjectShare(userId);
+      });
       container.appendChild(badge);
     });
   } catch (err) {
@@ -7612,7 +7615,14 @@ function renderSheetBindings(){
   qs('#redo')?.addEventListener('click', redo);
 
   // bascule modes
-  qs('#mode-compare')?.addEventListener('click', () => {
+  qs('#mode-compare')?.addEventListener('click', async () => {
+    if (hasUnsavedChanges) {
+      await autoSaveGrid();
+    }
+    if (typeof hasUnsavedOptionsChanges !== 'undefined' && hasUnsavedOptionsChanges) {
+      await autoSaveOptionsGrid();
+    }
+    await refreshCompare({ silent: true });
     clearSheetSelection();
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
     hide('#options-sheet-view'); show('#options-compare-view');

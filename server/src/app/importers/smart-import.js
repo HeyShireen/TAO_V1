@@ -369,6 +369,9 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         if (mapping.amount && extractComment(row[mapping.amount])) moeComments.push(extractComment(row[mapping.amount]));
         const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
+        if (!designation && !num) continue;
+        if (isSubtotalOrTitleRow(designation, num, qty != null, pu != null)) continue;
+
         // Matcher par Num d'abord, puis designation. La position est seulement un
         // dernier recours pour eviter de masquer une insertion au milieu.
         let matchedItem = null;
@@ -396,8 +399,8 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
           touchedItemIds.push(Number(matchedItem.id));
           // Mettre à jour l'item existant
           await client.query(
-            'UPDATE items SET num = COALESCE($2, num), designation = COALESCE(NULLIF($3, \'\'), designation), unit = COALESCE($4, unit) WHERE id = $1',
-            [matchedItem.id, num, designation, unit]
+            'UPDATE items SET num = COALESCE($2, num), designation = COALESCE(NULLIF($3, \'\'), designation), unit = COALESCE($4, unit), position = $5 WHERE id = $1',
+            [matchedItem.id, num, designation, unit, i + 1]
           );
           // Upsert MOE
           await client.query(`
