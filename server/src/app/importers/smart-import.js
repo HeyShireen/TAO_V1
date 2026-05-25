@@ -943,7 +943,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
 
         // Avancer le curseur DPGF
         dpgfCursor++;
-      } else {
+      } else if (!updateOnly) {
         // --- Poste ajouté par l'entreprise (pas dans la DPGF) ---
 
         // Contexte : quel article DPGF était attendu à cette position
