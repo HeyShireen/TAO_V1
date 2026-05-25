@@ -1199,14 +1199,37 @@ function compactDesignationForMatch(value) {
   return normalizeDesignationForMatch(value).replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * Score de similarité (0-100) entre deux désignations, utilisé pour la réconciliation
+ * des postes ajoutés avec les items DPGF. Même logique que designationMatch() (interne
+ * à importOffer) mais disponible au niveau module.
+ */
+function scoreDesignationMatchForReconcile(a, b) {
+  const na = normalizeDesignationForMatch(a);
+  const nb = normalizeDesignationForMatch(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 100;
+  // L'un est le préfixe de l'autre (entreprise a tronqué ou ajouté du texte après)
+  if (nb.startsWith(na) && na.length > nb.length * 0.6) return 90;
+  if (na.startsWith(nb) && nb.length > na.length * 0.6) return 85;
+  // Similarité Jaccard sur les mots de longueur > 2
+  const wordsA = new Set(na.split(/\s+/).filter(w => w.length > 2));
+  const wordsB = new Set(nb.split(/\s+/).filter(w => w.length > 2));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let common = 0;
+  for (const w of wordsA) if (wordsB.has(w)) common++;
+  const union = new Set([...wordsA, ...wordsB]).size;
+  return Math.round(common / union * 80);
+}
+
 function addedItemMatchesDpgf(added, dpgf) {
+  // Priorité : numéro d'article si les deux en ont un
   const addedNum = normalizeArticleNum(added.num);
   const dpgfNum = normalizeArticleNum(dpgf.num);
   if (addedNum && dpgfNum) return addedNum === dpgfNum;
 
-  const addedDesignation = compactDesignationForMatch(added.designation);
-  const dpgfDesignation = compactDesignationForMatch(dpgf.designation);
-  return !!addedDesignation && !!dpgfDesignation && addedDesignation === dpgfDesignation;
+  // Sinon : score ≥ 70 — tolère les désignations tronquées ou avec texte supplémentaire
+  return scoreDesignationMatchForReconcile(added.designation, dpgf.designation) >= 70;
 }
 
 async function moveAddedItemOffersToDpgf(client, { addedItemId, dpgfItemId }) {
@@ -1247,23 +1270,49 @@ async function reconcileAddedItemsWithDpgf(client, lotId, dpgfItemIds) {
     'SELECT id, num, designation FROM items WHERE lot_id = $1 AND source_company_id IS NULL AND id = ANY($2::bigint[])',
     [lotId, ids]
   );
+  // Inclure source_company_id pour pouvoir renseigner offer_designation après fusion
   const addedRes = await client.query(
-    'SELECT id, num, designation FROM items WHERE lot_id = $1 AND source_company_id IS NOT NULL',
+    'SELECT id, num, designation, source_company_id FROM items WHERE lot_id = $1 AND source_company_id IS NOT NULL',
     [lotId]
   );
 
   let reconciled = 0;
   const usedAddedIds = new Set();
-  for (const dpgf of dpgfRes.rows) {
-    const added = addedRes.rows.find((candidate) =>
-      !usedAddedIds.has(Number(candidate.id)) && addedItemMatchesDpgf(candidate, dpgf)
-    );
-    if (!added) continue;
 
-    await moveAddedItemOffersToDpgf(client, { addedItemId: added.id, dpgfItemId: dpgf.id });
-    await client.query('DELETE FROM items WHERE id = $1', [added.id]);
-    usedAddedIds.add(Number(added.id));
-    reconciled++;
+  for (const dpgf of dpgfRes.rows) {
+    // Trouver TOUS les postes ajoutés qui correspondent à cet item DPGF.
+    // Plusieurs entreprises peuvent avoir chacune ajouté le même poste indépendamment.
+    const matchingAdded = addedRes.rows.filter(
+      (candidate) => !usedAddedIds.has(Number(candidate.id)) && addedItemMatchesDpgf(candidate, dpgf)
+    );
+    if (matchingAdded.length === 0) continue;
+
+    for (const added of matchingAdded) {
+      // 1. Déplacer toutes les offres du poste ajouté vers l'item DPGF
+      await moveAddedItemOffersToDpgf(client, { addedItemId: added.id, dpgfItemId: dpgf.id });
+
+      // 2. Si la désignation du poste ajouté diffère de celle de la DPGF,
+      //    renseigner offer_designation sur l'offre déplacée afin que le pill
+      //    de désignation entreprise s'affiche correctement dans le comparatif.
+      if (added.source_company_id && added.designation) {
+        const isSameDesig =
+          normalizeDesignationForMatch(added.designation) === normalizeDesignationForMatch(dpgf.designation) ||
+          compactDesignationForMatch(added.designation) === compactDesignationForMatch(dpgf.designation);
+        if (!isSameDesig) {
+          await client.query(
+            `UPDATE offers
+             SET offer_designation = COALESCE(NULLIF(offer_designation, ''), $3)
+             WHERE item_id = $1 AND company_id = $2`,
+            [dpgf.id, added.source_company_id, added.designation.trim()]
+          );
+        }
+      }
+
+      // 3. Supprimer le poste ajouté devenu inutile
+      await client.query('DELETE FROM items WHERE id = $1', [added.id]);
+      usedAddedIds.add(Number(added.id));
+      reconciled++;
+    }
   }
   return reconciled;
 }
