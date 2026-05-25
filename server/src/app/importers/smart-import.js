@@ -355,8 +355,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
 
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
-        const num = buildNum(row, mapping.num);
-        const designation = buildDesignation(row, mapping.designation);
+        const { num, designation } = buildArticleFields(row, mapping);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
@@ -443,8 +442,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
       // INSERT mode : créer tous les items
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
-        const num = buildNum(row, mapping.num);
-        const designation = buildDesignation(row, mapping.designation);
+        const { num, designation } = buildArticleFields(row, mapping);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
@@ -743,9 +741,8 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
-      let num = buildNum(row, mapping.num);
+      let { num, designation: importedDesignation } = buildArticleFields(row, mapping);
       const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
-      let importedDesignation = mapping.designation ? buildDesignation(row, mapping.designation) : '';
       const designationNum = splitArticleNumAndDesignation(importedDesignation);
       if (!num && designationNum?.num) {
         num = designationNum.num;
@@ -1111,6 +1108,48 @@ function buildNum(row, numCols) {
   if (parts.length === 0) return null;
   // Fusion stricte des colonnes N° article pour reconstruire une reference unique.
   return parts.join('');
+}
+
+function buildArticleFields(row, mapping) {
+  let num = buildNum(row, mapping?.num);
+  let designation = buildDesignation(row, mapping?.designation);
+  const split = splitMixedNumDesignationColumns(row, mapping?.num);
+  if (split) {
+    num = split.num;
+    if (!designation && split.designation) designation = split.designation;
+  }
+  return { num, designation };
+}
+
+function splitMixedNumDesignationColumns(row, numCols) {
+  if (!numCols) return null;
+  const cols = (Array.isArray(numCols) ? numCols : [numCols])
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (cols.length === 0) return null;
+
+  const numericParts = [];
+  const designationParts = [];
+  let hasNonNumericInNumCols = false;
+
+  cols.forEach((col, index) => {
+    const val = String(row[col] ?? '').trim();
+    if (!val) return;
+    if (looksLikeArticleNum(val)) {
+      numericParts.push(val);
+    } else {
+      hasNonNumericInNumCols = true;
+      designationParts.push({ index, val });
+    }
+  });
+
+  if (!hasNonNumericInNumCols) return null;
+  const deepestDesignation = designationParts[designationParts.length - 1];
+  return {
+    num: numericParts.length ? numericParts.join('') : null,
+    designation: deepestDesignation ? `${'\u00A0'.repeat(deepestDesignation.index)}${deepestDesignation.val}` : '',
+  };
 }
 
 function splitArticleNumAndDesignation(value) {

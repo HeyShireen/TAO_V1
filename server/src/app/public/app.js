@@ -7710,7 +7710,6 @@ function bindSmartImport() {
   const openBtn     = qs('#open-import-modal');
   const modeDpgf    = qs('#import-mode-dpgf');
   const modeOffer   = qs('#import-mode-offer');
-  const operationSelect = qs('#import-operation-select');
   const fileInput   = qs('#import-file-input');
   const step1       = qs('#import-step-1');
   const step2       = qs('#import-step-2');
@@ -7847,7 +7846,7 @@ function bindSmartImport() {
       selectedSheetsDpgf: Array.isArray(importState.selectedSheetsDpgf) ? [...importState.selectedSheetsDpgf] : [],
       sheetConfigsDpgf: importState.sheetConfigsDpgf || {},
       dpgfBaseMapping: importState.dpgfBaseMapping ? cloneMapping(importState.dpgfBaseMapping) : null,
-      importOperation: importState.importOperation || 'replace',
+      importOperation: 'replace',
       companySelectValue: qs('#import-company-select')?.value || '',
       companyNewValue: qs('#import-company-new')?.value || '',
     };
@@ -7907,9 +7906,7 @@ function bindSmartImport() {
     importState.selectedSheetsDpgf = Array.isArray(draft.selectedSheetsDpgf) ? [...draft.selectedSheetsDpgf] : [];
     importState.sheetConfigsDpgf = draft.sheetConfigsDpgf || {};
     importState.dpgfBaseMapping = draft.dpgfBaseMapping ? cloneMapping(draft.dpgfBaseMapping) : null;
-    importState.importOperation = draft.importOperation === 'update' ? 'update' : 'replace';
-
-    if (operationSelect) operationSelect.value = importState.importOperation;
+    importState.importOperation = 'replace';
     if (qs('#import-company-select')) qs('#import-company-select').value = draft.companySelectValue || '';
     if (qs('#import-company-new')) qs('#import-company-new').value = draft.companyNewValue || '';
     return true;
@@ -8349,7 +8346,6 @@ function bindSmartImport() {
     step2.classList.add('hidden');
     step3.classList.add('hidden');
     fileInput.value = '';
-    if (operationSelect) operationSelect.value = 'replace';
     qs('#import-company-new').value = '';
     qs('#import-company-select').value = '';
     populateImportCompanies();
@@ -8416,10 +8412,6 @@ function bindSmartImport() {
   // Mode toggle
   modeDpgf?.addEventListener('click', () => setImportMode('dpgf'));
   modeOffer?.addEventListener('click', () => setImportMode('offer'));
-  operationSelect?.addEventListener('change', () => {
-    importState.importOperation = operationSelect.value === 'update' ? 'update' : 'replace';
-    scheduleImportDraftSave();
-  });
   dpgfSheetsToggle?.addEventListener('click', (e) => {
     e.preventDefault();
     setDpgfSheetsDropdownOpen(dpgfSheetsDropdown?.classList.contains('hidden'));
@@ -8434,7 +8426,7 @@ function bindSmartImport() {
 
   function setImportMode(mode) {
     importState.mode = mode;
-    importState.importOperation = operationSelect?.value === 'update' ? 'update' : 'replace';
+    importState.importOperation = 'replace';
     if (fileInput) fileInput.multiple = mode === 'offer';
 
     // Réinitialiser l'état multi-onglets DPGF lors du changement de mode
@@ -9012,7 +9004,7 @@ function bindSmartImport() {
       companyId: importState.mode === 'offer' ? (qs('#import-company-select')?.value || null) : null,
       companyName: importState.mode === 'offer' ? (qs('#import-company-new')?.value?.trim() || null) : null,
       fileId: importState.fileId || null,
-      importOperation: operationSelect?.value === 'update' ? 'update' : 'replace',
+      importOperation: 'replace',
     };
 
     try {
