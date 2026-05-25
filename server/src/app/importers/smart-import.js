@@ -348,8 +348,12 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
 
     if (hasExisting) {
       // UPDATE mode : matcher par Num ou position
+      // IMPORTANT: ne chercher que parmi les items DPGF (source_company_id IS NULL).
+      // Inclure les postes ajoutés (source_company_id IS NOT NULL) provoquerait leur
+      // sélection comme items DPGF, ce qui les laisserait avec source_company_id ≠ NULL
+      // et ferait supprimer le vrai item DPGF (non touché → DELETE ligne suivante).
       const currentItems = await client.query(
-        'SELECT id, num, designation, position FROM items WHERE lot_id = $1 ORDER BY position NULLS LAST, id',
+        'SELECT id, num, designation, position FROM items WHERE lot_id = $1 AND source_company_id IS NULL ORDER BY position NULLS LAST, id',
         [lotId]
       );
 
