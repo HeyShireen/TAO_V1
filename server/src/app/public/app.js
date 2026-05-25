@@ -6397,6 +6397,12 @@ function companyNameFor(cid){
   return c ? c.name : `C${cid}`;
 }
 
+function createBlankSheetRow(){
+  const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
+  for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+  return blank;
+}
+
 /** Rendu initial sans réutiliser pendant les collages */
 function renderSheetInitial(){
   const head = qs('#sheet-head');
@@ -7316,11 +7322,17 @@ function renderLotCompanies(){
 }
 
 function addRow(){
-  ensureRows(qsa('#sheet-body tr').length + 1);
-  // focus première colonne éditable de la nouvelle ligne
-  const r = qsa('#sheet-body tr').length - 1;
-  const firstEditable = colModel.findIndex(c => c.editable);
-  if (firstEditable >= 0) focusCell(r, firstEditable);
+  const focus = sheetSelection?.focus;
+  const insertIndex = focus && Number.isInteger(focus.r)
+    ? Math.min(Math.max(focus.r + 1, 0), sheetRows.length)
+    : sheetRows.length;
+  sheetRows.splice(insertIndex, 0, createBlankSheetRow());
+  renderSheetInitial();
+  markAsChanged();
+  const targetCol = focus && Number.isInteger(focus.c) && colModel[focus.c]?.editable
+    ? focus.c
+    : colModel.findIndex(c => c.editable);
+  if (targetCol >= 0) focusCell(insertIndex, targetCol);
 }
 
 function deleteRow(rIndex){

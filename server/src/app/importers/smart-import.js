@@ -369,16 +369,26 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         if (mapping.amount && extractComment(row[mapping.amount])) moeComments.push(extractComment(row[mapping.amount]));
         const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
-        // Matcher par Num d'abord, sinon par position
+        // Matcher par Num d'abord, puis designation. La position est seulement un
+        // dernier recours pour eviter de masquer une insertion au milieu.
         let matchedItem = null;
         if (num) {
           const normalizedNum = normalizeForMatch(num);
           matchedItem = currentItems.rows.find((it) => {
+            if (touchedItemIds.includes(Number(it.id))) return false;
             const candidate = normalizeForMatch(it.num);
             return normalizedNum && candidate && candidate === normalizedNum;
           });
         }
-        if (!matchedItem && i < currentItems.rows.length) {
+        if (!matchedItem && designation) {
+          const normalizedDesignation = compactDesignationForMatch(designation);
+          matchedItem = currentItems.rows.find((it) =>
+            !touchedItemIds.includes(Number(it.id))
+            && normalizedDesignation
+            && compactDesignationForMatch(it.designation) === normalizedDesignation
+          );
+        }
+        if (!matchedItem && !num && !designation && i < currentItems.rows.length) {
           matchedItem = currentItems.rows[i];
         }
 
@@ -412,7 +422,16 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
           itemsSkipped++;
         }
       }
+      await reconcileAddedItemsWithDpgf(client, lotId, touchedItemIds);
       if (!updateOnly) {
+        await client.query(
+          `DELETE FROM items
+           WHERE lot_id = $1
+             AND source_company_id IS NOT NULL
+             AND parent_item_id IS NOT NULL
+             AND NOT (parent_item_id = ANY($2::bigint[]))`,
+          [lotId, touchedItemIds]
+        );
         await client.query(
           `DELETE FROM items
            WHERE lot_id = $1
@@ -449,12 +468,14 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
           'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1, $2, $3, $4, $5) RETURNING id',
           [lotId, num, designation || '', unit, pos]
         );
+        touchedItemIds.push(Number(insRes.rows[0].id));
         await client.query(
           'INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1, $2, $3, $4, $5)',
           [insRes.rows[0].id, qty, pu, mt, moeComment]
         );
         itemsImported++;
       }
+      await reconcileAddedItemsWithDpgf(client, lotId, touchedItemIds);
     } else {
       itemsSkipped = dataRows.length;
     }
@@ -1120,6 +1141,91 @@ function normalizeArticleNum(value) {
     .replace(/[._\-/]+/g, '')
     .replace(/^0+(?=\d)/, '')
     .replace(/\.0+$/, '');
+}
+
+function normalizeDesignationForMatch(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[''`]/g, "'")
+    .replace(/[-–—]/g, '-')
+    .trim();
+}
+
+function compactDesignationForMatch(value) {
+  return normalizeDesignationForMatch(value).replace(/[^a-z0-9]/g, '');
+}
+
+function addedItemMatchesDpgf(added, dpgf) {
+  const addedNum = normalizeArticleNum(added.num);
+  const dpgfNum = normalizeArticleNum(dpgf.num);
+  if (addedNum && dpgfNum) return addedNum === dpgfNum;
+
+  const addedDesignation = compactDesignationForMatch(added.designation);
+  const dpgfDesignation = compactDesignationForMatch(dpgf.designation);
+  return !!addedDesignation && !!dpgfDesignation && addedDesignation === dpgfDesignation;
+}
+
+async function moveAddedItemOffersToDpgf(client, { addedItemId, dpgfItemId }) {
+  await client.query(
+    `UPDATE offers target
+     SET unit = COALESCE(target.unit, source.unit),
+         qty = COALESCE(target.qty, source.qty),
+         unit_price = COALESCE(target.unit_price, source.unit_price),
+         amount = COALESCE(target.amount, source.amount),
+         comment = COALESCE(target.comment, source.comment),
+         offer_designation = COALESCE(target.offer_designation, source.offer_designation)
+     FROM offers source
+     WHERE source.item_id = $1
+       AND target.item_id = $2
+       AND target.company_id = source.company_id
+       AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+    [addedItemId, dpgfItemId]
+  );
+
+  await client.query(
+    `DELETE FROM offers source
+     USING offers target
+     WHERE source.item_id = $1
+       AND target.item_id = $2
+       AND target.company_id = source.company_id
+       AND target.round_id IS NOT DISTINCT FROM source.round_id`,
+    [addedItemId, dpgfItemId]
+  );
+
+  await client.query('UPDATE offers SET item_id = $2 WHERE item_id = $1', [addedItemId, dpgfItemId]);
+}
+
+async function reconcileAddedItemsWithDpgf(client, lotId, dpgfItemIds) {
+  const ids = [...new Set((dpgfItemIds || []).map(Number).filter(Number.isFinite))];
+  if (ids.length === 0) return 0;
+
+  const dpgfRes = await client.query(
+    'SELECT id, num, designation FROM items WHERE lot_id = $1 AND source_company_id IS NULL AND id = ANY($2::bigint[])',
+    [lotId, ids]
+  );
+  const addedRes = await client.query(
+    'SELECT id, num, designation FROM items WHERE lot_id = $1 AND source_company_id IS NOT NULL',
+    [lotId]
+  );
+
+  let reconciled = 0;
+  const usedAddedIds = new Set();
+  for (const dpgf of dpgfRes.rows) {
+    const added = addedRes.rows.find((candidate) =>
+      !usedAddedIds.has(Number(candidate.id)) && addedItemMatchesDpgf(candidate, dpgf)
+    );
+    if (!added) continue;
+
+    await moveAddedItemOffersToDpgf(client, { addedItemId: added.id, dpgfItemId: dpgf.id });
+    await client.query('DELETE FROM items WHERE id = $1', [added.id]);
+    usedAddedIds.add(Number(added.id));
+    reconciled++;
+  }
+  return reconciled;
 }
 
 function normalizeImportMapping(mapping) {
