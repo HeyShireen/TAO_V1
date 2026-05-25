@@ -865,15 +865,16 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
       const num = r.num ?? null;
       const unit = r.unit ?? null;
       const itemId = r.item_id ? Number(r.item_id) : null;
+      const rowIndex = rows.indexOf(r);
       
       // Sauvegarder toutes les lignes pour préserver l'ordre DPGF (même les vides)
       // Utiliser un espace comme désignation minimale pour les lignes vides
       const finalDesignation = designation || '';
 
       if (itemId) {
-        itemsToUpdate.push({ id: itemId, num, designation: finalDesignation, unit, pos });
+        itemsToUpdate.push({ id: itemId, num, designation: finalDesignation, unit, pos, rowIndex });
       } else {
-        itemsToInsert.push({ num, designation: finalDesignation, unit, pos, rowIndex: rows.indexOf(r) });
+        itemsToInsert.push({ num, designation: finalDesignation, unit, pos, rowIndex });
       }
 
       // Préparer MOE
@@ -887,7 +888,7 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
       if (q != null && pu != null) {
         mt = q * pu;
       }
-      moeData.push({ itemId, q, pu, mt, rowIndex: rows.indexOf(r) });
+      moeData.push({ itemId, q, pu, mt, rowIndex });
 
       // Préparer OFFERS
       if (r.offers && typeof r.offers === 'object') {
@@ -904,9 +905,21 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
           if (oq != null && op != null) {
             om = oq * op;
           }
-          offersData.push({ itemId, companyId, u, oq, op, om, rowIndex: rows.indexOf(r) });
+          offersData.push({ itemId, companyId, u, oq, op, om, rowIndex });
         }
       }
+    }
+
+    // Supprimer les articles retires de la grille (admin/responsable uniquement).
+    // Les donnees liees (MOE, offres, questions, etc.) suivent via ON DELETE CASCADE.
+    if (!isEntreprise) {
+      const keptItemIds = itemsToUpdate.map((item) => item.id);
+      await client.query(
+        `DELETE FROM items
+         WHERE lot_id = $1
+           AND NOT (id = ANY($2::bigint[]))`,
+        [lotId, keptItemIds]
+      );
     }
 
     // 2. Batch UPDATE items existants (interdit pour entreprise)
@@ -978,18 +991,20 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
     await client.query('COMMIT');
     
     // Retourner les items avec leurs IDs (anciens + nouveaux)
-    const allItems = [];
+    const itemIdsByRowIndex = new Map();
     
     // Ajouter les items mis à jour
     for (const item of itemsToUpdate) {
-      allItems.push({ id: item.id, designation: item.designation });
+      itemIdsByRowIndex.set(item.rowIndex, item.id);
     }
     
     // Ajouter les nouveaux items créés
     for (const newItem of newItemIds) {
-      const originalRow = rows[newItem.rowIndex];
-      allItems.push({ id: newItem.id, designation: originalRow.designation });
+      itemIdsByRowIndex.set(newItem.rowIndex, newItem.id);
     }
+    const allItems = rows
+      .map((row, index) => ({ id: itemIdsByRowIndex.get(index) || null, designation: row.designation || '' }))
+      .filter((item) => item.id);
     
     res.json({ ok: true, saved: pos, items: allItems });
   } catch (e) {
@@ -1037,7 +1052,7 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
     if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
-    const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId } = JSON.parse(req.body.params || '{}');
+    const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId, importOperation } = JSON.parse(req.body.params || '{}');
     if (!mode) return res.status(400).json({ error: 'Mode requis (dpgf ou offer)' });
     if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
 
@@ -1077,6 +1092,7 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
       headerRow: isPdf ? 1 : (Number(headerRow) || 1),
       mapping,
       excludedRows: excludedRows || [],
+      importOperation,
     });
 
     if (String(mode) === 'offer') {

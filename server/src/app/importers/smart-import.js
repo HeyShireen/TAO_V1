@@ -219,7 +219,7 @@ export async function convertPdfToExcelBuffer({ buffer, headerRow }) {
  * @param {number}  params.headerRow  - Numéro de ligne d'en-tête
  * @param {Object}  params.mapping    - { num: colIndex|colIndex[], designation: colIndex|colIndex[], unit: colIndex, qty: colIndex, unit_price: colIndex, amount: colIndex }
  */
-export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows }) {
+export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows, importOperation = 'replace' }) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const ws = wb.worksheets.find(s => s.name === sheetName) || wb.worksheets[0];
@@ -269,13 +269,13 @@ export async function applyImport({ buffer, mode, lotId, roundId, companyId, com
     if (hasAny) dataRows.push(obj);
   }
 
-  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping });
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation });
 }
 
 /**
  * Applique l'import depuis un fichier PDF.
  */
-export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows }) {
+export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows, importOperation = 'replace' }) {
   const { headers, rows } = await parsePdfTable({ buffer, headerRow });
 
   const excluded = new Set((excludedRows || []).map(Number));
@@ -304,30 +304,36 @@ export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, 
     if (hasAny) dataRows.push(obj);
   }
 
-  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping });
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation });
 }
 
-function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping }) {
+function normalizeImportOperation(value) {
+  return value === 'update' ? 'update' : 'replace';
+}
+
+function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace' }) {
   const normalizedMapping = normalizeImportMapping(mapping);
+  const operation = normalizeImportOperation(importOperation);
 
   if (dataRows.length === 0) throw new Error('Aucune donnée à importer');
 
   if (mode === 'dpgf') {
-    return importDPGF({ lotId, dataRows, mapping: normalizedMapping });
+    return importDPGF({ lotId, dataRows, mapping: normalizedMapping, importOperation: operation });
   }
   if (mode === 'offer') {
     if (!companyId && !companyName) throw new Error('Entreprise requise');
     if (!roundId) throw new Error('Round ID requis');
-    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping });
+    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping, importOperation: operation });
   }
   throw new Error(`Mode inconnu: ${mode}`);
 }
 
 /* =============== Import DPGF (crée items + MOE) =============== */
-async function importDPGF({ lotId, dataRows, mapping }) {
+async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace' }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const updateOnly = importOperation === 'update';
 
     const normalizeForMatch = (value) => normalizeArticleNum(value);
 
@@ -337,6 +343,8 @@ async function importDPGF({ lotId, dataRows, mapping }) {
 
     let itemsImported = 0;
     let itemsUpdated = 0;
+    let itemsSkipped = 0;
+    const touchedItemIds = [];
 
     if (hasExisting) {
       // UPDATE mode : matcher par Num ou position
@@ -375,6 +383,7 @@ async function importDPGF({ lotId, dataRows, mapping }) {
         }
 
         if (matchedItem) {
+          touchedItemIds.push(Number(matchedItem.id));
           // Mettre à jour l'item existant
           await client.query(
             'UPDATE items SET num = COALESCE($2, num), designation = COALESCE(NULLIF($3, \'\'), designation), unit = COALESCE($4, unit) WHERE id = $1',
@@ -386,21 +395,33 @@ async function importDPGF({ lotId, dataRows, mapping }) {
             ON CONFLICT (item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, comment = EXCLUDED.comment
           `, [matchedItem.id, qty, pu, mt, moeComment]);
           itemsUpdated++;
-        } else {
+        } else if (!updateOnly) {
           // Nouvel item
           const pos = i + 1;
           const insRes = await client.query(
             'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             [lotId, num, designation || '(importé)', unit, pos]
           );
+          touchedItemIds.push(Number(insRes.rows[0].id));
           await client.query(
             'INSERT INTO moe_items (item_id, qty, unit_price, amount, comment) VALUES ($1, $2, $3, $4, $5)',
             [insRes.rows[0].id, qty, pu, mt, moeComment]
           );
           itemsImported++;
+        } else {
+          itemsSkipped++;
         }
       }
-    } else {
+      if (!updateOnly) {
+        await client.query(
+          `DELETE FROM items
+           WHERE lot_id = $1
+             AND source_company_id IS NULL
+             AND NOT (id = ANY($2::bigint[]))`,
+          [lotId, touchedItemIds]
+        );
+      }
+    } else if (!updateOnly) {
       // INSERT mode : créer tous les items
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
@@ -434,10 +455,12 @@ async function importDPGF({ lotId, dataRows, mapping }) {
         );
         itemsImported++;
       }
+    } else {
+      itemsSkipped = dataRows.length;
     }
 
     await client.query('COMMIT');
-    return { ok: true, mode: 'dpgf', itemsImported, itemsUpdated };
+    return { ok: true, mode: 'dpgf', importOperation, itemsImported, itemsUpdated, itemsSkipped };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -457,10 +480,11 @@ async function importDPGF({ lotId, dataRows, mapping }) {
  *    On ne l'importe pas dans la DPGF, on le met dans un tableau à part avec du contexte.
  *    Le curseur DPGF ne bouge PAS (l'entreprise a juste inséré une ligne en plus).
  */
-async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping }) {
+async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace' }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const updateOnly = importOperation === 'update';
 
     if (!roundId) {
       console.warn('[AMOUNT-DIAG][import.offer] Exécution sans roundId', {
@@ -479,7 +503,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       );
       if (existing.rowCount > 0) {
         resolvedCompanyId = existing.rows[0].id;
-      } else {
+      } else if (!updateOnly) {
         const inserted = await client.query(
           'INSERT INTO companies (name) VALUES ($1) RETURNING id',
           [companyName.trim()]
@@ -525,29 +549,33 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       || 'Montant total incohérent dans la DPGF : le montant importé est conservé.'
     ).trim();
 
-    // Nettoyage prealable: on remplace integralement les donnees de cette entreprise
-    // pour ce lot + tour, y compris celles non presentes dans le nouvel import.
-    const clearExistingRes = await client.query(
-      `DELETE FROM offers o
-       USING items i
-       WHERE o.item_id = i.id
-         AND i.lot_id = $1
-         AND o.company_id = $2
-         AND o.round_id = $3`,
-      [lotId, resolvedCompanyId, roundId]
-    );
-    const clearedExistingOffers = Number(clearExistingRes.rowCount || 0);
-    const clearedAddedItemsRes = await client.query(
-      `DELETE FROM items i
-       WHERE i.lot_id = $1
-         AND i.source_company_id = $2
-         AND NOT EXISTS (
-           SELECT 1 FROM offers o
-           WHERE o.item_id = i.id
-         )`,
-      [lotId, resolvedCompanyId]
-    );
-    const clearedAddedItems = Number(clearedAddedItemsRes.rowCount || 0);
+    let clearedExistingOffers = 0;
+    let clearedAddedItems = 0;
+    if (!updateOnly) {
+      // Nettoyage prealable: on remplace integralement les donnees de cette entreprise
+      // pour ce lot + tour, y compris celles non presentes dans le nouvel import.
+      const clearExistingRes = await client.query(
+        `DELETE FROM offers o
+         USING items i
+         WHERE o.item_id = i.id
+           AND i.lot_id = $1
+           AND o.company_id = $2
+           AND o.round_id = $3`,
+        [lotId, resolvedCompanyId, roundId]
+      );
+      clearedExistingOffers = Number(clearExistingRes.rowCount || 0);
+      const clearedAddedItemsRes = await client.query(
+        `DELETE FROM items i
+         WHERE i.lot_id = $1
+           AND i.source_company_id = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM offers o
+             WHERE o.item_id = i.id
+           )`,
+        [lotId, resolvedCompanyId]
+      );
+      clearedAddedItems = Number(clearedAddedItemsRes.rowCount || 0);
+    }
 
     // --- Helpers de normalisation pour le matching ---
     function normalizeNum(n) {
@@ -942,6 +970,8 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           }
         });
         // Ne PAS avancer le curseur DPGF
+      } else {
+        skipped++;
       }
     }
 
@@ -1003,6 +1033,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     return {
       ok: true,
       mode: 'offer',
+      importOperation,
       companyId: resolvedCompanyId,
       clearedExistingOffers,
       clearedAddedItems,

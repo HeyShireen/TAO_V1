@@ -488,6 +488,16 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
       resultItems.push({ id: itemId, option_id: optionId });
     }
 
+    const keptItemIds = resultItems.map((item) => item.id).filter(Boolean);
+    await client.query(
+      `DELETE FROM option_items oi
+       USING options o
+       WHERE o.id = oi.option_id
+         AND o.lot_id = $1
+         AND NOT (oi.id = ANY($2::bigint[]))`,
+      [lotId, keptItemIds]
+    );
+
     await client.query('COMMIT');
     res.json({ ok: true, items: resultItems });
   } catch (e) {

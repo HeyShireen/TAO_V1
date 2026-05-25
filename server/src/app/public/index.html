@@ -1372,6 +1372,14 @@
             <strong>DPGF (MOE) :</strong> Importe la structure du lot (articles, quantités, prix unitaires MOE). Crée ou met à jour les lignes du tableur.
           </div>
 
+          <div class="field" style="max-width:360px;margin-bottom:16px">
+            <label for="import-operation-select">Action</label>
+            <select id="import-operation-select" name="import-operation-select">
+              <option value="replace">Remplacer / synchroniser le lot ouvert</option>
+              <option value="update">Mettre Ã  jour uniquement</option>
+            </select>
+          </div>
+
           <div id="import-selected-files" class="hidden" style="margin-bottom:8px;padding:10px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px"></div>
 
           <div class="field">
