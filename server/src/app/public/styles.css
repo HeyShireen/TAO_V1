@@ -857,6 +857,24 @@ input:focus,textarea:focus,select:focus{
 }
 .table-wrapper.tall{ max-height:75vh }
 #tour-config > p.muted{ display:none; }
+.threshold-bulk-editor{
+  display:flex;
+  align-items:flex-end;
+  gap:12px;
+  flex-wrap:wrap;
+  margin:18px 0 28px;
+  padding:14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--input-bg);
+}
+.threshold-bulk-field{
+  flex:0 1 260px;
+  margin-top:0;
+}
+.threshold-bulk-editor .btn{
+  min-height:40px;
+}
 .global-threshold-lot-cell{
   min-width:220px;
   white-space:normal;

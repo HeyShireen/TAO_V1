@@ -3674,15 +3674,45 @@ function attachThresholdListeners(){
   });
 }
 
+function getLotThresholdInputId(field) {
+  return `threshold-${field.replace(/_threshold$/, '').replaceAll('_', '-')}`;
+}
+
+function readLotThresholdInputs() {
+  return LOT_THRESHOLD_FIELDS.reduce((thresholds, field) => {
+    const input = qs(`#${getLotThresholdInputId(field)}`);
+    const value = Number(input?.value);
+    thresholds[field] = Number.isFinite(value) ? Math.max(0, value) : LOT_THRESHOLD_DEFAULTS[field];
+    return thresholds;
+  }, {});
+}
+
+function applyThresholdToAll() {
+  if (isVisionneur() || isEntreprise()) {
+    showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' });
+    return;
+  }
+
+  const input = qs('#threshold-apply-all');
+  const value = Number(input?.value);
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    showNotify({ title:'Valeur invalide', message:'Saisissez un seuil entre 0 et 100.', type:'error' });
+    input?.focus();
+    return;
+  }
+
+  const normalizedValue = formatThresholdValue(value);
+  LOT_THRESHOLD_FIELDS.forEach(field => {
+    const thresholdInput = qs(`#${getLotThresholdInputId(field)}`);
+    if (thresholdInput) thresholdInput.value = normalizedValue;
+  });
+  updateQuestionsLegend(readLotThresholdInputs());
+  autosaveHandlers.thresholds();
+}
+
 function updateLegendFromInputs(){
   // Récupérer les valeurs actuelles des inputs
-  const thresholds = {
-    qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value) || 25,
-    qty_low_threshold: parseFloat(qs('#threshold-qty-low').value) || 10,
-    qty_high_threshold: parseFloat(qs('#threshold-qty-high').value) || 10,
-    qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value) || 25
-  };
-  updateQuestionsLegend(thresholds);
+  updateQuestionsLegend(readLotThresholdInputs());
 }
 
 function attachProjectQuestionsListeners(){
@@ -10903,6 +10933,10 @@ function bindUI(){
   qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
   qs('#save-global-thresholds')?.addEventListener('click', saveGlobalLotThresholds);
   qs('#copy-first-thresholds-to-all')?.addEventListener('click', copyFirstGlobalThresholdsToAll);
+  qs('#apply-threshold-to-all')?.addEventListener('click', applyThresholdToAll);
+  qs('#threshold-apply-all')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') applyThresholdToAll();
+  });
 
   // Sous-onglets des lots (données, config, questions)
   qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));

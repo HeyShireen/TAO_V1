@@ -472,6 +472,16 @@
           <div class="card">
             <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Configuration des Questions</h3>
             <p class="muted">Questions automatiques selon les écarts détectés</p>
+
+            <div class="threshold-bulk-editor" aria-label="Modification globale des seuils">
+              <label class="field threshold-bulk-field" for="threshold-apply-all">
+                <span>Valeur pour tous les seuils (%)</span>
+                <input id="threshold-apply-all" name="threshold-apply-all" type="number" min="0" max="100" step="1" placeholder="Ex: 10" />
+              </label>
+              <button id="apply-threshold-to-all" class="btn ghost" type="button">
+                <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-sliders"></use></svg>Appliquer a tous
+              </button>
+            </div>
           
             <!-- Section Quantités -->
             <div style="margin-bottom:32px">
