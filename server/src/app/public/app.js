@@ -405,15 +405,13 @@ function attachOfferDesigPillDelegates(container) {
     document.addEventListener('click', closeOfferDesigPopover);
   }
 }
-/** Returns true when a company has not answered an item (empty or zero qty, pu and amount) */
-function isOfferUnanswered(qty, pu, amount = null) {
+/** Returns true when a company has not answered an item (qty or pu empty/zero). */
+function isOfferUnanswered(qty, pu) {
   const qStr = (qty == null ? '' : String(qty)).trim();
   const pStr = (pu  == null ? '' : String(pu )).trim();
-  const aStr = (amount == null ? '' : String(amount)).trim();
   const qEmpty = qStr === '' || parseFloat(qStr) === 0 || isNaN(parseFloat(qStr));
   const pEmpty = pStr === '' || parseFloat(pStr) === 0 || isNaN(parseFloat(pStr));
-  const aEmpty = aStr === '' || parseFloat(aStr) === 0 || isNaN(parseFloat(aStr));
-  return qEmpty && pEmpty && aEmpty;
+  return qEmpty || pEmpty;
 }
 /** Returns true when an offer has values while MOE has no expected total on that row */
 function isOfferUnexpected(moeHasTotal, qty, pu) {
@@ -5181,13 +5179,9 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     
     // Collecter les offres de toutes les entreprises pour cet item
     const itemOffers = (offersByItemId.get(Number(item.id)) || []).map(offer => {
-      const hasQty = Number.isFinite(offer.quantity) && offer.quantity !== 0;
-      const hasPu = Number.isFinite(offer.unit_price) && offer.unit_price !== 0;
-      const hasAmount = Number.isFinite(offer.total) && offer.total !== 0;
-      const hasAnyValue = hasQty || hasPu || hasAmount;
       return {
         ...offer,
-        isUnanswered: moeHasTotal && !hasAnyValue,
+        isUnanswered: moeHasTotal && isOfferUnanswered(offer.quantity, offer.unit_price),
         unitMismatchInfo: getUnitMismatchInfo(item.unit, offer.unit, offer.total)
       };
     });

@@ -457,9 +457,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     };
     const isOfferUnanswered = (row) => {
       if (!row) return true;
-      return !hasFilledNumber(row.qty)
-        && !hasFilledNumber(row.unit_price)
-        && !hasFilledNumber(row.amount);
+      return !hasFilledNumber(row.qty) || !hasFilledNumber(row.unit_price);
     };
 
     const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment = null }) => {
