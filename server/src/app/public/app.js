@@ -3885,7 +3885,7 @@ async function generateQuestions(){
   if (isVisionneur() || isEntreprise()) { showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas générer de fiches questions.', type:'error' }); return; }
   if (!currentLot || !currentRound) return;
   try {
-    const result = await api(`/question-config/lot/${currentLot.id}/generate`, { 
+    const result = await api(`/question-config/lot/${currentLot.id}/generate`, {
       method: 'POST',
       body: { round_id: currentRound.id }
     });
@@ -3893,6 +3893,58 @@ async function generateQuestions(){
     await refreshQuestions();
   } catch (err) {
     showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+  }
+}
+
+async function generateAllLotsQuestions() {
+  if (isVisionneur() || isEntreprise()) {
+    showNotify({ title: 'Accès refusé', message: 'Vous ne pouvez pas générer de fiches questions.', type: 'error' });
+    return;
+  }
+  if (!currentRound) {
+    showNotify({ title: 'Erreur', message: 'Aucun tour sélectionné.', type: 'error' });
+    return;
+  }
+  const lots = globalLotThresholds?.lots || [];
+  if (lots.length === 0) {
+    showNotify({ title: 'Aucun lot', message: 'Ce projet ne contient aucun lot.', type: 'error' });
+    return;
+  }
+
+  const roundLabel = currentRound.name || `Tour ${currentRound.id}`;
+  const confirmed = window.confirm(
+    `Générer les fiches questions pour les ${lots.length} lot(s) du tour « ${roundLabel} » ?\n\nLes fiches existantes seront recalculées (sauf celles modifiées manuellement).`
+  );
+  if (!confirmed) return;
+
+  const btn = qs('#generate-all-lots-questions');
+  const originalHTML = btn?.innerHTML || '';
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner-small"></span> Génération…`; }
+
+  let totalGenerated = 0;
+  let errors = 0;
+  try {
+    for (const lot of lots) {
+      try {
+        const result = await api(`/question-config/lot/${lot.lot_id}/generate`, {
+          method: 'POST',
+          body: { round_id: currentRound.id },
+          showLoader: false
+        });
+        totalGenerated += Number(result.generated || 0);
+      } catch (e) {
+        errors++;
+        console.warn(`[generate-all] Erreur lot ${lot.lot_id}:`, e);
+      }
+    }
+    if (errors === 0) {
+      showNotify({ title: 'Succès', message: `${totalGenerated} fiche(s) question générée(s) sur ${lots.length} lot(s).`, type: 'success' });
+    } else {
+      showNotify({ title: 'Terminé avec erreurs', message: `${totalGenerated} fiche(s) générée(s). ${errors} lot(s) en erreur.`, type: 'warning' });
+    }
+    await refreshQuestions();
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
   }
 }
 
@@ -10945,6 +10997,7 @@ function bindUI(){
   // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
   qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
   qs('#save-global-thresholds')?.addEventListener('click', saveGlobalLotThresholds);
+  qs('#generate-all-lots-questions')?.addEventListener('click', generateAllLotsQuestions);
 
   // Sous-onglets des lots (données, config, questions)
   qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));

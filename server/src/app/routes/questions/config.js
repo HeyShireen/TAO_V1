@@ -636,7 +636,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     const nonUnitQuestionTypes = [
       'qty_very_low', 'qty_low', 'qty_high', 'qty_very_high',
       'price_very_low', 'price_low', 'price_high', 'price_very_high',
-      'amount_very_low', 'amount_low', 'amount_high', 'amount_very_high'
+      'amount_very_low', 'amount_low', 'amount_high', 'amount_very_high',
+      'offer_amount_mismatch'
     ];
     const answeredQuestionTypes = [...nonUnitQuestionTypes, 'unit_mismatch'];
     const deleteQuestionTypes = async ({ itemId, optionItemId, companyId, types }) => {
@@ -932,6 +933,47 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
           generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_high' });
         }
       }
+
+      // Incohérence de montant import : offer.amount ≠ qty × unit_price
+      if (!shouldSkipUnitAnalysis
+          && offer.qty != null && offer.unit_price != null && offer.amount != null) {
+        const calculatedAmt = Number(offer.qty) * Number(offer.unit_price);
+        const importedAmt   = Number(offer.amount);
+        const hasMismatch   = Number.isFinite(calculatedAmt) && Number.isFinite(importedAmt)
+                              && Math.abs(importedAmt - calculatedAmt) > 0.01;
+        if (hasMismatch) {
+          const template = String(questions.offer_amount_mismatch_comment || '').trim();
+          if (template) {
+            const delta = importedAmt - calculatedAmt;
+            const fmt = (v) => Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '';
+            const mismatchText = template
+              .replace(/\{\{\s*montant_total\s*\}\}/gi,   fmt(importedAmt))
+              .replace(/\{\{\s*montant_calcule\s*\}\}/gi, fmt(calculatedAmt))
+              .replace(/\{\{\s*ecart\s*\}\}/gi,           fmt(delta));
+            const deviationPct = calculatedAmt !== 0
+              ? ((importedAmt - calculatedAmt) / calculatedAmt) * 100
+              : null;
+            await upsertQuestion({
+              itemId: offer.item_id,
+              companyId: offer.company_id,
+              type: 'offer_amount_mismatch',
+              text: mismatchText,
+              moeValue: calculatedAmt,
+              offerValue: importedAmt,
+              deviationPct,
+              comment: mismatchText
+            });
+            generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'offer_amount_mismatch' });
+          }
+        } else {
+          // Incohérence résolue : supprimer la question si elle existait
+          await deleteQuestionTypes({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            types: ['offer_amount_mismatch']
+          });
+        }
+      }
     }
 
     // 5. Ajouter les options (items d'option)
@@ -1153,9 +1195,49 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
             generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_high' });
           }
         }
+
+        // Incohérence de montant import (option) : offer.amount ≠ qty × unit_price
+        if (!shouldSkipUnitAnalysis
+            && offer.qty != null && offer.unit_price != null && offer.amount != null) {
+          const calculatedAmt = Number(offer.qty) * Number(offer.unit_price);
+          const importedAmt   = Number(offer.amount);
+          const hasMismatch   = Number.isFinite(calculatedAmt) && Number.isFinite(importedAmt)
+                                && Math.abs(importedAmt - calculatedAmt) > 0.01;
+          if (hasMismatch) {
+            const template = String(questions.offer_amount_mismatch_comment || '').trim();
+            if (template) {
+              const delta = importedAmt - calculatedAmt;
+              const fmt = (v) => Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '';
+              const mismatchText = template
+                .replace(/\{\{\s*montant_total\s*\}\}/gi,   fmt(importedAmt))
+                .replace(/\{\{\s*montant_calcule\s*\}\}/gi, fmt(calculatedAmt))
+                .replace(/\{\{\s*ecart\s*\}\}/gi,           fmt(delta));
+              const deviationPct = calculatedAmt !== 0
+                ? ((importedAmt - calculatedAmt) / calculatedAmt) * 100
+                : null;
+              await upsertQuestion({
+                optionItemId: offer.option_item_id,
+                companyId: offer.company_id,
+                type: 'offer_amount_mismatch',
+                text: mismatchText,
+                moeValue: calculatedAmt,
+                offerValue: importedAmt,
+                deviationPct,
+                comment: mismatchText
+              });
+              generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'offer_amount_mismatch' });
+            }
+          } else {
+            await deleteQuestionTypes({
+              optionItemId: offer.option_item_id,
+              companyId: offer.company_id,
+              types: ['offer_amount_mismatch']
+            });
+          }
+        }
       }
     }
-    
+
     res.json({ generated: generated.length, questions: generated });
   } catch (err) {
     console.error('Erreur génération fiches questions:', err);
