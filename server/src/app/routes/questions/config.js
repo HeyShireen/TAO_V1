@@ -209,7 +209,7 @@ router.get('/project/:projectId/lot-thresholds', requireManager, async (req, res
   try {
     const { projectId } = req.params;
     const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
-    if (!canView) return res.status(403).json({ error: 'Acces refuse' });
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
     const result = await query(
       `SELECT
@@ -231,7 +231,7 @@ router.get('/project/:projectId/lot-thresholds', requireManager, async (req, res
   }
 });
 
-// Mettre a jour les seuils de plusieurs lots d'un projet
+// Mettre à jour les seuils de plusieurs lots d'un projet
 router.put('/project/:projectId/lot-thresholds', requireManager, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -242,7 +242,7 @@ router.put('/project/:projectId/lot-thresholds', requireManager, async (req, res
     }
 
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Acces refuse' });
+    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     await client.query('BEGIN');
 
@@ -432,6 +432,10 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       'SELECT * FROM offers WHERE item_id = ANY($1::int[]) AND round_id = $2',
       [items.map(i => i.id), roundId]
     );
+    const companiesRes = await query(
+      'SELECT company_id FROM lot_companies WHERE lot_id = $1',
+      [lotId]
+    );
     
     // 4. Générer les questions
     const generated = [];
@@ -446,6 +450,16 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         return qty * unitPrice;
       }
       return null;
+    }
+    const hasFilledNumber = (value) => {
+      const n = Number.parseFloat(value);
+      return Number.isFinite(n) && n !== 0;
+    };
+    const isOfferUnanswered = (row) => {
+      if (!row) return true;
+      return !hasFilledNumber(row.qty)
+        && !hasFilledNumber(row.unit_price)
+        && !hasFilledNumber(row.amount);
     };
 
     const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment = null }) => {
@@ -487,6 +501,32 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       'price_very_low', 'price_low', 'price_high', 'price_very_high',
       'amount_very_low', 'amount_low', 'amount_high', 'amount_very_high'
     ];
+    const answeredQuestionTypes = [...nonUnitQuestionTypes, 'unit_mismatch'];
+    const deleteQuestionTypes = async ({ itemId, optionItemId, companyId, types }) => {
+      if (itemId) {
+        await query(
+          `DELETE FROM generated_questions
+           WHERE lot_id = $1
+             AND round_id = $2
+             AND item_id = $3
+             AND company_id = $4
+             AND question_type = ANY($5::text[])`,
+          [lotId, roundId, itemId, companyId, types]
+        );
+        return;
+      }
+      if (optionItemId) {
+        await query(
+          `DELETE FROM generated_questions
+           WHERE lot_id = $1
+             AND round_id = $2
+             AND option_item_id = $3
+             AND company_id = $4
+             AND question_type = ANY($5::text[])`,
+          [lotId, roundId, optionItemId, companyId, types]
+        );
+      }
+    };
 
     const deleteCompetingQuestionsForUnitMismatch = async ({ itemId, optionItemId, companyId }) => {
       if (itemId) {
@@ -514,15 +554,60 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       }
     };
 
+    const insertUnansweredQuestion = async ({ itemId, optionItemId, companyId, moeAmount }) => {
+      await deleteQuestionTypes({
+        itemId,
+        optionItemId,
+        companyId,
+        types: answeredQuestionTypes
+      });
+      const text = questions.unanswered_comment || 'Article sans réponse';
+      await upsertQuestion({
+        itemId,
+        optionItemId,
+        companyId,
+        type: 'unanswered',
+        text,
+        moeValue: moeAmount,
+        offerValue: null,
+        deviationPct: null,
+        comment: text
+      });
+      generated.push({
+        ...(itemId ? { item_id: itemId } : { option_item_id: optionItemId }),
+        company_id: companyId,
+        type: 'unanswered'
+      });
+    };
+
+    const offersByItemCompany = new Map(
+      offersRes.rows.map(offer => [`${Number(offer.item_id)}_${Number(offer.company_id)}`, offer])
+    );
+    const companyIds = companiesRes.rows.map(row => Number(row.company_id)).filter(Number.isFinite);
+
+    for (const item of items) {
+      const moe = moeByItem.get(item.id);
+      if (!moe) continue;
+      const moeAmount = getComparableAmount(moe);
+      if (moeAmount == null || moeAmount === 0) continue;
+
+      for (const companyId of companyIds) {
+        const offer = offersByItemCompany.get(`${Number(item.id)}_${companyId}`);
+        if (!isOfferUnanswered(offer)) {
+          await deleteQuestionTypes({ itemId: item.id, companyId, types: ['unanswered'] });
+          continue;
+        }
+        await insertUnansweredQuestion({ itemId: item.id, companyId, moeAmount });
+      }
+    }
+
     for (const offer of offersRes.rows) {
       const moe = moeByItem.get(offer.item_id);
       if (!moe) continue;
       const item = itemsById.get(offer.item_id);
       
       // Offre considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
-      const offerQty = parseFloat(offer.qty) || 0;
-      const offerPU  = parseFloat(offer.unit_price) || 0;
-      if (offerQty === 0 && offerPU === 0) continue;
+      if (isOfferUnanswered(offer)) continue;
       const offerAmount = getComparableAmount(offer);
       const shouldSkipUnitAnalysis = hasBlockingUnitMismatch(item?.unit, offer.unit, offerAmount);
       if (shouldSkipUnitAnalysis) {
@@ -730,6 +815,25 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         'SELECT * FROM option_item_offers WHERE option_item_id = ANY($1::int[]) AND round_id = $2',
         [optionItemIds, roundId]
       );
+      const optionOffersByItemCompany = new Map(
+        optionOffersRes.rows.map(offer => [`${Number(offer.option_item_id)}_${Number(offer.company_id)}`, offer])
+      );
+
+      for (const optionItemId of optionItemIds) {
+        const moe = moeByOptionItem.get(optionItemId);
+        if (!moe) continue;
+        const moeAmount = getComparableAmount(moe);
+        if (moeAmount == null || moeAmount === 0) continue;
+
+        for (const companyId of companyIds) {
+          const offer = optionOffersByItemCompany.get(`${Number(optionItemId)}_${companyId}`);
+          if (!isOfferUnanswered(offer)) {
+            await deleteQuestionTypes({ optionItemId, companyId, types: ['unanswered'] });
+            continue;
+          }
+          await insertUnansweredQuestion({ optionItemId, companyId, moeAmount });
+        }
+      }
 
       for (const offer of optionOffersRes.rows) {
         const moe = moeByOptionItem.get(offer.option_item_id);
@@ -737,9 +841,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
         const optionUnit = optionUnitsById.get(Number(offer.option_item_id)) || '';
 
         // Offre option considérée comme "oubliée" : qty ET unit_price à 0 ou null → pas de fiche question
-        const optOfferQty = parseFloat(offer.qty) || 0;
-        const optOfferPU  = parseFloat(offer.unit_price) || 0;
-        if (optOfferQty === 0 && optOfferPU === 0) continue;
+        if (isOfferUnanswered(offer)) continue;
         const offerAmount = getComparableAmount(offer);
         const shouldSkipUnitAnalysis = hasBlockingUnitMismatch(optionUnit, offer.unit, offerAmount);
 
@@ -1424,6 +1526,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       // Ajouter les données pour cette entreprise
       companyData.questions.forEach(q => {
         const typeLabel = {
+          'unanswered': 'Réponse oubliée',
           'unit_mismatch': 'Unité à vérifier',
           'qty_very_low': 'Qté Très Basse',
           'qty_low': 'Qté Basse',

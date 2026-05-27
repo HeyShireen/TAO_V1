@@ -259,13 +259,14 @@ function amountOf(q, pu){
   if (!Number.isFinite(n1) || !Number.isFinite(n2)) return '';
   return formatNum(n1 * n2);
 }
-function amountCellHtml(q, pu, comment){
-  const amt = amountOf(q, pu);
+function amountCellHtml(q, pu, comment, fallbackAmount = null){
+  const computed = amountOf(q, pu);
+  const amt = computed || (Number.isFinite(parseNum(fallbackAmount)) ? formatNum(parseNum(fallbackAmount)) : '');
   if (!comment) return amt;
   return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
 }
 
-const QUESTIONS_UNIT_MISMATCH_COMMENT_TEMPLATE = 'Ce poste doit etre chiffre en {unit}.';
+const QUESTIONS_UNIT_MISMATCH_COMMENT_TEMPLATE = 'Ce poste doit être chiffré en {unit}.';
 
 function normalizeUnitLabel(value) {
   if (!value) return '';
@@ -320,7 +321,7 @@ function getUnitMismatchInfo(expectedUnit, offeredUnit, offeredAmount) {
     expectedUnit: safeExpectedUnit,
     offeredUnit: safeOfferedUnit,
     comment,
-    commentHtml: `<span class="unit-mismatch-note" title="Unite attendue: ${escapeHtml(safeExpectedUnit)} | Unite entreprise: ${escapeHtml(safeOfferedUnit)}">${escapeHtml(comment)}</span>`
+    commentHtml: `<span class="unit-mismatch-note" title="Unité attendue: ${escapeHtml(safeExpectedUnit)} | Unité entreprise: ${escapeHtml(safeOfferedUnit)}">${escapeHtml(comment)}</span>`
   };
 }
 
@@ -404,13 +405,15 @@ function attachOfferDesigPillDelegates(container) {
     document.addEventListener('click', closeOfferDesigPopover);
   }
 }
-/** Returns true when a company has not answered an item (empty or zero for both qty and pu) */
-function isOfferUnanswered(qty, pu) {
+/** Returns true when a company has not answered an item (empty or zero qty, pu and amount) */
+function isOfferUnanswered(qty, pu, amount = null) {
   const qStr = (qty == null ? '' : String(qty)).trim();
   const pStr = (pu  == null ? '' : String(pu )).trim();
+  const aStr = (amount == null ? '' : String(amount)).trim();
   const qEmpty = qStr === '' || parseFloat(qStr) === 0 || isNaN(parseFloat(qStr));
   const pEmpty = pStr === '' || parseFloat(pStr) === 0 || isNaN(parseFloat(pStr));
-  return qEmpty && pEmpty;
+  const aEmpty = aStr === '' || parseFloat(aStr) === 0 || isNaN(parseFloat(aStr));
+  return qEmpty && pEmpty && aEmpty;
 }
 /** Returns true when an offer has values while MOE has no expected total on that row */
 function isOfferUnexpected(moeHasTotal, qty, pu) {
@@ -432,8 +435,8 @@ function hexToRgba(hex, alpha) {
 /** Apply unanswered style to a DOM cell: border-left solid + transparent bg */
 function applyUnansweredStyle(td, color) {
   if (!color) return;
-  td.style.borderLeft = `3px solid ${color}`;
-  td.style.backgroundColor = hexToRgba(color, 0.15);
+  td.style.setProperty('border-left', `3px solid ${color}`, 'important');
+  td.style.setProperty('background-color', hexToRgba(color, 0.15), 'important');
 }
 /** Remove unanswered style from a DOM cell */
 function removeUnansweredStyle(td) {
@@ -444,6 +447,18 @@ function removeUnansweredStyle(td) {
 function unansweredStyleStr(color) {
   if (!color) return '';
   return `border-left:3px solid ${color};background:${hexToRgba(color, 0.15)};`;
+}
+
+function companyColorFor(cid) {
+  const company = lotCompanies.find(x => String(x.id) === String(cid));
+  return company?.color || '';
+}
+
+function applyCompanyColumnStyle(el, cid, strong = false) {
+  const color = companyColorFor(cid);
+  if (!el || !color) return;
+  el.style.setProperty('border-left', `${strong ? 3 : 2}px solid ${color}`, 'important');
+  el.style.setProperty('background-color', hexToRgba(color, strong ? 0.18 : 0.08), 'important');
 }
 
 function updateSheetLegend() {
@@ -2284,7 +2299,7 @@ async function loadRoundsComparison(){
     // Peupler le selecteur de tour
     const selectRound = qs('#compare-round');
     const prevValue = selectRound?.value || '';
-    selectRound.innerHTML = '<option value="">Selectionner un tour...</option>';
+    selectRound.innerHTML = '<option value="">Sélectionner un tour...</option>';
     for (const round of rounds) {
       selectRound.innerHTML += `<option value="${round.id}">${round.name}</option>`;
     }
@@ -2378,7 +2393,7 @@ async function loadRoundsComparison(){
       grpAnaPrev.colSpan = 3;
       grpAnaPrev.className = 'amount';
       grpAnaPrev.style.cssText = 'background:rgba(255,140,66,0.1);border-left:2px solid var(--accent)';
-      grpAnaPrev.innerHTML = `${icon('search')}Analyse vs tour precedent`;
+      grpAnaPrev.innerHTML = `${icon('search')}Analyse vs tour précédent`;
       headerRow1.appendChild(grpAnaPrev);
 
       const thDelta = document.createElement('th'); thDelta.className = 'amount'; thDelta.textContent = 'Δ Montant';
@@ -3334,10 +3349,10 @@ function setupOptionsSheetControls(){
     createBtn.onclick = async () => {
       if (isVisionneur()) return;
       if (!currentRound?.id) {
-        showNotify({ title: 'Erreur', message: 'Selectionnez un tour avant de creer une option.', type: 'error' });
+        showNotify({ title: 'Erreur', message: 'Sélectionnez un tour avant de créer une option.', type: 'error' });
         return;
       }
-      const design = prompt('Designation de l\'option:');
+      const design = prompt('Désignation de l\'option:');
       if (!design) return;
       try {
         await api(`/options/lot/${currentLot.id}`, {
@@ -3364,7 +3379,7 @@ function setupOptionsSheetControls(){
       if (opt) opt.items = [...(opt.items||[]), { id: res.id, num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null, offers:[] }];
       // Add to model and DOM directly
       const newRow = { item_id: res.id, option_id: optionId, option_designation: opt?.designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
-      for (const c of lotCompanies) newRow.offers[c.id] = { u:'', qty:'', pu:'' };
+      for (const c of lotCompanies) newRow.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
       optionsSheetRows.push(newRow);
       // Remove "aucune option" placeholder if present
       const body = qs('#options-sheet-body');
@@ -4623,6 +4638,7 @@ async function refreshQuestions({ silent = false } = {}){
     
     for (const q of questions) {
       const typeLabel = {
+        'unanswered': `<span style="color:#b45309;font-weight:600">${icon('alert-triangle')}Réponse oubliée</span>`,
         'unit_mismatch': `<span style="color:#6f42c1;font-weight:600">${icon('alert-triangle')}Unité à vérifier</span>`,
         'qty_very_low': `<span style="color:#0d6efd;font-weight:600">${icon('trending-down')}Qté Très Basse</span>`,
         'qty_low': `<span style="color:#0dcaf0;font-weight:600">${icon('trending-down')}Qté Basse</span>`,
@@ -5137,7 +5153,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const itemOffers = (offersByItemId.get(Number(item.id)) || []).map(offer => {
       const hasQty = Number.isFinite(offer.quantity) && offer.quantity !== 0;
       const hasPu = Number.isFinite(offer.unit_price) && offer.unit_price !== 0;
-      const hasAnyValue = hasQty || hasPu;
+      const hasAmount = Number.isFinite(offer.total) && offer.total !== 0;
+      const hasAnyValue = hasQty || hasPu || hasAmount;
       return {
         ...offer,
         isUnanswered: moeHasTotal && !hasAnyValue,
@@ -5402,8 +5419,8 @@ function recalcQuestionsHeaderOffsets() {
 }
 
 function bindQuestionsEditorEvents() {
-  // Auto-save avec le meme pattern que la grille d'edition:
-  // - etat "modifie"
+  // Auto-save avec le même pattern que la grille d'édition:
+  // - état "modifié"
   // - debounce centralise
   // - garde anti-sauvegardes simultanees
   qsa('.question-text-editor').forEach(textarea => {
@@ -5626,7 +5643,7 @@ async function autoSaveQuestionsEditor() {
       await refreshQuestions({ silent: true });
     }
   } catch (err) {
-    console.error('Erreur autosave editeur questions:', err);
+    console.error('Erreur autosave éditeur questions:', err);
   } finally {
     isQuestionSaving = false;
     if (pendingQuestionSaves.size > 0) {
@@ -5690,7 +5707,7 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
   const safeItemId = Number(itemId);
   const safeCompanyId = Number(companyId);
   if (!Number.isFinite(safeItemId) || !Number.isFinite(safeCompanyId)) {
-    throw new Error('Parametres invalides pour la sauvegarde de question');
+    throw new Error('Paramètres invalides pour la sauvegarde de question');
   }
 
   let result;
@@ -6197,6 +6214,10 @@ function renderOptionsCompareTable(companies, entrepriseMode){
       td.dataset.c = String(c);
       if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
       if (col.wide) td.style.minWidth = '320px';
+      if (col.key.startsWith('c.') && col.key.endsWith('.u')) {
+        const [, cid] = col.key.split('.');
+        applyCompanyColumnStyle(td, cid);
+      }
       td.textContent = optionsValueForCell(data, col.key);
       tr.appendChild(td);
     }
@@ -6209,7 +6230,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
       const optionId = lastRow?.option_id || lotOptions[0]?.id;
       if (!optionId) break;
       const blank = { item_id:null, option_id:optionId, option_designation: lotOptions.find(o=>o.id===optionId)?.designation||'', num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-      for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+      for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
       optionsSheetRows.push(blank);
       const rIndex = optionsSheetRows.length - 1;
       appendOptionsRowDOM(rIndex, blank);
@@ -6355,7 +6376,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
               body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null }
             });
             const newItem = { item_id: res.id, option_id: optionId, option_designation: optionsSheetRows[r]?.option_designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
-            for (const co of lotCompanies) newItem.offers[co.id] = { u:'', qty:'', pu:'' };
+            for (const co of lotCompanies) newItem.offers[co.id] = { u:'', qty:'', pu:'', mt:'' };
             optionsSheetRows.push(newItem);
             appendOptionsRowDOM(optionsSheetRows.length - 1, newItem);
             // Update lotOptions model
@@ -6442,6 +6463,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
       th.textContent = companyNameFor(cid);
       th.colSpan = 4;
       th.classList.add('company-col');
+      applyCompanyColumnStyle(th, cid, true);
       tr1.appendChild(th);
     }
     head.appendChild(tr1);
@@ -6451,7 +6473,11 @@ function renderOptionsCompareTable(companies, entrepriseMode){
     for (let i=actualBaseCount; i<optionsColModel.length; i++){
       const th = document.createElement('th');
       th.textContent = headerLabelFor(optionsColModel[i].key);
-      if ((i - actualBaseCount) % 4 === 0) th.classList.add('company-border');
+      if ((i - actualBaseCount) % 4 === 0) {
+        th.classList.add('company-border');
+        const [, cid] = optionsColModel[i].key.split('.');
+        applyCompanyColumnStyle(th, cid);
+      }
       tr2.appendChild(th);
     }
     head.appendChild(tr2);
@@ -6499,6 +6525,7 @@ function buildSheetModel(raw){
         u: o.unit ?? '', 
         qty: o.qty != null ? String(o.qty) : '', 
         pu: o.unit_price != null ? String(o.unit_price) : '',
+        mt: o.amount != null ? String(o.amount) : '',
         comment: o.comment ?? ''
       };
     }
@@ -6507,7 +6534,7 @@ function buildSheetModel(raw){
 
   if (sheetRows.length === 0) {
     const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
     sheetRows.push(blank);
   }
 
@@ -6567,7 +6594,7 @@ function companyNameFor(cid){
 
 function createBlankSheetRow(){
   const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-  for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+  for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
   return blank;
 }
 
@@ -6611,6 +6638,7 @@ function renderSheetInitial(){
     th.textContent = companyNameFor(cid);
     th.colSpan = 4;
     th.classList.add('company-col');
+    applyCompanyColumnStyle(th, cid, true);
     tr1.appendChild(th);
   }
   head.appendChild(tr1);
@@ -6620,7 +6648,11 @@ function renderSheetInitial(){
   for (let i=actualBaseCount; i<colModel.length; i++){
     const th = document.createElement('th');
     th.textContent = headerLabelFor(colModel[i].key);
-    if ((i - actualBaseCount) % 4 === 0) th.classList.add('company-border');
+    if ((i - actualBaseCount) % 4 === 0) {
+      th.classList.add('company-border');
+      const [, cid] = colModel[i].key.split('.');
+      applyCompanyColumnStyle(th, cid);
+    }
     tr2.appendChild(th);
   }
   head.appendChild(tr2);
@@ -6660,14 +6692,18 @@ function appendRowDOM(rIndex, data){
     td.dataset.c = String(c);
     if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
     if (col.wide) td.style.minWidth = '320px';
+    if (col.key.startsWith('c.')) {
+      const [, cid, sub] = col.key.split('.');
+      if (sub === 'u') applyCompanyColumnStyle(td, cid);
+    }
     if (col.key.startsWith('c.') && col.key.endsWith('.mt')) {
       const [, cid] = col.key.split('.');
       const o = data.offers?.[cid] || {};
       const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
-      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu, o.mt);
       const isUnexpected = isOfferUnexpected(moeHasTotal, o.qty, o.pu);
       const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : (o.comment || '');
-      td.innerHTML = amountCellHtml(o.qty, o.pu, cellComment);
+      td.innerHTML = amountCellHtml(o.qty, o.pu, cellComment, o.mt);
       if (isUnanswered) {
         applyUnansweredStyle(td, unansweredConfig.color);
         if (unansweredConfig.comment) td.title = unansweredConfig.comment;
@@ -6679,7 +6715,7 @@ function appendRowDOM(rIndex, data){
       const [, cid] = col.key.split('.');
       const o = data.offers?.[cid] || {};
       const moeHasTotal = parseNum(data.moe?.qty) > 0 && parseNum(data.moe?.pu) > 0;
-      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu);
+      const isUnanswered = moeHasTotal && isOfferUnanswered(o.qty, o.pu, o.mt);
       const isUnexpected = isOfferUnexpected(moeHasTotal, o.qty, o.pu);
       td.textContent = valueForCell(data, col.key);
       if (isUnanswered) {
@@ -6707,7 +6743,7 @@ function valueForCell(row, key){
   if (key.startsWith('c.')){
     const [, cid, sub] = key.split('.');
     const o = row.offers?.[cid] || {};
-    if (sub === 'mt') return amountOf(o.qty, o.pu);
+    if (sub === 'mt') return amountOf(o.qty, o.pu) || (o.mt ?? '');
     return o[sub] ?? '';
   }
   return '';
@@ -6718,7 +6754,7 @@ function ensureRows(n){
   // compléter sheetRows + DOM jusqu’à n lignes
   while (qsa('#sheet-body tr').length < n) {
     const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+    for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
     sheetRows.push(blank);
     const rIndex = sheetRows.length - 1;
     appendRowDOM(rIndex, blank);
@@ -6784,10 +6820,11 @@ function recalcRowAmountsRow(r){
       const mt  = getCell(r,ciMt );
       if (mt) {
         const existingComment = sheetRows[r]?.offers?.[c.id]?.comment || '';
-        const isUnanswered = moeHasTotal && isOfferUnanswered(qty, pu);
+        const existingAmount = sheetRows[r]?.offers?.[c.id]?.mt || '';
+        const isUnanswered = moeHasTotal && isOfferUnanswered(qty, pu, existingAmount);
         const isUnexpected = isOfferUnexpected(moeHasTotal, qty, pu);
         const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : existingComment;
-        mt.innerHTML = amountCellHtml(qty, pu, cellComment);
+        mt.innerHTML = amountCellHtml(qty, pu, cellComment, existingAmount);
         if (isUnanswered) {
           applyUnansweredStyle(mt, unansweredConfig.color);
           mt.title = unansweredConfig.comment || '';
@@ -6815,7 +6852,7 @@ function recalcRowAmountsRow(r){
           if (uCell) {
             if (isUnanswered) { applyUnansweredStyle(uCell, unansweredConfig.color); uCell.title = unansweredConfig.comment || ''; }
             else if (isUnexpected) { applyUnansweredStyle(uCell, unexpectedAnswerMarker.color); uCell.title = unexpectedAnswerMarker.label; }
-            else { removeUnansweredStyle(uCell); uCell.title = ''; }
+            else { removeUnansweredStyle(uCell); applyCompanyColumnStyle(uCell, c.id); uCell.title = ''; }
           }
         }
       }
@@ -7490,7 +7527,7 @@ function renderLotCompanies(){
               for (const r of sheetRows) delete r.offers[companyId];
               if (sheetRows.length === 0) {
                 const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-                for (const lc of lotCompanies) blank.offers[lc.id] = { u:'', qty:'', pu:'' };
+                for (const lc of lotCompanies) blank.offers[lc.id] = { u:'', qty:'', pu:'', mt:'' };
                 sheetRows.push(blank);
               }
               renderLotCompanies();
@@ -7541,7 +7578,7 @@ function deleteRow(rIndex){
         // Si plus de lignes, ajouter une ligne vide
         if (sheetRows.length === 0) {
           const blank = { item_id:null, num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-          for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'' };
+          for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
           sheetRows.push(blank);
         }
         
@@ -7613,6 +7650,7 @@ async function autoSaveGrid(){
           u:  getByKey(base+'u'),
           qty:getByKey(base+'qty'),
           pu: offerPu,
+          mt: getByKey(base+'mt'),
         };
       }
       rows.push(row);
@@ -7712,6 +7750,7 @@ async function saveGrid(){
         u:  getByKey(base+'u'),
         qty:getByKey(base+'qty'),
         pu: offerPu,
+        mt: getByKey(base+'mt'),
       };
     }
     rows.push(row);
@@ -11702,25 +11741,25 @@ function annotateDynamicHelp(){
   setHelp(document.getElementById('export-lot-compare-options'), 'Ouvrir les options d\'export du tableau comparatif du lot');
   setHelp(document.getElementById('open-phase-export-modal'), 'Ouvrir les options d\'export du projet depuis la phase');
 
-  setDemoTip(document.querySelector('[data-tab="tab-projects"]'), 'Point de depart: ouvrez le projet demo pour parcourir les fonctionnalites.');
-  setDemoTip(document.querySelector('[data-tab="tab-rounds"]'), 'Les tours representent les phases de consultation: ouverture, negociation, ajustements.');
-  setDemoTip(document.getElementById('create-project'), 'Cree un projet d essai. En demo, il reste isole des vrais dossiers.');
-  setDemoTip(document.getElementById('add-round'), 'Ajoute un nouveau tour pour simuler une phase de negociation.');
-  setDemoTip(document.getElementById('export-rao'), 'Genere le rapport d analyse d offres pour presenter la decision.');
-  setDemoTip(document.getElementById('compare-round'), 'Choisissez un tour pour comparer les montants avec les phases precedentes.');
-  setDemoTip(document.getElementById('rounds-compare-tab-compare'), 'Vue synthese: compare les montants par lot, entreprise et tour.');
-  setDemoTip(document.getElementById('rounds-compare-tab-options'), 'Les options servent a tester des variantes hors base: PV, prestations complementaires, variantes techniques.');
-  setDemoTip(document.getElementById('rounds-compare-tab-simulation'), 'La simulation permet de retenir virtuellement des entreprises par lot avant decision.');
-  setDemoTip(document.getElementById('add-simulation'), 'Ajoute un scenario pour comparer plusieurs choix d attribution.');
+  setDemoTip(document.querySelector('[data-tab="tab-projects"]'), 'Point de départ: ouvrez le projet démo pour parcourir les fonctionnalités.');
+  setDemoTip(document.querySelector('[data-tab="tab-rounds"]'), 'Les tours représentent les phases de consultation: ouverture, négociation, ajustements.');
+  setDemoTip(document.getElementById('create-project'), 'Crée un projet d’essai. En démo, il reste isolé des vrais dossiers.');
+  setDemoTip(document.getElementById('add-round'), 'Ajoute un nouveau tour pour simuler une phase de négociation.');
+  setDemoTip(document.getElementById('export-rao'), 'Génère le rapport d’analyse d’offres pour présenter la décision.');
+  setDemoTip(document.getElementById('compare-round'), 'Choisissez un tour pour comparer les montants avec les phases précédentes.');
+  setDemoTip(document.getElementById('rounds-compare-tab-compare'), 'Vue synthèse: compare les montants par lot, entreprise et tour.');
+  setDemoTip(document.getElementById('rounds-compare-tab-options'), 'Les options servent à tester des variantes hors base: PV, prestations complémentaires, variantes techniques.');
+  setDemoTip(document.getElementById('rounds-compare-tab-simulation'), 'La simulation permet de retenir virtuellement des entreprises par lot avant décision.');
+  setDemoTip(document.getElementById('add-simulation'), 'Ajoute un scénario pour comparer plusieurs choix d’attribution.');
   setDemoTip(document.getElementById('export-rounds-compare-options'), 'Exporte la comparaison des tours pour partage interne ou client.');
   setDemoTip(document.getElementById('add-lot'), 'Ajoute un lot de travaux dans la phase courante.');
   setDemoTip(document.getElementById('mode-edit'), 'Mode saisie: ajustez MOE et offres directement dans la grille.');
-  setDemoTip(document.getElementById('mode-compare'), 'Mode comparatif: visualisez les ecarts, totaux et anomalies.');
-  setDemoTip(document.getElementById('options-create-btn'), 'Cree une option commerciale ou technique rattachee au lot courant.');
-  setDemoTip(document.getElementById('options-add-btn'), 'Ajoute des lignes dans l option selectionnee, comme une mini-DPGF.');
-  setDemoTip(document.getElementById('generate-questions'), 'Genere les questions entreprises a partir des ecarts detectes.');
-  setDemoTip(document.getElementById('export-summary-excel'), 'Exporte le recapitulatif du tour courant en Excel.');
-  setDemoTip(document.getElementById('export-data-options'), 'Exporte les donnees du lot ou les transmet par email.');
+  setDemoTip(document.getElementById('mode-compare'), 'Mode comparatif: visualisez les écarts, totaux et anomalies.');
+  setDemoTip(document.getElementById('options-create-btn'), 'Crée une option commerciale ou technique rattachée au lot courant.');
+  setDemoTip(document.getElementById('options-add-btn'), 'Ajoute des lignes dans l’option sélectionnée, comme une mini-DPGF.');
+  setDemoTip(document.getElementById('generate-questions'), 'Génère les questions entreprises à partir des écarts détectés.');
+  setDemoTip(document.getElementById('export-summary-excel'), 'Exporte le récapitulatif du tour courant en Excel.');
+  setDemoTip(document.getElementById('export-data-options'), 'Exporte les données du lot ou les transmet par email.');
   setDemoTip(document.getElementById('export-lot-compare-options'), 'Exporte le comparatif du lot ouvert.');
 }
 

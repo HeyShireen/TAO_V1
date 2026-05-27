@@ -167,7 +167,7 @@
 
     const subtitle = qs('.max-480 > p.muted');
     if (subtitle) {
-      subtitle.textContent = 'Acces beta : le compte est deja pre-rempli, cliquez simplement sur Se connecter.';
+      subtitle.textContent = 'Accès bêta : le compte est déjà prérempli, cliquez simplement sur Se connecter.';
     }
 
     tabRegister?.classList.add('hidden');

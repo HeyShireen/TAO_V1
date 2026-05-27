@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-05-26T16:27:13",
+  "source": "https://demo.ao-link.fr",
+  "docx": "docs\\formation_aolink\\Formation_AO_Link.docx",
+  "markdown": "docs\\formation_aolink\\Formation_AO_Link.md",
+  "captures": [
+    "01_connexion_compte_demo.png",
+    "02_liste_projets.png",
+    "03_modal_edition_projet.png",
+    "04_modal_partage_projet.png",
+    "05_liste_tours.png",
+    "06_comparaison_tours.png",
+    "07_tour_liste_lots.png",
+    "08_tour_config_questions.png",
+    "10_lot_donnees_comparatif.png",
+    "11_lot_donnees_edition.png",
+    "12_lot_questions.png",
+    "13_lot_config_questions.png",
+    "14_parametres.png"
+  ]
+}

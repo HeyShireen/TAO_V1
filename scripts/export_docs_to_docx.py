@@ -21,7 +21,7 @@ SCHEMA_ASSETS = {
         "path": ROOT / "assets" / "schemas" / "schema_donnees_aolink.png",
         "target": "media/schema_donnees_aolink.png",
         "rid": "rIdSchemaDonnees",
-        "caption": "Figure - Schema de donnees AO Link",
+        "caption": "Figure - Schéma de données AO Link",
     },
     "schema_navigation": {
         "path": ROOT / "assets" / "schemas" / "schema_navigation_aolink.png",
@@ -86,32 +86,32 @@ def code_summary_xml(lines: list[str], language: str = "") -> list[str]:
         return []
 
     joined = "\n".join(useful_lines).lower()
-    details = []
+    détails = []
     if "npm" in joined or "node" in joined:
-        details.append("Ce bloc concerne l'environnement Node.js ou les dependances applicatives.")
+        détails.append("Ce bloc concerne l'environnement Node.js ou les dépendances applicatives.")
     if "sql" in language.lower() or "select " in joined or "create table" in joined:
-        details.append("Ce bloc illustre une requete ou une structure de base de donnees.")
+        détails.append("Ce bloc illustre une requete ou une structure de Base de données.")
     if "nginx" in joined or "server_name" in joined:
-        details.append("Ce bloc decrit une configuration serveur ou proxy.")
+        détails.append("Ce bloc décrit une configuration serveur ou proxy.")
     if "jwt" in joined or "csrf" in joined or "cors" in joined:
-        details.append("Ce bloc concerne une mesure de securite applicative.")
+        détails.append("Ce bloc concerne une mesure de sécurité applicative.")
     if "pm2" in joined or "systemctl" in joined or "certbot" in joined:
-        details.append("Ce bloc correspond a une commande d'exploitation ou de deploiement.")
-    if not details:
-        details.append("Ce bloc technique sert d'exemple de configuration, de commande ou de logique applicative.")
+        détails.append("Ce bloc correspond à une commande d'exploitation ou de déploiement.")
+    if not détails:
+        détails.append("Ce bloc technique sert d'exemple de configuration, de commande ou de logique applicative.")
 
-    body = [paragraph_xml("Extrait technique resume", "Heading3")]
-    body.extend(bullet_xml(detail) for detail in details)
+    body = [paragraph_xml("Extrait technique résume", "Heading3")]
+    body.extend(bullet_xml(détail) for détail in détails)
 
     preview = useful_lines[:3]
     if preview:
-        body.append(paragraph_xml("Elements importants a retenir :", "Heading3"))
+        body.append(paragraph_xml("Éléments importants a retenir :", "Heading3"))
         for line in preview:
             if len(line) > 130:
                 line = line[:127] + "..."
             body.append(bullet_xml(line))
     if len(useful_lines) > len(preview):
-        body.append(paragraph_xml(f"Le bloc complet contient {len(useful_lines)} lignes techniques. Il a ete resume pour privilegier la lecture du livrable."))
+        body.append(paragraph_xml(f"Le bloc complet contient {len(useful_lines)} lignes techniques. Il a été résume pour privilegier la lecture du livrable."))
     return body
 
 
@@ -196,10 +196,14 @@ def table_xml(rows: list[list[str]], has_header: bool = True) -> str:
 
 def figure_xml(asset_key: str) -> list[str]:
     asset = SCHEMA_ASSETS[asset_key]
+    return image_asset_xml(asset)
+
+
+def image_asset_xml(asset: dict) -> list[str]:
     rid = asset["rid"]
     caption = asset["caption"]
-    cx = 6_400_000
-    cy = 3_600_000
+    cx = asset.get("cx", 6_400_000)
+    cy = asset.get("cy", 3_600_000)
     image = f"""
 <w:p>
   <w:pPr><w:jc w:val="center"/></w:pPr>
@@ -230,20 +234,20 @@ def mermaid_schema_xml(code: str, source: Path) -> list[str]:
     if "erdiagram" in lowered or "schema_base_donnees" in source_name:
         return figure_xml("schema_donnees") + [
             paragraph_xml(
-                "Ce schema presente les principales familles de donnees manipulees par AO Link. "
-                "Il aide a comprendre comment un projet se decompose en lots, articles, offres, tours et questions."
+                "Ce schéma présente les principales familles de données manipulees par AO Link. "
+                "Il aide à comprendre comment un projet se decompose en lots, articles, offres, tours et questions."
             )
         ]
     if "sequencediagram" in lowered:
         return figure_xml("schema_cycle") + [
             paragraph_xml(
-                "Ce parcours resume l'enchainement d'un usage classique, depuis la connexion jusqu'a l'analyse comparative."
+                "Ce parcours résume l'enchainement d'un usage classique, depuis la connexion jusqu'à l'analyse comparative."
             )
         ]
     if "flowchart" in lowered or "guide_navigation" in source_name:
         return figure_xml("schema_navigation") + [
             paragraph_xml(
-                "Ce schema remplace le diagramme technique Mermaid afin de rendre la navigation plus lisible dans le livrable Word."
+                "Ce schéma remplace le diagramme technique Mermaid afin de rendre la navigation plus lisible dans le livrable Word."
             )
         ]
     return code_summary_xml(code.splitlines(), "mermaid")
@@ -269,7 +273,7 @@ def page_break_xml() -> str:
     return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
 
 
-def cover_page_xml(title: str, subtitle: str | None = None, details: list[str] | None = None) -> list[str]:
+def cover_page_xml(title: str, subtitle: str | None = None, détails: list[str] | None = None) -> list[str]:
     body = [
         paragraph_xml(""),
         paragraph_xml(""),
@@ -286,8 +290,8 @@ def cover_page_xml(title: str, subtitle: str | None = None, details: list[str] |
             paragraph_xml(""),
         ]
     )
-    for detail in details or []:
-        body.append(paragraph_xml(detail))
+    for détail in détails or []:
+        body.append(paragraph_xml(détail))
     body.append(page_break_xml())
     return body
 
@@ -442,10 +446,11 @@ def document_xml(body_parts: list[str]) -> str:
 </w:document>"""
 
 
-def template_document_relationships_xml() -> str:
+def template_document_relationships_xml(extra_assets: list[dict] | None = None) -> str:
+    assets = [*SCHEMA_ASSETS.values(), *(extra_assets or [])]
     image_relationships = "".join(
         f'  <Relationship Id="{asset["rid"]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{asset["target"]}"/>\n'
-        for asset in SCHEMA_ASSETS.values()
+        for asset in assets
         if asset["path"].exists()
     )
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -490,7 +495,8 @@ def copy_template_part(template: zipfile.ZipFile, docx: zipfile.ZipFile, part_na
         pass
 
 
-def write_docx(path: Path, body_parts: list[str]) -> None:
+def write_docx(path: Path, body_parts: list[str], extra_assets: list[dict] | None = None) -> None:
+    extra_assets = extra_assets or []
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as docx:
         if TEMPLATE_DOCX.exists():
             try:
@@ -521,7 +527,10 @@ def write_docx(path: Path, body_parts: list[str]) -> None:
                     for asset in SCHEMA_ASSETS.values():
                         if asset["path"].exists():
                             docx.writestr(f'word/{asset["target"]}', asset["path"].read_bytes())
-                    docx.writestr("word/_rels/document.xml.rels", template_document_relationships_xml())
+                    for asset in extra_assets:
+                        if asset["path"].exists():
+                            docx.writestr(f'word/{asset["target"]}', asset["path"].read_bytes())
+                    docx.writestr("word/_rels/document.xml.rels", template_document_relationships_xml(extra_assets))
                 docx.writestr("word/document.xml", document_xml(body_parts))
                 return
             except zipfile.BadZipFile:
@@ -533,6 +542,8 @@ def write_docx(path: Path, body_parts: list[str]) -> None:
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
@@ -550,11 +561,20 @@ def write_docx(path: Path, body_parts: list[str]) -> None:
         theme = template_part_bytes("word/theme/theme1.xml")
         if theme:
             docx.writestr("word/theme/theme1.xml", theme)
+        for asset in extra_assets:
+            if asset["path"].exists():
+                docx.writestr(f'word/{asset["target"]}', asset["path"].read_bytes())
+        image_relationships = "".join(
+            f'  <Relationship Id="{asset["rid"]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{asset["target"]}"/>\n'
+            for asset in extra_assets
+            if asset["path"].exists()
+        )
         docx.writestr(
             "word/_rels/document.xml.rels",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
+{image_relationships}
 </Relationships>""",
         )
 

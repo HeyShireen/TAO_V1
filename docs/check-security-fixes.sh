@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================================================
-# 🔒 VÉRIFICATION DES CORRECTIONS DE SÉCURITÉ CRITIQUES
+# 🔒 VÉRIFICATION DES CORRECTIONS de sécurité CRITIQUES
 # ============================================================================
 # Script pour valider que toutes les corrections critiques sont en place
 
@@ -49,8 +49,8 @@ check_file "server/src/app/server.js" "ALLOWED_ORIGINS doit être défini en pro
 echo ""
 
 # 2. JWT Blacklist
-echo "2️⃣  JWT Token Revocation..."
-check_file "server/src/app/middleware/auth.js" "revokeToken" "JWT: Fonction de revocation du token"
+echo "2️⃣  JWT Token révocation..."
+check_file "server/src/app/middleware/auth.js" "revokeToken" "JWT: Fonction de révocation du token"
 check_file "server/src/app/middleware/auth.js" "tokenBlacklist" "JWT: Token blacklist global"
 echo ""
 
@@ -62,7 +62,7 @@ echo ""
 
 # 4. Logout sécurisé
 echo "4️⃣  Secure Logout..."
-check_file "server/src/app/routes/auth/index.js" "revokeToken" "Logout: Token revocation"
+check_file "server/src/app/routes/auth/index.js" "revokeToken" "Logout: Token révocation"
 check_file "server/src/app/routes/auth/index.js" "requireAuth" "Logout: Authentification requise"
 echo ""
 

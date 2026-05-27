@@ -139,7 +139,7 @@ router.post('/lot/:lotId', isResponsableOrAdmin, async (req, res) => {
       [lotId, round_id, cleanDesignation]
     );
     if (exists.rowCount > 0) {
-      return res.status(409).json({ error: 'Une option avec cette designation existe deja pour ce tour.' });
+      return res.status(409).json({ error: 'Une option avec cette désignation existe déjà pour ce tour.' });
     }
 
     const result = await query(

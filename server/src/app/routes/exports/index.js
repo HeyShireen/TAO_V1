@@ -529,8 +529,8 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
 
   ws.getCell('D1').value = lot.project_name || 'Nom du projet';
   ws.getCell('D2').value = lot.reference || 'Déscription de l\'affaire';
-  ws.getCell('D3').value = lot.client || 'Maitre d\'ouvrage';
-  ws.getCell('D4').value = lot.location || 'Maitre d\'œuvre';
+  ws.getCell('D3').value = lot.client || 'Maître d\'ouvrage';
+  ws.getCell('D4').value = lot.location || 'Maître d\'œuvre';
   ws.getCell('D5').value = 'INDICE : 0';
   ws.getCell('D6').value = `PHASE D'ETUDE : ${lot.study_phase || round?.name || ''}`.trim();
   ws.getCell('D7').value = new Date();
@@ -1135,7 +1135,7 @@ async function buildRoundsComparisonWorkbook({
       if (sheet.name !== 'RECAP') workbook.removeWorksheet(sheet.id);
     }
   } catch (err) {
-    console.warn('Template recapitulatif introuvable, generation depuis un classeur vierge:', err.message);
+    console.warn('Template récapitulatif introuvable, génération depuis un classeur vierge:', err.message);
   }
 
   workbook.creator = 'AO Link';
@@ -2236,8 +2236,8 @@ function applyRaoBusinessPlaceholders(documentXml, { project, lots, rounds, comp
     questionsByCompany.set(Number(q.company_id), (questionsByCompany.get(Number(q.company_id)) || 0) + 1);
   }
   const retainedCompany = companyTotals[0] || null;
-  const variantsPlaceholder = '[A COMPLETER - variantes non renseignees dans TAO]';
-  const unknownPlaceholder = '[A COMPLETER]';
+  const variantsPlaceholder = '[À COMPLÉTER - variantes non renseignées dans TAO]';
+  const unknownPlaceholder = '[À COMPLÉTER]';
   const consultationLotsText = lotLabels.length ? lotLabels.join('\n') : '[LOT 1] : [INTITULÉ DU LOT 1]';
   const designationDate = latestRound ? offerAnalysisDate : '[DATE]';
 
@@ -2266,7 +2266,7 @@ function applyRaoBusinessPlaceholders(documentXml, { project, lots, rounds, comp
     ['[MONTANT €]', bestOfferTotal ? formatMoneyFr(bestOfferTotal) : '[MONTANT €]'],
     ['[+/- X %]', deltaBestPct],
     ['[+/- MONTANT €]', deltaBest !== null ? formatMoneyFr(deltaBest) : '[+/- MONTANT €]'],
-    ['[PRÉSENTATION GÉNÉRALE DE L’OFFRE]', 'Analyse qualitative a completer par la MOE. Les montants et questions disponibles sont repris dans les tableaux TAO.'],
+    ['[PRÉSENTATION GÉNÉRALE DE L’OFFRE]', 'Analyse qualitative à compléter par la MOE. Les montants et questions disponibles sont repris dans les tableaux TAO.'],
     ['[CONFORME / NON CONFORME / RÉSERVES — préciser]', 'A confirmer apres analyse technique.'],
     ['[DURÉE D’EXÉCUTION]', '[DURÉE D’EXÉCUTION]'],
     ['[OUI / NON – préciser]', '[OUI / NON – préciser]'],
@@ -2274,13 +2274,13 @@ function applyRaoBusinessPlaceholders(documentXml, { project, lots, rounds, comp
     ['[POSTE / VARIANTE]', variantsPlaceholder],
     ['[INTITULÉ]', variantsPlaceholder],
     ['[DESCRIPTION]', variantsPlaceholder],
-    ['[FAVORABLE / DÉFAVORABLE / À ÉTUDIER]', '[A COMPLETER - avis MOE]'],
+    ['[FAVORABLE / DÉFAVORABLE / À ÉTUDIER]', '[À COMPLÉTER - avis MOE]'],
     ['[JUSTIFICATION]', retainedCompany ? `${retainedCompany.name} est actuellement l'offre la mieux disante sur les montants renseignes dans TAO.` : '[JUSTIFICATION]'],
     ['[JUSTIFICATION TECHNIQUE ET FINANCIÈRE]', retainedCompany ? `Proposition a confirmer apres analyse technique. A date, ${retainedCompany.name} presente le meilleur montant renseigne (${formatMoneyFr(retainedCompany.total)} HT).` : '[JUSTIFICATION TECHNIQUE ET FINANCIÈRE]'],
-    ['[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]', questions?.length ? `${questions.length} question(s) / reserve(s) generee(s) dans TAO, a traiter avant finalisation.` : '[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]'],
-    ['[POINT D’ATTENTION 1 — risque planning, dépendance entre lots, validation MOA…]', '[A COMPLETER - point planning / interfaces]'],
-    ['[POINT D’ATTENTION 2]', '[A COMPLETER - point contractuel / technique]'],
-    ['[PLANNING DE DÉSIGNATION ET DE MISE AU POINT DES MARCHÉS]', `Designation cible : ${designationDate}. Planning de mise au point des marches a completer.`],
+    ['[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]', questions?.length ? `${questions.length} question(s) / réserve(s) générée(s) dans TAO, à traiter avant finalisation.` : '[POINTS DE VIGILANCE TRANSVERSAUX — clauses, délais, sous-traitance, garanties, etc.]'],
+    ['[POINT D’ATTENTION 1 — risque planning, dépendance entre lots, validation MOA…]', '[À COMPLÉTER - point planning / interfaces]'],
+    ['[POINT D’ATTENTION 2]', '[À COMPLÉTER - point contractuel / technique]'],
+    ['[PLANNING DE DÉSIGNATION ET DE MISE AU POINT DES MARCHÉS]', `Désignation cible : ${designationDate}. Planning de mise au point des marchés à compléter.`],
     ['[OPÉRATION DE RÉFÉRENCE 1]', '[OPÉRATION DE RÉFÉRENCE 1]'],
     ['[OPÉRATION DE RÉFÉRENCE 2]', '[OPÉRATION DE RÉFÉRENCE 2]'],
     ['[À COMMENTER]', unknownPlaceholder],
@@ -2302,8 +2302,8 @@ function applyRaoBusinessPlaceholders(documentXml, { project, lots, rounds, comp
     const delta = total && totalMoe ? total - totalMoe : null;
     const deltaPct = delta !== null && totalMoe ? `${delta >= 0 ? '+' : ''}${((delta / totalMoe) * 100).toFixed(1).replace('.', ',')} %` : '[+/- X %]';
     replacements.set(`[ENTREPRISE ${i + 1}]`, name);
-    replacements.set(`[POINT FORT ${i + 1}]`, '[A COMPLETER - point fort]');
-    replacements.set(`[POINT DE VIGILANCE ${i + 1}]`, questionsByCompany.get(Number(company?.id)) ? `${questionsByCompany.get(Number(company.id))} question(s) / reserve(s) identifiee(s) dans TAO.` : '[POINT DE VIGILANCE A COMPLETER]');
+    replacements.set(`[POINT FORT ${i + 1}]`, '[À COMPLÉTER - point fort]');
+    replacements.set(`[POINT DE VIGILANCE ${i + 1}]`, questionsByCompany.get(Number(company?.id)) ? `${questionsByCompany.get(Number(company.id))} question(s) / réserve(s) identifiée(s) dans TAO.` : '[POINT DE VIGILANCE À COMPLÉTER]');
     replacements.set(`[MONTANT OFFRE ENTREPRISE ${i + 1}]`, total ? formatMoneyFr(total) : '[MONTANT €]');
     replacements.set(`${name} : [MONTANT €] – écart vs estimation MOE : [+/- X %]`, `${name} : ${total ? formatMoneyFr(total) : '[MONTANT €]'} - ecart vs estimation MOE : ${deltaPct}`);
   }
@@ -2349,11 +2349,11 @@ function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals,
     ['Variable', 'Valeur'],
     ['Nom affaire', raoValue(project.name, '{{NOM_AFFAIRE}}')],
     ['Reference', raoValue(project.reference, '{{REFERENCE_AFFAIRE}}')],
-    ['Maitre d\'ouvrage / Client', raoValue(project.client, '{{MAITRE_OUVRAGE}}')],
+    ['Maître d\'ouvrage / Client', raoValue(project.client, '{{MAITRE_OUVRAGE}}')],
     ['Localisation', raoValue(project.location, '{{ADRESSE_OPERATION}}')],
     ['Phase d\'etude', raoValue(project.study_phase || latestRound?.name, '{{PHASE_ETUDE}}')],
     ['Date d\'etude', raoValue(formatDateFr(project.study_date), '{{DATE_ETUDE}}')],
-    ['Date edition RAO', formatDateFr(new Date())],
+    ['Date édition RAO', formatDateFr(new Date())],
     ['Auteur(s)', raoValue('', '{{AUTEURS_RAO}}')],
     ['Verificateur(s)', raoValue('', '{{VERIFICATEURS_RAO}}')],
     ['Destinataires', raoValue('', '{{DESTINATAIRES_RAO}}')],
@@ -2421,7 +2421,7 @@ function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals,
     wordParagraph(wordRun('DONNEES TAO GENEREES', { bold: true }), { style: 'Titre1', spacingAfter: 180 }),
     wordParagraph([
       wordRun('Les champs surlignes en jaune sont des variables metier non encore disponibles dans TAO. '),
-      wordRun('Ils restent volontairement visibles pour etre completes ou raccordes plus tard.', { color: '9C6500', highlight: true })
+      wordRun('Ils restent volontairement visibles pour être complétés ou raccordés plus tard.', { color: '9C6500', highlight: true })
     ], { spacingAfter: 180 }),
     wordParagraph(wordRun('Variables projet', { bold: true }), { style: 'Titre2' }),
     toTable(projectRows),

@@ -3,3 +3,13 @@
 /annexes_word_mis_en_forme/
 /livrables_word/
 /livrables_word_mis_en_forme/
+
+# Documentation generee en formats Word/Office
+/docs/**/*.doc
+/docs/**/*.docx
+/docs/**/*.dot
+/docs/**/*.dotx
+/docs/**/*.rtf
+/docs/**/*.odt
+~$*.doc
+~$*.docx

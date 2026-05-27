@@ -1,6 +1,6 @@
-# Schema de donnees PostgreSQL
+# Schéma de données PostgreSQL
 
-Documentation consolidee depuis `server/src/app/schema.sql` et les migrations `server/src/app/migrations/*.sql`.
+Documentation consolidee depuis `server/src/app/Schéma.sql` et les migrations `server/src/app/migrations/*.sql`.
 
 ## Vue d'ensemble
 
@@ -27,49 +27,49 @@ erDiagram
   generated_questions }o--|| companies : concerns
 ```
 
-Logique metier importante :
+Logique métier importante :
 
-- Les `projects` representent les affaires.
-- Les `lots` appartiennent a un projet.
+- Les `projects` représentent les affaires.
+- Les `lots` appartiennent à un projet.
 - Les `items` sont les lignes DPGF d'un lot. Depuis la migration 006, ils sont partages entre les tours.
 - Les `moe_items` portent l'estimation MOE par ligne DPGF. Ils sont aussi partages entre les tours.
-- Les `rounds` representent les phases ou tours de consultation d'un projet.
-- Les `offers` sont les reponses des entreprises. Elles sont specifiques a un `round_id`.
+- Les `rounds` représentent les phases ou tours de consultation d'un projet.
+- Les `offers` sont les réponses des entreprises. Elles sont spécifiques à un `round_id`.
 - Les `companies` sont associees aux lots via `lot_companies`.
 - Les `generated_questions` stockent les fiches questions generees ou manuelles, par lot, tour, entreprise et ligne ou option.
-- Les `options` representent des mini-lots optionnels, avec leurs propres lignes, MOE et offres.
+- Les `options` représentent des mini-lots optionnels, avec leurs propres lignes, MOE et offres.
 
 ## Cycle d'initialisation
 
-Au demarrage, `ensureSchema()` dans `server/src/app/db.js` :
+Au démarrage, `ensureSchema()` dans `server/src/app/db.js` :
 
-1. execute `server/src/app/schema.sql` ;
-2. cree la table technique `migrations` si besoin ;
+1. execute `server/src/app/Schéma.sql` ;
+2. crée la table technique `migrations` si besoin ;
 3. execute les migrations SQL triees par nom ;
-4. cree ou promeut un administrateur si `ADMIN_EMAIL` et `ADMIN_PASSWORD` sont definis.
+4. crée ou promeut un administrateur si `ADMIN_EMAIL` et `ADMIN_PASSWORD` sont definis.
 
 La table `migrations` contient :
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant technique |
 | `name` | `TEXT UNIQUE NOT NULL` | Nom du fichier de migration execute |
 | `executed_at` | `TIMESTAMPTZ DEFAULT now()` | Date d'execution |
 
-## Domaine utilisateurs et acces
+## Domaine utilisateurs et Accès
 
 ### `users`
 
 Comptes applicatifs.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant utilisateur |
 | `email` | `TEXT NOT NULL` | Email de connexion |
 | `password_hash` | `TEXT NOT NULL` | Mot de passe hashe |
-| `role` | `TEXT NOT NULL DEFAULT 'visionneur'` | Role applicatif : `admin`, `responsable`, `visionneur` |
-| `company_id` | `INTEGER REFERENCES companies(id) ON DELETE SET NULL` | Entreprise rattachee, utile pour les comptes entreprise |
-| `email_verified` | `BOOLEAN DEFAULT FALSE` | Statut de verification email |
+| `Rôle` | `TEXT NOT NULL DEFAULT 'visionneur'` | Rôle applicatif : `admin`, `responsable`, `visionneur` |
+| `company_id` | `INTEGER REFERENCES companies(id) ON DELETE SET NULL` | Entreprise rattachée, utile pour les comptes entreprise |
+| `email_verified` | `BOOLEAN DEFAULT FALSE` | Statut de vérification email |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date de creation |
 
 Index :
@@ -81,7 +81,7 @@ Index :
 
 Partages d'affaires avec des utilisateurs.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant du partage |
 | `project_id` | `BIGINT REFERENCES projects(id) ON DELETE CASCADE` | Projet partage |
@@ -95,9 +95,9 @@ Contrainte : un seul partage par couple `(project_id, shared_with_user_id)`.
 
 ### `access_requests`
 
-Demandes d'acces faites par les utilisateurs.
+Demandes d'accès faites par les utilisateurs.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `user_id` | `INTEGER REFERENCES users(id) ON DELETE CASCADE` | Demandeur |
@@ -120,11 +120,11 @@ Index uniques partiels :
 
 Affaires ou projets.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant projet |
 | `name` | `TEXT NOT NULL` | Nom de l'affaire |
-| `reference` | `TEXT` | Reference interne |
+| `référence` | `TEXT` | référence interne |
 | `client` | `TEXT` | Client |
 | `location` | `TEXT` | Localisation |
 | `study_phase` | `TEXT` | Phase d'etude |
@@ -137,7 +137,7 @@ Affaires ou projets.
 
 Lots techniques d'une affaire.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant lot |
 | `project_id` | `BIGINT REFERENCES projects(id) ON DELETE CASCADE` | Projet parent |
@@ -157,7 +157,7 @@ Index :
 
 Entreprises consultantes ou repondantes.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant entreprise |
 | `name` | `TEXT NOT NULL` | Nom |
@@ -169,11 +169,11 @@ Entreprises consultantes ou repondantes.
 
 Association plusieurs-a-plusieurs entre lots et entreprises.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `lot_id` | `BIGINT REFERENCES lots(id) ON DELETE CASCADE` | Lot |
 | `company_id` | `BIGINT REFERENCES companies(id) ON DELETE CASCADE` | Entreprise |
-| `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date d'association, aussi utilisee pour l'ordre d'affichage |
+| `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date d'association, aussi utilisée pour l'ordre d'affichage |
 
 Cle primaire : `(lot_id, company_id)`.
 
@@ -181,13 +181,13 @@ Cle primaire : `(lot_id, company_id)`.
 
 Lignes DPGF d'un lot.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant ligne |
 | `lot_id` | `BIGINT REFERENCES lots(id) ON DELETE CASCADE` | Lot parent |
 | `num` | `TEXT` | Numero de poste |
-| `designation` | `TEXT` | Designation. Nullable depuis migration 003 |
-| `unit` | `TEXT` | Unite MOE |
+| `Désignation` | `TEXT` | Désignation. Nullable depuis migration 003 |
+| `unit` | `TEXT` | Unité MOE |
 | `position` | `INTEGER` | Ordre dans le tableau importe |
 | `source_company_id` | `BIGINT REFERENCES companies(id) ON DELETE SET NULL` | Entreprise source si poste ajoute par une entreprise |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date de creation |
@@ -196,10 +196,10 @@ Lignes DPGF d'un lot.
 
 Estimation MOE pour une ligne DPGF.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `item_id` | `BIGINT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE` | Ligne DPGF |
-| `qty` | `NUMERIC` | Quantite MOE |
+| `qty` | `NUMERIC` | Quantité MOE |
 | `unit_price` | `NUMERIC` | Prix unitaire MOE |
 | `amount` | `NUMERIC` | Montant MOE |
 | `comment` | `TEXT` | Commentaire MOE |
@@ -208,20 +208,20 @@ Relation : un `item` a zero ou un `moe_items`.
 
 ### `offers`
 
-Offres des entreprises pour les lignes DPGF. Contrairement aux items et MOE, les offres sont liees a un tour.
+Offres des entreprises pour les lignes DPGF. Contrairement aux items et MOE, les offres sont liées à un tour.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant offre |
 | `item_id` | `BIGINT REFERENCES items(id) ON DELETE CASCADE` | Ligne DPGF |
 | `company_id` | `BIGINT REFERENCES companies(id) ON DELETE CASCADE` | Entreprise |
 | `round_id` | `INTEGER REFERENCES rounds(id) ON DELETE CASCADE` | Tour de consultation |
-| `unit` | `TEXT` | Unite repondue |
-| `qty` | `NUMERIC` | Quantite repondue |
+| `unit` | `TEXT` | Unité repondue |
+| `qty` | `NUMERIC` | Quantité repondue |
 | `unit_price` | `NUMERIC` | Prix unitaire repondu |
 | `amount` | `NUMERIC` | Montant repondu |
 | `comment` | `TEXT` | Commentaire importe ou saisi |
-| `offer_designation` | `TEXT` | Designation entreprise si differente de la DPGF |
+| `offer_designation` | `TEXT` | Désignation entreprise si differente de la DPGF |
 
 Contrainte finale : unicite `(item_id, company_id, round_id)`.
 
@@ -231,7 +231,7 @@ Contrainte finale : unicite `(item_id, company_id, round_id)`.
 
 Tours ou phases d'un projet.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant tour |
 | `project_id` | `INTEGER REFERENCES projects(id) ON DELETE CASCADE` | Projet parent |
@@ -247,7 +247,7 @@ Contrainte : un seul tour par `(project_id, round_number)`.
 
 Association entre tours et lots.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `round_id` | `INTEGER REFERENCES rounds(id) ON DELETE CASCADE` | Tour |
@@ -258,40 +258,40 @@ Contrainte : unicite `(round_id, lot_id)`.
 
 ### `options`
 
-Mini-lots optionnels rattaches a un lot et a un tour.
+Mini-lots optionnels rattachés à un lot et à un tour.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant option |
 | `lot_id` | `INT REFERENCES lots(id) ON DELETE CASCADE` | Lot parent |
 | `round_id` | `INT REFERENCES rounds(id) ON DELETE CASCADE` | Tour parent |
-| `designation` | `VARCHAR(255) NOT NULL` | Nom de l'option |
+| `Désignation` | `VARCHAR(255) NOT NULL` | Nom de l'option |
 | `created_at` | `TIMESTAMP DEFAULT now()` | Date de creation |
 
-Contrainte : unicite `(lot_id, round_id, designation)`.
+Contrainte : unicite `(lot_id, round_id, Désignation)`.
 
 ### `option_items`
 
 Lignes d'une option.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant ligne d'option |
 | `option_id` | `INT REFERENCES options(id) ON DELETE CASCADE` | Option parent |
 | `num` | `VARCHAR(50)` | Numero |
-| `designation` | `VARCHAR(255)` | Designation |
-| `unit` | `VARCHAR(50)` | Unite |
+| `Désignation` | `VARCHAR(255)` | Désignation |
+| `unit` | `VARCHAR(50)` | Unité |
 | `created_at` | `TIMESTAMP DEFAULT now()` | Date de creation |
 
 ### `option_item_moe`
 
 MOE d'une ligne d'option.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `option_item_id` | `INT REFERENCES option_items(id) ON DELETE CASCADE` | Ligne d'option |
-| `qty` | `DECIMAL(15,4)` | Quantite MOE |
+| `qty` | `DECIMAL(15,4)` | Quantité MOE |
 | `unit_price` | `DECIMAL(15,4)` | Prix unitaire MOE |
 
 Contrainte : unicite `option_item_id`.
@@ -300,13 +300,13 @@ Contrainte : unicite `option_item_id`.
 
 Offres entreprises sur les lignes d'option.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant offre d'option |
 | `option_item_id` | `INT REFERENCES option_items(id) ON DELETE CASCADE` | Ligne d'option |
 | `company_id` | `INT REFERENCES companies(id) ON DELETE CASCADE` | Entreprise |
 | `round_id` | `INT REFERENCES rounds(id) ON DELETE CASCADE` | Tour |
-| `qty` | `DECIMAL(15,4)` | Quantite repondue |
+| `qty` | `DECIMAL(15,4)` | Quantité repondue |
 | `unit_price` | `DECIMAL(15,4)` | Prix unitaire repondu |
 
 Contrainte : unicite `(option_item_id, company_id, round_id)`.
@@ -317,15 +317,15 @@ Contrainte : unicite `(option_item_id, company_id, round_id)`.
 
 Configuration des textes de questions au niveau projet.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
-| `project_id` | `BIGINT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE` | Projet configure |
-| `question_qty_*` | `TEXT` | Textes pour ecarts de quantite |
+| `project_id` | `BIGINT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE` | Projet configuré |
+| `question_qty_*` | `TEXT` | Textes pour ecarts de Quantité |
 | `question_price_*` | `TEXT` | Textes pour ecarts de prix unitaire |
 | `question_amount_*` | `TEXT` | Textes pour ecarts de montant |
-| `question_unit_mismatch` | `TEXT` | Texte pour incoherence d'unite |
-| `unanswered_comment` | `TEXT` | Commentaire automatique pour article sans reponse |
-| `unanswered_color` | `TEXT` | Couleur d'affichage pour article sans reponse |
+| `question_unit_mismatch` | `TEXT` | Texte pour incoherence d'Unité |
+| `unanswered_comment` | `TEXT` | Commentaire automatique pour article sans Réponse |
+| `unanswered_color` | `TEXT` | Couleur d'affichage pour article sans Réponse |
 | `offer_amount_mismatch_comment` | `TEXT` | Commentaire automatique si montant importe incoherent |
 | `updated_at` | `TIMESTAMPTZ DEFAULT now()` | Date de mise a jour |
 
@@ -335,10 +335,10 @@ Les suffixes utilises sont notamment `very_low`, `low`, `high`, `very_high`.
 
 Configuration des seuils de declenchement au niveau lot.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
-| `lot_id` | `BIGINT PRIMARY KEY REFERENCES lots(id) ON DELETE CASCADE` | Lot configure |
-| `qty_*_threshold` | `NUMERIC` | Seuils quantite |
+| `lot_id` | `BIGINT PRIMARY KEY REFERENCES lots(id) ON DELETE CASCADE` | Lot configuré |
+| `qty_*_threshold` | `NUMERIC` | Seuils Quantité |
 | `price_*_threshold` | `NUMERIC` | Seuils prix unitaire |
 | `amount_*_threshold` | `NUMERIC` | Seuils montant |
 | `updated_at` | `TIMESTAMPTZ DEFAULT now()` | Date de mise a jour |
@@ -347,7 +347,7 @@ Configuration des seuils de declenchement au niveau lot.
 
 Questions generees automatiquement ou creees manuellement.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant question |
 | `lot_id` | `BIGINT REFERENCES lots(id) ON DELETE CASCADE` | Lot concerne |
@@ -361,8 +361,8 @@ Questions generees automatiquement ou creees manuellement.
 | `offer_value` | `NUMERIC` | Valeur entreprise comparee |
 | `deviation_pct` | `NUMERIC` | Ecart en pourcentage |
 | `status` | `TEXT DEFAULT 'pending'` | `pending`, `answered`, `dismissed` |
-| `comment` | `TEXT` | Commentaire / reponse interne |
-| `answered_at` | `TIMESTAMPTZ` | Date de reponse |
+| `comment` | `TEXT` | Commentaire / Réponse interne |
+| `answered_at` | `TIMESTAMPTZ` | Date de Réponse |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date de creation |
 
 Types valides finaux :
@@ -381,9 +381,9 @@ Contraintes :
 
 ### `question_sheets`
 
-Ancien systeme RAO de fiches questions liees directement aux items. La migration 005 supprime cette table si elle provenait de l'ancien modele `rounds` par lot, puis le code actuel continue a l'utiliser dans `routes/questions/index.js`.
+Ancien système RAO de fiches questions liées directement aux items. La migration 005 supprime cette table si elle provenait de l'ancien modèle `rounds` par lot, puis le code actuel continue à l'utiliser dans `routes/questions/index.js`.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant |
 | `round_id` | `BIGINT REFERENCES rounds(id) ON DELETE CASCADE` | Tour |
@@ -391,11 +391,11 @@ Ancien systeme RAO de fiches questions liees directement aux items. La migration
 | `company_id` | `BIGINT REFERENCES companies(id) ON DELETE CASCADE` | Entreprise |
 | `question_type` | `TEXT NOT NULL` | Type de question |
 | `question` | `TEXT NOT NULL` | Texte |
-| `moe_qty` | `NUMERIC` | Quantite MOE au moment de la generation |
-| `company_qty` | `NUMERIC` | Quantite entreprise |
+| `moe_qty` | `NUMERIC` | Quantité MOE au moment de la génération |
+| `company_qty` | `NUMERIC` | Quantité entreprise |
 | `difference_percent` | `NUMERIC` | Ecart |
-| `response` | `TEXT` | Reponse entreprise |
-| `response_date` | `DATE` | Date de reponse |
+| `response` | `TEXT` | Réponse entreprise |
+| `response_date` | `DATE` | Date de Réponse |
 | `status` | `TEXT DEFAULT 'pending'` | Statut |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Creation |
 | `updated_at` | `TIMESTAMPTZ DEFAULT now()` | Mise a jour |
@@ -404,7 +404,7 @@ Ancien systeme RAO de fiches questions liees directement aux items. La migration
 
 Historique des envois de fiches questions par email.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant envoi |
 | `lot_id` | `BIGINT REFERENCES lots(id) ON DELETE CASCADE` | Lot |
@@ -417,13 +417,13 @@ Historique des envois de fiches questions par email.
 
 Contrainte : unicite `(lot_id, round_id, company_id, sent_at)`.
 
-## Domaine securite
+## Domaine Sécurité
 
 ### `email_verifications`
 
-Tokens de verification d'email.
+Tokens de vérification d'email.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `user_id` | `INTEGER REFERENCES users(id) ON DELETE CASCADE` | Utilisateur |
@@ -436,7 +436,7 @@ Tokens de verification d'email.
 
 Tokens de reinitialisation de mot de passe.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant |
 | `user_id` | `BIGINT REFERENCES users(id) ON DELETE CASCADE` | Utilisateur |
@@ -449,14 +449,14 @@ Tokens de reinitialisation de mot de passe.
 
 Refresh tokens avec rotation.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `user_id` | `BIGINT REFERENCES users(id) ON DELETE CASCADE` | Utilisateur |
 | `token` | `VARCHAR(255) UNIQUE NOT NULL` | Token |
 | `family` | `VARCHAR(255)` | Famille de rotation |
 | `expires_at` | `TIMESTAMPTZ NOT NULL` | Expiration |
-| `revoked_at` | `TIMESTAMPTZ` | Revocation |
+| `revoked_at` | `TIMESTAMPTZ` | révocation |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Creation |
 | `rotation_count` | `INT DEFAULT 0` | Nombre de rotations |
 
@@ -464,7 +464,7 @@ Refresh tokens avec rotation.
 
 Journal des reutilisations suspectes de refresh tokens.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `user_id` | `BIGINT REFERENCES users(id) ON DELETE CASCADE` | Utilisateur |
@@ -477,7 +477,7 @@ Journal des reutilisations suspectes de refresh tokens.
 
 Journal anti-bot des champs pieges remplis.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `SERIAL PRIMARY KEY` | Identifiant |
 | `ip_address` | `VARCHAR(45)` | Adresse IP |
@@ -486,28 +486,28 @@ Journal anti-bot des champs pieges remplis.
 | `filled_fields` | `JSONB` | Champs honeypot remplis |
 | `detected_at` | `TIMESTAMPTZ DEFAULT now()` | Date de detection |
 
-## Tables historiques ou de compatibilite
+## Tables historiques ou de compatibilité
 
 ### `moe`
 
-Table legacy conservee pour compatibilite. Le modele actif utilise `moe_items`.
+Table legacy conservée pour compatibilité. Le modèle actif utilisé `moe_items`.
 
-| Colonne | Type | Role |
+| Colonne | Type | Rôle |
 | --- | --- | --- |
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant |
 | `item_id` | `BIGINT UNIQUE REFERENCES items(id) ON DELETE CASCADE` | Ligne DPGF |
-| `qty` | `NUMERIC` | Quantite |
+| `qty` | `NUMERIC` | Quantité |
 | `unit_price` | `NUMERIC` | Prix unitaire |
 
 ### `round_offers`
 
-Table historique issue du premier systeme RAO. Elle est supprimee lors de la migration 005 si l'ancien modele de `rounds` par lot est detecte. Le modele courant utilise `offers.round_id`.
+Table historique issue du premier système RAO. Elle est supprimée lors de la migration 005 si l'ancien modèle de `rounds` par lot est détecté. Le modèle courant utilisé `offers.round_id`.
 
 ## Points d'attention
 
-- `schema.sql` et le `defaultSchemaSQL()` de `db.js` ne sont pas strictement identiques. Par exemple `defaultSchemaSQL()` cree un index unique `companies_name_lower_idx`, alors que `schema.sql` ne le cree pas.
-- Les importeurs `excel.js` et `clipboard.js` utilisent `ON CONFLICT (name)` sur `companies`, ce qui necessite une contrainte unique ou un index unique simple sur `companies(name)`. L'index fonctionnel sur `lower(name)` ne suffit pas pour cette clause.
-- Plusieurs migrations ont corrige des modeles precedents. Pour comprendre l'etat final, il faut lire `schema.sql` plus toutes les migrations executees, pas seulement le fichier initial.
+- `Schéma.sql` et le `defaultSchemaSQL()` de `db.js` ne sont pas strictement identiques. Par exemple `defaultSchemaSQL()` crée un index unique `companies_name_lower_idx`, alors que `Schéma.sql` ne le crée pas.
+- Les importeurs `excel.js` et `clipboard.js` utilisent `ON CONFLICT (name)` sur `companies`, ce qui nécessite une contrainte unique ou un index unique simple sur `companies(name)`. L'index fonctionnel sur `lower(name)` ne suffit pas pour cette clause.
+- Plusieurs migrations ont corrige des modeles précédents. Pour comprendre l'État final, il faut lire `Schéma.sql` plus toutes les migrations executees, pas seulement le fichier initial.
 - Les `items` et `moe_items` ne dependent plus des tours ; les `offers` et `generated_questions` en dependent.
 - `generated_questions` peut cibler soit une ligne DPGF (`item_id`), soit une ligne d'option (`option_item_id`).
 

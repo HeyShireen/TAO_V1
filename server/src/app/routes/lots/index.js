@@ -62,6 +62,24 @@ function getTempFile(id) {
 }
 
 // Helper: Résoudre le project_id d'un lot
+function parseGridNumber(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  let s = String(value).trim();
+  if (!s) return null;
+  s = s.replace(/[€$£¥₹]/g, '').replace(/[\u00A0\u202F\u2009\s]/g, '');
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  if (lastComma > -1 || lastDot > -1) {
+    const last = Math.max(lastComma, lastDot);
+    const decSep = s[last];
+    s = s.replace(/[.,]/g, (m, idx) => (idx === last ? m : '')).replace(decSep, '.');
+  }
+  s = s.replace(/[^0-9.\-]/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 async function getProjectIdForLot(lotId) {
   const result = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
   return result.rows[0]?.project_id || null;
@@ -902,6 +920,10 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
           if (val?.pu != null && val.pu !== '' && !isNaN(Number(val.pu))) {
             op = Number(val.pu);
           }
+          const parsedAmount = parseGridNumber(val?.mt);
+          if (parsedAmount != null) {
+            om = parsedAmount;
+          }
           if (oq != null && op != null) {
             om = oq * op;
           }
@@ -911,7 +933,7 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
     }
 
     // Supprimer les articles retires de la grille (admin/responsable uniquement).
-    // Les donnees liees (MOE, offres, questions, etc.) suivent via ON DELETE CASCADE.
+    // Les données liées (MOE, offres, questions, etc.) suivent via ON DELETE CASCADE.
     if (!isEntreprise) {
       const keptItemIds = itemsToUpdate.map((item) => item.id);
       await client.query(
