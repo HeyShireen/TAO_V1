@@ -566,7 +566,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     );
     const offerAmountMismatchTemplate = String(
       projectConfigRes.rows[0]?.offer_amount_mismatch_comment
-      || 'Montant total incohérent dans la DPGF : le montant importé est conservé.'
+      || 'Montant incohérent dans la DPGF : le montant importé est conservé.'
     ).trim();
 
     let clearedExistingOffers = 0;
@@ -1038,7 +1038,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       warnings.push(`${unmatchedDpgf.length} article(s) DPGF n'ont pas été couverts par l'offre entreprise.`);
     }
     if (amountMismatchCount > 0) {
-      warnings.push(`${amountMismatchCount} ligne(s) avec incohérence montant total / montant calculé : commentaire automatique ajouté.`);
+      warnings.push(`${amountMismatchCount} ligne(s) avec incohérence montant / montant calculé : commentaire automatique ajouté.`);
       console.warn('[AMOUNT-DIAG][import.offer] Incohérences montant importé vs calculé', {
         lotId: Number(lotId),
         roundId: roundId ? Number(roundId) : null,

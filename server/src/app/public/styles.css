@@ -857,34 +857,79 @@ input:focus,textarea:focus,select:focus{
 }
 .table-wrapper.tall{ max-height:75vh }
 #tour-config > p.muted{ display:none; }
-.threshold-bulk-editor{
+.global-threshold-sections{
   display:flex;
-  align-items:flex-end;
-  gap:12px;
-  flex-wrap:wrap;
-  margin:18px 0 28px;
-  padding:14px;
-  border:1px solid var(--border);
-  border-radius:var(--radius-sm);
-  background:var(--input-bg);
+  flex-direction:column;
+  gap:32px;
+  margin-top:18px;
 }
-.threshold-bulk-field{
-  flex:0 1 260px;
-  margin-top:0;
-}
-.threshold-bulk-editor .btn{
-  min-height:40px;
-}
-.global-threshold-lot-cell{
-  min-width:220px;
-  white-space:normal;
-}
-.global-threshold-lot-cell strong{
-  display:block;
+.global-threshold-section h4{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0 0 16px;
+  font-size:1.1rem;
   color:var(--fg);
 }
+.global-threshold-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));
+  gap:16px;
+}
+.global-threshold-card{
+  border-radius:12px;
+  border:2px solid var(--threshold-color);
+  background:var(--threshold-bg);
+  padding:16px;
+}
+.global-threshold-card-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:12px;
+}
+.global-threshold-card-title span{
+  display:inline-block;
+  width:12px;
+  height:12px;
+  border-radius:3px;
+  background:var(--threshold-color);
+}
+.global-threshold-card-title strong{
+  color:var(--threshold-color);
+}
+.global-threshold-lot-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.global-threshold-lot-row{
+  display:grid;
+  grid-template-columns:minmax(0, 1fr) 78px;
+  align-items:center;
+  gap:10px;
+  font-size:0.9rem;
+  color:var(--fg);
+}
+.global-threshold-lot-row span{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.global-threshold-question-row{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:0.9rem;
+  color:var(--fg);
+}
+.global-threshold-question-row textarea{
+  min-height:88px;
+  resize:vertical;
+}
 .global-threshold-input{
-  width:74px;
+  width:100%;
   padding:7px 8px;
   border:1px solid var(--border);
   border-radius:var(--radius-sm);

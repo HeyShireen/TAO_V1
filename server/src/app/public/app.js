@@ -77,6 +77,52 @@ const LOT_THRESHOLD_DEFAULTS = {
   amount_high_threshold: 10,
   amount_very_high_threshold: 25
 };
+const GLOBAL_THRESHOLD_GROUPS = [
+  {
+    title: 'Seuils de Quantité',
+    icon: 'box',
+    fields: [
+      { key: 'qty_very_low_threshold', label: 'Très Basse', color: '#0d6efd' },
+      { key: 'qty_low_threshold', label: 'Basse', color: '#0dcaf0' },
+      { key: 'qty_high_threshold', label: 'Haute', color: '#fd7e14' },
+      { key: 'qty_very_high_threshold', label: 'Très Haute', color: '#dc3545' }
+    ]
+  },
+  {
+    title: 'Seuils de Prix Unitaire',
+    icon: 'chart',
+    fields: [
+      { key: 'price_very_low_threshold', label: 'Très Bas', color: '#0d6efd' },
+      { key: 'price_low_threshold', label: 'Bas', color: '#0dcaf0' },
+      { key: 'price_high_threshold', label: 'Haut', color: '#fd7e14' },
+      { key: 'price_very_high_threshold', label: 'Très Haut', color: '#dc3545' }
+    ]
+  },
+  {
+    title: 'Seuils de Montant',
+    icon: 'chart',
+    fields: [
+      { key: 'amount_very_low_threshold', label: 'Très Bas', color: '#0d6efd' },
+      { key: 'amount_low_threshold', label: 'Bas', color: '#0dcaf0' },
+      { key: 'amount_high_threshold', label: 'Haut', color: '#fd7e14' },
+      { key: 'amount_very_high_threshold', label: 'Très Haut', color: '#dc3545' }
+    ]
+  }
+];
+const QUESTION_CONFIG_FIELDS = {
+  qty_very_low_threshold: 'question_qty_very_low',
+  qty_low_threshold: 'question_qty_low',
+  qty_high_threshold: 'question_qty_high',
+  qty_very_high_threshold: 'question_qty_very_high',
+  price_very_low_threshold: 'question_price_very_low',
+  price_low_threshold: 'question_price_low',
+  price_high_threshold: 'question_price_high',
+  price_very_high_threshold: 'question_price_very_high',
+  amount_very_low_threshold: 'question_amount_very_low',
+  amount_low_threshold: 'question_amount_low',
+  amount_high_threshold: 'question_amount_high',
+  amount_very_high_threshold: 'question_amount_very_high'
+};
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -1910,6 +1956,7 @@ async function openProject(id){
   const { project, lots } = await api('/projects/'+id);
   currentProject = project;
   currentRound = null; // Réinitialiser le tour
+  currentLot = null;
   selectedRoundOptions = new Set();
   
   enableTab('tab-rounds', true);
@@ -3313,6 +3360,7 @@ async function openLot(id, lotMeta){
   // Charger les seuils et questions
   if (!isEntreprise() && !isVisionneur()) {
     await loadLotThresholds();
+    await loadProjectQuestionConfig();
   }
   populateCompanyFilter();
 }
@@ -3506,7 +3554,10 @@ async function autoSaveProjectQuestionConfig() {
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
       question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
     };
-    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body });
+    const url = currentLot
+      ? `/question-config/lot/${currentLot.id}/question-config`
+      : `/question-config/project/${currentProject.id}`;
+    await api(url, { method: 'PUT', body });
     unansweredConfig.comment = body.unanswered_comment;
     unansweredConfig.color = body.unanswered_color;
     // Re-render the sheet to apply updated unanswered styles
@@ -3523,7 +3574,9 @@ async function autoSaveProjectQuestionConfig() {
 async function loadProjectQuestionConfig(){
   if (!currentProject) return;
   try {
-    const config = await api(`/question-config/project/${currentProject.id}`);
+    const config = currentLot
+      ? await api(`/question-config/lot/${currentLot.id}/question-config`)
+      : await api(`/question-config/project/${currentProject.id}`);
     qs('#q-qty-very-low').value = config.question_qty_very_low || '';
     qs('#q-qty-low').value = config.question_qty_low || '';
     qs('#q-qty-high').value = config.question_qty_high || '';
@@ -3538,7 +3591,7 @@ async function loadProjectQuestionConfig(){
     qs('#q-amount-very-high').value = config.question_amount_very_high || '';
     qs('#q-unanswered-comment').value = config.unanswered_comment || 'Article sans réponse';
     qs('#q-unanswered-color').value = config.unanswered_color || '#fff3cd';
-    qs('#q-offer-amount-mismatch-comment').value = config.offer_amount_mismatch_comment || 'Montant total incohérent dans la DPGF : le montant importé est conservé.';
+    qs('#q-offer-amount-mismatch-comment').value = config.offer_amount_mismatch_comment || 'Montant incohérent dans la DPGF : le montant importé est conservé.';
     if (qs('#q-unit-mismatch')) qs('#q-unit-mismatch').value = config.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?';
     unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
     unansweredConfig.color = config.unanswered_color || '#fff3cd';
@@ -3618,7 +3671,10 @@ async function saveProjectQuestionConfig(){
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
       question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
     };
-    await api(`/question-config/project/${currentProject.id}`, { method: 'PUT', body, showLoader: false });
+    const url = currentLot
+      ? `/question-config/lot/${currentLot.id}/question-config`
+      : `/question-config/project/${currentProject.id}`;
+    await api(url, { method: 'PUT', body, showLoader: false });
     unansweredConfig.comment = body.unanswered_comment;
     unansweredConfig.color = body.unanswered_color;
     for (let r = 0; r < sheetRows.length; r++) recalcRowAmountsRow(r);
@@ -3673,45 +3729,15 @@ function attachThresholdListeners(){
   });
 }
 
-function getLotThresholdInputId(field) {
-  return `threshold-${field.replace(/_threshold$/, '').replaceAll('_', '-')}`;
-}
-
-function readLotThresholdInputs() {
-  return LOT_THRESHOLD_FIELDS.reduce((thresholds, field) => {
-    const input = qs(`#${getLotThresholdInputId(field)}`);
-    const value = Number(input?.value);
-    thresholds[field] = Number.isFinite(value) ? Math.max(0, value) : LOT_THRESHOLD_DEFAULTS[field];
-    return thresholds;
-  }, {});
-}
-
-function applyThresholdToAll() {
-  if (isVisionneur() || isEntreprise()) {
-    showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas modifier les seuils.', type:'error' });
-    return;
-  }
-
-  const input = qs('#threshold-apply-all');
-  const value = Number(input?.value);
-  if (!Number.isFinite(value) || value < 0 || value > 100) {
-    showNotify({ title:'Valeur invalide', message:'Saisissez un seuil entre 0 et 100.', type:'error' });
-    input?.focus();
-    return;
-  }
-
-  const normalizedValue = formatThresholdValue(value);
-  LOT_THRESHOLD_FIELDS.forEach(field => {
-    const thresholdInput = qs(`#${getLotThresholdInputId(field)}`);
-    if (thresholdInput) thresholdInput.value = normalizedValue;
-  });
-  updateQuestionsLegend(readLotThresholdInputs());
-  autosaveHandlers.thresholds();
-}
-
 function updateLegendFromInputs(){
   // Récupérer les valeurs actuelles des inputs
-  updateQuestionsLegend(readLotThresholdInputs());
+  const thresholds = {
+    qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value) || 25,
+    qty_low_threshold: parseFloat(qs('#threshold-qty-low').value) || 10,
+    qty_high_threshold: parseFloat(qs('#threshold-qty-high').value) || 10,
+    qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value) || 25
+  };
+  updateQuestionsLegend(thresholds);
 }
 
 function attachProjectQuestionsListeners(){
@@ -3767,49 +3793,58 @@ function formatThresholdValue(value, fallback = 0) {
 }
 
 function readGlobalThresholdRowsFromDom() {
-  return qsa('#global-thresholds-body tr[data-lot-id]').map(row => {
-    const lotId = Number(row.dataset.lotId);
-    const data = { lot_id: lotId };
-    LOT_THRESHOLD_FIELDS.forEach(field => {
-      const input = row.querySelector(`[data-field="${field}"]`);
-      const value = Number(input?.value);
-      data[field] = Number.isFinite(value) ? Math.max(0, value) : LOT_THRESHOLD_DEFAULTS[field];
-    });
+  return LOT_THRESHOLD_FIELDS.reduce((data, field) => {
+    const input = qs(`#global-thresholds-body .global-threshold-input[data-field="${field}"]`);
+    const value = Number(input?.value);
+    data[field] = Number.isFinite(value) ? Math.max(0, value) : LOT_THRESHOLD_DEFAULTS[field];
     return data;
-  });
+  }, {});
+}
+
+function readGlobalQuestionConfigFromDom() {
+  return Object.values(QUESTION_CONFIG_FIELDS).reduce((data, field) => {
+    data[field] = (qs(`#global-thresholds-body [data-question-field="${field}"]`)?.value || '').trim();
+    return data;
+  }, {});
 }
 
 function renderGlobalLotThresholds(rows = []) {
-  const tbody = qs('#global-thresholds-body');
-  if (!tbody) return;
+  const container = qs('#global-thresholds-body');
+  if (!container) return;
 
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--muted)">Aucun lot dans ce projet</td></tr>';
-    return;
-  }
+  const globalThresholds = globalLotThresholds?.global_thresholds || {};
+  const questionConfig = globalLotThresholds?.question_config || {};
+  const sections = GLOBAL_THRESHOLD_GROUPS.map(group => `
+    <section class="global-threshold-section">
+      <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-${group.icon}"></use></svg>${group.title}</h4>
+      <div class="global-threshold-grid">
+        ${group.fields.map(field => `
+          <div class="global-threshold-card" style="--threshold-color:${field.color};--threshold-bg:${hexToRgba(field.color, 0.08)}">
+            <div class="global-threshold-card-title">
+              <span></span>
+              <strong>${field.label}</strong>
+            </div>
+            <div class="global-threshold-lot-list">
+              <label class="global-threshold-lot-row global-threshold-single-row">
+                <span>Seuil (%)</span>
+                <input class="global-threshold-input" type="number" min="0" max="100" step="1"
+                  data-field="${field.key}"
+                  value="${formatThresholdValue(globalThresholds[field.key], LOT_THRESHOLD_DEFAULTS[field.key])}" />
+              </label>
+              <label class="global-threshold-question-row">
+                <span>Question</span>
+                <textarea rows="3" data-question-field="${QUESTION_CONFIG_FIELDS[field.key]}">${escapeHtml(questionConfig[QUESTION_CONFIG_FIELDS[field.key]] || '')}</textarea>
+              </label>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `).join('');
 
-  tbody.innerHTML = rows.map(row => {
-    const lotLabel = [row.code, row.name].filter(Boolean).join(' - ') || `Lot ${row.lot_id}`;
-    const inputs = LOT_THRESHOLD_FIELDS.map(field => `
-      <td>
-        <input class="global-threshold-input" type="number" min="0" max="100" step="1"
-          data-lot-id="${row.lot_id}" data-field="${field}"
-          value="${formatThresholdValue(row[field], LOT_THRESHOLD_DEFAULTS[field])}" />
-      </td>
-    `).join('');
+  container.innerHTML = sections;
 
-    return `
-      <tr data-lot-id="${row.lot_id}">
-        <td class="global-threshold-lot-cell">
-          <strong>${escapeHtml(lotLabel)}</strong>
-          <span class="muted">#${row.lot_id}</span>
-        </td>
-        ${inputs}
-      </tr>
-    `;
-  }).join('');
-
-  qsa('.global-threshold-input').forEach(input => {
+  qsa('.global-threshold-input, [data-question-field]').forEach(input => {
     input.removeEventListener('input', autosaveHandlers.globalThresholds);
     input.addEventListener('input', autosaveHandlers.globalThresholds);
   });
@@ -3819,7 +3854,7 @@ async function loadGlobalLotThresholds() {
   if (!currentProject || isVisionneur() || isEntreprise()) return;
   try {
     globalLotThresholds = await api(`/question-config/project/${currentProject.id}/lot-thresholds`);
-    renderGlobalLotThresholds(globalLotThresholds);
+    renderGlobalLotThresholds(globalLotThresholds.lots || []);
   } catch (err) {
     console.error('Erreur chargement seuils globaux:', err);
   }
@@ -3827,40 +3862,23 @@ async function loadGlobalLotThresholds() {
 
 async function saveGlobalLotThresholds() {
   if (!currentProject || isVisionneur() || isEntreprise()) return;
-  const thresholds = readGlobalThresholdRowsFromDom();
-  if (!thresholds.length) return;
+  const global_thresholds = readGlobalThresholdRowsFromDom();
+  const question_config = readGlobalQuestionConfigFromDom();
 
   showSaveStatus('#save-global-thresholds', 'saving');
   try {
     await api(`/question-config/project/${currentProject.id}/lot-thresholds`, {
       method: 'PUT',
-      body: { thresholds },
+      body: { global_thresholds, question_config },
       showLoader: false
     });
-    globalLotThresholds = thresholds;
+    globalLotThresholds = { ...(globalLotThresholds || {}), global_thresholds, question_config };
     showSaveStatus('#save-global-thresholds', 'saved');
   } catch (err) {
     console.error('Erreur sauvegarde seuils globaux:', err);
     showSaveStatus('#save-global-thresholds', 'error');
     resetSaveButton('#save-global-thresholds');
   }
-}
-
-function copyFirstGlobalThresholdsToAll() {
-  const rows = qsa('#global-thresholds-body tr[data-lot-id]');
-  if (rows.length < 2) return;
-  const firstValues = {};
-  LOT_THRESHOLD_FIELDS.forEach(field => {
-    firstValues[field] = rows[0].querySelector(`[data-field="${field}"]`)?.value ?? LOT_THRESHOLD_DEFAULTS[field];
-  });
-
-  rows.slice(1).forEach(row => {
-    LOT_THRESHOLD_FIELDS.forEach(field => {
-      const input = row.querySelector(`[data-field="${field}"]`);
-      if (input) input.value = firstValues[field];
-    });
-  });
-  autosaveHandlers.globalThresholds();
 }
 
 async function generateQuestions(){
@@ -10927,11 +10945,6 @@ function bindUI(){
   // Sous-onglets d'un tour sélectionné (summary, lots, config, questions)
   qsa('#round-content .tour-tab-btn').forEach(b => b.addEventListener('click', () => activateTourTab(b.dataset.tourTab)));
   qs('#save-global-thresholds')?.addEventListener('click', saveGlobalLotThresholds);
-  qs('#copy-first-thresholds-to-all')?.addEventListener('click', copyFirstGlobalThresholdsToAll);
-  qs('#apply-threshold-to-all')?.addEventListener('click', applyThresholdToAll);
-  qs('#threshold-apply-all')?.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') applyThresholdToAll();
-  });
 
   // Sous-onglets des lots (données, config, questions)
   qsa('.subnav-tab').forEach(b => b.addEventListener('click', () => activateSubtab(b.dataset.subtab)));

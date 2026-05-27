@@ -23,11 +23,72 @@ const DEFAULT_LOT_THRESHOLDS = {
 };
 
 const LOT_THRESHOLD_FIELDS = Object.keys(DEFAULT_LOT_THRESHOLDS);
+const DEFAULT_QUESTION_CONFIG = {
+  question_qty_very_low: 'Pourquoi la quantité est-elle bien inférieure à la MOE ?',
+  question_qty_low: 'Pourquoi la quantité est-elle inférieure à la MOE ?',
+  question_qty_high: 'Pourquoi la quantité est-elle supérieure à la MOE ?',
+  question_qty_very_high: 'Pourquoi la quantité est-elle bien supérieure à la MOE ?',
+  question_price_very_low: 'Pourquoi le prix unitaire est-il bien inférieur à la MOE ?',
+  question_price_low: 'Pourquoi le prix unitaire est-il inférieur à la MOE ?',
+  question_price_high: 'Pourquoi le prix unitaire est-il supérieur à la MOE ?',
+  question_price_very_high: 'Pourquoi le prix unitaire est-il bien supérieur à la MOE ?',
+  question_amount_very_low: 'Pourquoi le montant est-il bien inférieur à la MOE ?',
+  question_amount_low: 'Pourquoi le montant est-il inférieur à la MOE ?',
+  question_amount_high: 'Pourquoi le montant est-il supérieur à la MOE ?',
+  question_amount_very_high: 'Pourquoi le montant est-il bien supérieur à la MOE ?'
+};
+const QUESTION_CONFIG_FIELDS = Object.keys(DEFAULT_QUESTION_CONFIG);
 
 function normalizeThreshold(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(0, number);
+}
+
+function normalizeQuestionText(value, fallback) {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+}
+
+function isSameConfigValue(a, b) {
+  return String(a ?? '').trim() === String(b ?? '').trim();
+}
+
+async function getProjectQuestionConfig(projectId, client = { query }) {
+  let config = await client.query(
+    'SELECT * FROM project_question_config WHERE project_id = $1',
+    [projectId]
+  );
+  if (config.rowCount === 0) {
+    config = await client.query(
+      `INSERT INTO project_question_config (project_id)
+       VALUES ($1) RETURNING *`,
+      [projectId]
+    );
+  }
+  return { ...DEFAULT_LOT_THRESHOLDS, ...DEFAULT_QUESTION_CONFIG, ...config.rows[0] };
+}
+
+function effectiveThresholds(projectConfig, lotConfig = {}) {
+  const out = {};
+  LOT_THRESHOLD_FIELDS.forEach(field => {
+    out[field] = lotConfig?.[`${field}_override`]
+      ? normalizeThreshold(lotConfig[field], projectConfig[field] ?? DEFAULT_LOT_THRESHOLDS[field])
+      : normalizeThreshold(projectConfig[field], DEFAULT_LOT_THRESHOLDS[field]);
+    out[`${field}_override`] = Boolean(lotConfig?.[`${field}_override`]);
+  });
+  return out;
+}
+
+function effectiveQuestions(projectConfig, lotConfig = {}) {
+  const out = {};
+  QUESTION_CONFIG_FIELDS.forEach(field => {
+    out[field] = lotConfig?.[`${field}_override`]
+      ? normalizeQuestionText(lotConfig[field], projectConfig[field] ?? DEFAULT_QUESTION_CONFIG[field])
+      : normalizeQuestionText(projectConfig[field], DEFAULT_QUESTION_CONFIG[field]);
+    out[`${field}_override`] = Boolean(lotConfig?.[`${field}_override`]);
+  });
+  return out;
 }
 
 function excelNumber(value) {
@@ -124,10 +185,7 @@ router.get('/project/:projectId', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
     
-    let config = await query(
-      'SELECT * FROM project_question_config WHERE project_id = $1',
-      [projectId]
-    );
+    const config = { rows: [await getProjectQuestionConfig(projectId)], rowCount: 1 };
     
     // Si pas de config, créer avec valeurs par défaut
     if (config.rowCount === 0) {
@@ -204,27 +262,40 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
 
 // ========== Configuration Lot (seuils) ==========
 
-// Obtenir les seuils de tous les lots d'un projet
+// Obtenir la configuration globale et les surcharges des lots
 router.get('/project/:projectId/lot-thresholds', requireManager, async (req, res) => {
   try {
     const { projectId } = req.params;
     const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
     if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
-    const result = await query(
-      `SELECT
-         l.id AS lot_id,
-         l.code,
-         l.name,
-         ${LOT_THRESHOLD_FIELDS.map(field => `COALESCE(ltc.${field}, ${DEFAULT_LOT_THRESHOLDS[field]}) AS ${field}`).join(',\n         ')}
+    const projectConfig = await getProjectQuestionConfig(projectId);
+    const lotsRes = await query(
+      `SELECT l.id AS lot_id, l.code, l.name, ltc.*
        FROM lots l
        LEFT JOIN lot_threshold_config ltc ON ltc.lot_id = l.id
        WHERE l.project_id = $1
        ORDER BY l.sort_order ASC, l.id ASC`,
       [projectId]
     );
+    const lots = lotsRes.rows.map(row => ({
+      lot_id: row.lot_id,
+      code: row.code,
+      name: row.name,
+      ...effectiveThresholds(projectConfig, row)
+    }));
 
-    res.json(result.rows);
+    res.json({
+      global_thresholds: LOT_THRESHOLD_FIELDS.reduce((acc, field) => {
+        acc[field] = normalizeThreshold(projectConfig[field], DEFAULT_LOT_THRESHOLDS[field]);
+        return acc;
+      }, {}),
+      question_config: QUESTION_CONFIG_FIELDS.reduce((acc, field) => {
+        acc[field] = normalizeQuestionText(projectConfig[field], DEFAULT_QUESTION_CONFIG[field]);
+        return acc;
+      }, {}),
+      lots
+    });
   } catch (err) {
     console.error('Erreur recuperation seuils projet:', err);
     res.status(500).json({ error: 'Impossible de recuperer les seuils des lots' });
@@ -236,40 +307,29 @@ router.put('/project/:projectId/lot-thresholds', requireManager, async (req, res
   const client = await pool.connect();
   try {
     const { projectId } = req.params;
-    const thresholds = Array.isArray(req.body?.thresholds) ? req.body.thresholds : [];
-    if (thresholds.length === 0) {
-      return res.status(400).json({ error: 'Liste de seuils vide' });
-    }
+    const globalThresholds = req.body?.global_thresholds || {};
+    const questionConfig = req.body?.question_config || {};
 
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
     if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
     await client.query('BEGIN');
 
-    const lotsRes = await client.query('SELECT id FROM lots WHERE project_id = $1', [projectId]);
-    const projectLotIds = new Set(lotsRes.rows.map(row => Number(row.id)));
-
-    let updated = 0;
-    for (const row of thresholds) {
-      const lotId = Number(row?.lot_id);
-      if (!Number.isFinite(lotId) || !projectLotIds.has(lotId)) continue;
-
-      const values = LOT_THRESHOLD_FIELDS.map(field => normalizeThreshold(row[field], DEFAULT_LOT_THRESHOLDS[field]));
-      await client.query(
-        `INSERT INTO lot_threshold_config
-          (lot_id, ${LOT_THRESHOLD_FIELDS.join(', ')}, updated_at)
-         VALUES ($1, ${LOT_THRESHOLD_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, now())
-         ON CONFLICT (lot_id)
-         DO UPDATE SET
-           ${LOT_THRESHOLD_FIELDS.map(field => `${field} = EXCLUDED.${field}`).join(',\n           ')},
-           updated_at = now()`,
-        [lotId, ...values]
-      );
-      updated += 1;
-    }
+    const thresholdValues = LOT_THRESHOLD_FIELDS.map(field => normalizeThreshold(globalThresholds[field], DEFAULT_LOT_THRESHOLDS[field]));
+    const questionValues = QUESTION_CONFIG_FIELDS.map(field => normalizeQuestionText(questionConfig[field], DEFAULT_QUESTION_CONFIG[field]));
+    await client.query(
+      `INSERT INTO project_question_config
+        (project_id, ${LOT_THRESHOLD_FIELDS.join(', ')}, ${QUESTION_CONFIG_FIELDS.join(', ')}, updated_at)
+       VALUES ($1, ${[...LOT_THRESHOLD_FIELDS, ...QUESTION_CONFIG_FIELDS].map((_, idx) => `$${idx + 2}`).join(', ')}, now())
+       ON CONFLICT (project_id)
+       DO UPDATE SET
+         ${[...LOT_THRESHOLD_FIELDS, ...QUESTION_CONFIG_FIELDS].map(field => `${field} = EXCLUDED.${field}`).join(',\n         ')},
+         updated_at = now()`,
+      [projectId, ...thresholdValues, ...questionValues]
+    );
 
     await client.query('COMMIT');
-    res.json({ ok: true, updated });
+    res.json({ ok: true });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error('Erreur mise a jour seuils projet:', err);
@@ -283,6 +343,9 @@ router.put('/project/:projectId/lot-thresholds', requireManager, async (req, res
 router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+    const projectConfig = await getProjectQuestionConfig(lotRes.rows[0].project_id);
     
     let config = await query(
       'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
@@ -298,7 +361,7 @@ router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
       );
     }
     
-    res.json(config.rows[0]);
+    res.json(effectiveThresholds(projectConfig, config.rows[0]));
   } catch (err) {
     console.error('Erreur récupération seuils lot:', err);
     res.status(500).json({ error: 'Impossible de récupérer les seuils' });
@@ -323,31 +386,39 @@ router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
       amount_high_threshold,
       amount_very_high_threshold
     } = req.body;
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+    const projectConfig = await getProjectQuestionConfig(lotRes.rows[0].project_id);
+    const thresholdBody = {
+      qty_very_low_threshold,
+      qty_low_threshold,
+      qty_high_threshold,
+      qty_very_high_threshold,
+      price_very_low_threshold,
+      price_low_threshold,
+      price_high_threshold,
+      price_very_high_threshold,
+      amount_very_low_threshold,
+      amount_low_threshold,
+      amount_high_threshold,
+      amount_very_high_threshold
+    };
+    const values = LOT_THRESHOLD_FIELDS.map(field => normalizeThreshold(thresholdBody[field], projectConfig[field] ?? DEFAULT_LOT_THRESHOLDS[field]));
+    const overrideValues = LOT_THRESHOLD_FIELDS.map((field, idx) => values[idx] !== normalizeThreshold(projectConfig[field], DEFAULT_LOT_THRESHOLDS[field]));
     
     const result = await query(
       `INSERT INTO lot_threshold_config 
-        (lot_id, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, amount_very_low_threshold, amount_low_threshold, amount_high_threshold, amount_very_high_threshold, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+        (lot_id, ${LOT_THRESHOLD_FIELDS.join(', ')}, ${LOT_THRESHOLD_FIELDS.map(field => `${field}_override`).join(', ')}, updated_at)
+       VALUES ($1, ${LOT_THRESHOLD_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, ${LOT_THRESHOLD_FIELDS.map((_, idx) => `$${idx + 14}`).join(', ')}, now())
        ON CONFLICT (lot_id) 
        DO UPDATE SET 
-         qty_very_low_threshold = EXCLUDED.qty_very_low_threshold,
-         qty_low_threshold = EXCLUDED.qty_low_threshold,
-         qty_high_threshold = EXCLUDED.qty_high_threshold,
-         qty_very_high_threshold = EXCLUDED.qty_very_high_threshold,
-         price_very_low_threshold = EXCLUDED.price_very_low_threshold,
-         price_low_threshold = EXCLUDED.price_low_threshold,
-         price_high_threshold = EXCLUDED.price_high_threshold,
-         price_very_high_threshold = EXCLUDED.price_very_high_threshold,
-         amount_very_low_threshold = EXCLUDED.amount_very_low_threshold,
-         amount_low_threshold = EXCLUDED.amount_low_threshold,
-         amount_high_threshold = EXCLUDED.amount_high_threshold,
-         amount_very_high_threshold = EXCLUDED.amount_very_high_threshold,
+         ${[...LOT_THRESHOLD_FIELDS, ...LOT_THRESHOLD_FIELDS.map(field => `${field}_override`)].map(field => `${field} = EXCLUDED.${field}`).join(',\n         ')},
          updated_at = now()
        RETURNING *`,
-      [lotId, qty_very_low_threshold, qty_low_threshold, qty_high_threshold, qty_very_high_threshold, price_very_low_threshold, price_low_threshold, price_high_threshold, price_very_high_threshold, amount_very_low_threshold, amount_low_threshold, amount_high_threshold, amount_very_high_threshold]
+      [lotId, ...values, ...overrideValues]
     );
     
-    res.json(result.rows[0]);
+    res.json(effectiveThresholds(projectConfig, result.rows[0]));
   } catch (err) {
     console.error('Erreur mise à jour seuils lot:', err);
     res.status(500).json({ error: 'Impossible de mettre à jour les seuils' });
@@ -357,6 +428,53 @@ router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
 // ========== Génération et gestion des fiches questions ==========
 
 // Générer les fiches questions pour un lot et un tour
+router.get('/lot/:lotId/question-config', requireManager, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+    const projectConfig = await getProjectQuestionConfig(lotRes.rows[0].project_id);
+    const lotConfig = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [lotId]);
+    res.json({
+      ...effectiveQuestions(projectConfig, lotConfig.rows[0] || {}),
+      unanswered_comment: projectConfig.unanswered_comment,
+      unanswered_color: projectConfig.unanswered_color,
+      offer_amount_mismatch_comment: projectConfig.offer_amount_mismatch_comment,
+      question_unit_mismatch: projectConfig.question_unit_mismatch
+    });
+  } catch (err) {
+    console.error('Erreur recuperation questions lot:', err);
+    res.status(500).json({ error: 'Impossible de recuperer les questions du lot' });
+  }
+});
+
+router.put('/lot/:lotId/question-config', requireManager, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
+    const projectConfig = await getProjectQuestionConfig(lotRes.rows[0].project_id);
+    const values = QUESTION_CONFIG_FIELDS.map(field => normalizeQuestionText(req.body[field], projectConfig[field] ?? DEFAULT_QUESTION_CONFIG[field]));
+    const overrideValues = QUESTION_CONFIG_FIELDS.map((field, idx) => !isSameConfigValue(values[idx], projectConfig[field] ?? DEFAULT_QUESTION_CONFIG[field]));
+
+    const result = await query(
+      `INSERT INTO lot_question_config
+        (lot_id, ${QUESTION_CONFIG_FIELDS.join(', ')}, ${QUESTION_CONFIG_FIELDS.map(field => `${field}_override`).join(', ')}, updated_at)
+       VALUES ($1, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 14}`).join(', ')}, now())
+       ON CONFLICT (lot_id)
+       DO UPDATE SET
+         ${[...QUESTION_CONFIG_FIELDS, ...QUESTION_CONFIG_FIELDS.map(field => `${field}_override`)].map(field => `${field} = EXCLUDED.${field}`).join(',\n         ')},
+         updated_at = now()
+       RETURNING *`,
+      [lotId, ...values, ...overrideValues]
+    );
+    res.json(effectiveQuestions(projectConfig, result.rows[0]));
+  } catch (err) {
+    console.error('Erreur mise a jour questions lot:', err);
+    res.status(500).json({ error: 'Impossible de mettre a jour les questions du lot' });
+  }
+});
+
 router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
   try {
     const { lotId } = req.params;
@@ -372,7 +490,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
       [lotId]
     );
-    const thresholds = thresholdsRes.rows[0] || {
+    let thresholds = thresholdsRes.rows[0] || {
       qty_very_low_threshold: 25,
       qty_low_threshold: 10,
       qty_high_threshold: 10,
@@ -393,12 +511,15 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       return res.status(404).json({ error: 'Lot introuvable' });
     }
     const projectId = lotRes.rows[0].project_id;
+    const projectConfig = await getProjectQuestionConfig(projectId);
+    const lotQuestionRes = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [lotId]);
+    thresholds = effectiveThresholds(projectConfig, thresholds);
     
     const questionsRes = await query(
       'SELECT * FROM project_question_config WHERE project_id = $1',
       [projectId]
     );
-    const questions = questionsRes.rows[0] || {
+    let questions = questionsRes.rows[0] || {
       question_qty_very_low: 'Pourquoi la quantité est-elle bien inférieure à la MOE ?',
       question_qty_low: 'Pourquoi la quantité est-elle inférieure à la MOE ?',
       question_qty_high: 'Pourquoi la quantité est-elle supérieure à la MOE ?',
@@ -415,6 +536,12 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     };
     
     // 3. Récupérer les items, MOE et offres
+    questions = {
+      ...projectConfig,
+      ...questions,
+      ...effectiveQuestions(projectConfig, lotQuestionRes.rows[0] || {})
+    };
+
     const itemsRes = await query(
       'SELECT * FROM items WHERE lot_id = $1',
       [lotId]
@@ -469,11 +596,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              ON CONFLICT (round_id, lot_id, item_id, company_id, question_type)
              WHERE item_id IS NOT NULL
            DO UPDATE SET 
-             question_text = EXCLUDED.question_text,
+             question_text = CASE
+               WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.question_text
+               ELSE EXCLUDED.question_text
+             END,
              moe_value = EXCLUDED.moe_value,
              offer_value = EXCLUDED.offer_value,
              deviation_pct = EXCLUDED.deviation_pct,
-             comment = EXCLUDED.comment`,
+             comment = CASE
+               WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
+               ELSE EXCLUDED.comment
+             END`,
           [lotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
         );
       } else if (optionItemId) {
@@ -484,11 +617,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              ON CONFLICT (round_id, lot_id, option_item_id, company_id, question_type)
              WHERE option_item_id IS NOT NULL
            DO UPDATE SET 
-             question_text = EXCLUDED.question_text,
+             question_text = CASE
+               WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.question_text
+               ELSE EXCLUDED.question_text
+             END,
              moe_value = EXCLUDED.moe_value,
              offer_value = EXCLUDED.offer_value,
              deviation_pct = EXCLUDED.deviation_pct,
-             comment = EXCLUDED.comment`,
+             comment = CASE
+               WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
+               ELSE EXCLUDED.comment
+             END`,
           [lotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
         );
       }
@@ -508,7 +647,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND round_id = $2
              AND item_id = $3
              AND company_id = $4
-             AND question_type = ANY($5::text[])`,
+             AND question_type = ANY($5::text[])
+             AND COALESCE(manual_edited, false) = false`,
           [lotId, roundId, itemId, companyId, types]
         );
         return;
@@ -520,7 +660,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND round_id = $2
              AND option_item_id = $3
              AND company_id = $4
-             AND question_type = ANY($5::text[])`,
+             AND question_type = ANY($5::text[])
+             AND COALESCE(manual_edited, false) = false`,
           [lotId, roundId, optionItemId, companyId, types]
         );
       }
@@ -534,7 +675,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND round_id = $2
              AND item_id = $3
              AND company_id = $4
-             AND question_type = ANY($5::text[])`,
+             AND question_type = ANY($5::text[])
+             AND COALESCE(manual_edited, false) = false`,
           [lotId, roundId, itemId, companyId, nonUnitQuestionTypes]
         );
         return;
@@ -546,7 +688,8 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND round_id = $2
              AND option_item_id = $3
              AND company_id = $4
-             AND question_type = ANY($5::text[])`,
+             AND question_type = ANY($5::text[])
+             AND COALESCE(manual_edited, false) = false`,
           [lotId, roundId, optionItemId, companyId, nonUnitQuestionTypes]
         );
       }
@@ -1238,6 +1381,7 @@ router.put('/question/:id', async (req, res) => {
       }
       params.push(safeText);
       updates.push(`question_text = $${params.length}`);
+      updates.push(`manual_edited = true`);
     }
 
     if (company_id !== undefined) {

@@ -239,37 +239,15 @@
           <div id="tour-config" class="tour-tabpanel hidden">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
               <div>
-                <h4 style="margin:0"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Seuils des fiches questions par lot</h4>
-                <p class="muted" style="margin:4px 0 0 0">Modifiez les seuils de tous les lots depuis ce tableau.</p>
+                <h3 style="margin:0"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Configuration des Questions</h3>
+                <p class="muted" style="margin:4px 0 0 0">Questions automatiques selon les écarts détectés.</p>
               </div>
               <div class="row gap" style="align-items:center;flex-wrap:wrap">
-                <button id="copy-first-thresholds-to-all" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-copy"></use></svg>Copier le premier lot</button>
                 <button id="save-global-thresholds" class="btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-save"></use></svg>Enregistrement auto</button>
               </div>
             </div>
-            <div class="table-wrapper tall">
-              <table id="global-thresholds-table" class="summary-table">
-                <thead>
-                  <tr>
-                    <th>Lot</th>
-                    <th>Qté très basse</th>
-                    <th>Qté basse</th>
-                    <th>Qté haute</th>
-                    <th>Qté très haute</th>
-                    <th>PU très bas</th>
-                    <th>PU bas</th>
-                    <th>PU haut</th>
-                    <th>PU très haut</th>
-                    <th>Mt très bas</th>
-                    <th>Mt bas</th>
-                    <th>Mt haut</th>
-                    <th>Mt très haut</th>
-                  </tr>
-                </thead>
-                <tbody id="global-thresholds-body">
-                  <tr><td colspan="13" style="text-align:center;padding:30px;color:var(--muted)">Selectionnez un projet</td></tr>
-                </tbody>
-              </table>
+            <div id="global-thresholds-body" class="global-threshold-sections">
+              <div style="text-align:center;padding:30px;color:var(--muted)">Selectionnez un projet</div>
             </div>
             <p class="muted">Configuration des questions (désactivé tant qu’aucun lot n’est sélectionné).</p>
           </div>
@@ -472,16 +450,6 @@
           <div class="card">
             <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Configuration des Questions</h3>
             <p class="muted">Questions automatiques selon les écarts détectés</p>
-
-            <div class="threshold-bulk-editor" aria-label="Modification globale des seuils">
-              <label class="field threshold-bulk-field" for="threshold-apply-all">
-                <span>Valeur pour tous les seuils (%)</span>
-                <input id="threshold-apply-all" name="threshold-apply-all" type="number" min="0" max="100" step="1" placeholder="Ex: 10" />
-              </label>
-              <button id="apply-threshold-to-all" class="btn ghost" type="button">
-                <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-sliders"></use></svg>Appliquer a tous
-              </button>
-            </div>
           
             <!-- Section Quantités -->
             <div style="margin-bottom:32px">
@@ -658,9 +626,9 @@
             <div style="margin-top:20px">
               <h4 style="margin:0 0 16px 0;font-size:1.1rem;color:var(--fg)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-file"></use></svg>Incohérence de Montant Import</h4>
               <div style="border-radius:12px;border:2px solid #0dcaf0;background:rgba(13, 202, 240, 0.08);padding:16px;max-width:760px">
-                <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Commentaire ajouté automatiquement lors de l'import offre si le montant total saisi est différent du montant calculé (Qté × PU). Le montant importé est conservé.</p>
+                <p style="margin:0 0 16px 0;font-size:0.9rem;color:var(--muted)">Commentaire ajouté automatiquement lors de l'import offre si le montant saisi est différent du montant calculé (Qté × PU). Le montant importé est conservé.</p>
                 <label style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">Commentaire automatique :</label>
-                <input id="q-offer-amount-mismatch-comment" name="q-offer-amount-mismatch-comment" type="text" value="Montant total incohérent dans la DPGF : le montant importé est conservé." style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem" />
+                <input id="q-offer-amount-mismatch-comment" name="q-offer-amount-mismatch-comment" type="text" value="Montant incohérent dans la DPGF : le montant importé est conservé." style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:0.9rem" />
               </div>
             </div>
 
