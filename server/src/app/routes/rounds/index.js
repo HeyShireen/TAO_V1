@@ -447,7 +447,11 @@ router.get('/:roundId/summary', async (req, res) => {
     
     // Récupérer tous les lots du projet
     const lotsResult = await query(
-      'SELECT id, code, name, macro_lot FROM lots WHERE project_id = $1 ORDER BY code, name',
+      `SELECT id, code, name, macro_lot, sort_order,
+              ROW_NUMBER() OVER (ORDER BY sort_order ASC, id ASC) AS lot_order
+       FROM lots
+       WHERE project_id = $1
+       ORDER BY sort_order ASC, id ASC`,
       [projectId]
     );
     const lots = lotsResult.rows;
@@ -501,6 +505,7 @@ router.get('/:roundId/summary', async (req, res) => {
       
       summary.push({
         lot_id: lot.id,
+        lot_order: Number(lot.lot_order),
         lot_code: lot.code,
         lot_name: lot.name,
         macro_lot: lot.macro_lot,
@@ -529,7 +534,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
     
     // Récupérer tous les tours du projet
     const roundsResult = await query(
-      'SELECT id, name FROM rounds WHERE project_id = $1 ORDER BY created_at',
+      'SELECT id, name, round_number FROM rounds WHERE project_id = $1 ORDER BY round_number ASC, id ASC',
       [projectId]
     );
     const rounds = roundsResult.rows;
@@ -540,7 +545,11 @@ router.get('/project/:projectId/compare', async (req, res) => {
     
     // Récupérer tous les lots du projet
     const lotsResult = await query(
-      'SELECT id, code, name, macro_lot FROM lots WHERE project_id = $1 ORDER BY code, name',
+      `SELECT id, code, name, macro_lot, sort_order,
+              ROW_NUMBER() OVER (ORDER BY sort_order ASC, id ASC) AS lot_order
+       FROM lots
+       WHERE project_id = $1
+       ORDER BY sort_order ASC, id ASC`,
       [projectId]
     );
     const lots = lotsResult.rows;
@@ -615,6 +624,7 @@ router.get('/project/:projectId/compare', async (req, res) => {
       
       summary.push({
         lot_id: lot.id,
+        lot_order: Number(lot.lot_order),
         lot_code: lot.code,
         lot_name: lot.name,
         macro_lot: lot.macro_lot,

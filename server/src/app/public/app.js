@@ -2079,17 +2079,17 @@ async function loadLotsForRound(){
   // enable drag-n-drop
   tbody.dataset.dragEnabled = 'true';
 
-  for (const l of lots){
+  lots.forEach((l, index) => {
     const tr = document.createElement('tr');
     tr.setAttribute('draggable', 'true');
     tr.dataset.lotId = String(l.id);
     tr.innerHTML = `
       <td class="drag-handle" style="cursor:grab">⋮⋮</td>
-      <td>${l.id}</td>
-      <td>${l.code||''}</td>
+      <td class="lot-display-id">${index + 1}</td>
+      <td>${escapeHtml(l.code || '')}</td>
       <td>
         <div class="lot-name-macro-inline">
-          <span class="lot-name-inline-text">${l.name}</span>
+          <span class="lot-name-inline-text">${escapeHtml(l.name || '')}</span>
           ${l.macro_lot ? `<span class="macro-lot-chip">Macrolot: ${escapeHtml(l.macro_lot)}</span>` : ''}
         </div>
       </td>
@@ -2101,7 +2101,7 @@ async function loadLotsForRound(){
     const editBtn = tr.querySelector('.btn-edit-lot');
     if (editBtn) editBtn.addEventListener('click', () => openLotEditModal(l));
     tbody.appendChild(tr);
-  }
+  });
 
   if (typeof initLotsDragAndDrop === 'function') {
     initLotsDragAndDrop(tbody);
@@ -2279,13 +2279,12 @@ async function loadRoundsComparison(){
     const { lots, rounds } = data;
     const entrepriseMode = isEntreprise();
     const sortedLots = [...lots].sort((a, b) => {
-      const aMacro = normalizeMacroLot(a.macro_lot) || '';
-      const bMacro = normalizeMacroLot(b.macro_lot) || '';
-      if (aMacro !== bMacro) return aMacro.localeCompare(bMacro, 'fr');
-      const aCode = String(a.lot_code || '');
-      const bCode = String(b.lot_code || '');
-      if (aCode !== bCode) return aCode.localeCompare(bCode, 'fr');
-      return String(a.lot_name || '').localeCompare(String(b.lot_name || ''), 'fr');
+      const aOrder = Number(a.lot_order ?? a.sort_order);
+      const bOrder = Number(b.lot_order ?? b.sort_order);
+      if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) return aOrder - bOrder;
+      if (Number.isFinite(aOrder)) return -1;
+      if (Number.isFinite(bOrder)) return 1;
+      return Number(a.lot_id ?? a.id) - Number(b.lot_id ?? b.id);
     });
     renderRoundsMacroLotColorControls(sortedLots);
     
@@ -2438,9 +2437,11 @@ async function loadRoundsComparison(){
 
       const lotCell = document.createElement('td');
       lotCell.className = 'lot-name-cell sticky-col';
+      const lotNumber = Number(lot.lot_order);
+      const lotPrefix = Number.isFinite(lotNumber) ? `N\u00b0${lotNumber}` : `Lot ${escapeHtml(String(lotId))}`;
       const lotLabelHtml = lot.lot_code
-        ? `<strong><span class="lot-code">${lot.lot_code}</span> ${lot.lot_name}</strong>`
-        : `<strong>${lot.lot_name}</strong>`;
+        ? `<strong><span class="lot-code">${escapeHtml(lotPrefix)}</span> ${escapeHtml(lot.lot_code)} - ${escapeHtml(lot.lot_name || '')}</strong>`
+        : `<strong><span class="lot-code">${escapeHtml(lotPrefix)}</span> ${escapeHtml(lot.lot_name || '')}</strong>`;
       lotCell.innerHTML = macroLot
         ? `${lotLabelHtml}<br><span class="macro-lot-badge" style="border-color:${macroColor};color:${macroColor}">Macrolot: ${escapeHtml(macroLot)}</span>`
         : lotLabelHtml;
@@ -11043,7 +11044,16 @@ qs('#lot-modal-save')?.addEventListener('click', async ()=>{ try{
 
 // ===== Drag & Drop lots order =====
 function initLotsDragAndDrop(tbody){
+  if (tbody.dataset.lotsDndBound === 'true') return;
+  tbody.dataset.lotsDndBound = 'true';
   let dragSrcEl = null;
+
+  function refreshLotDisplayIds() {
+    Array.from(tbody.querySelectorAll('tr[data-lot-id]')).forEach((row, index) => {
+      const cell = row.querySelector('.lot-display-id');
+      if (cell) cell.textContent = String(index + 1);
+    });
+  }
 
   // Helper: find element after which to insert based on cursor Y
   function getDragAfterElement(container, y) {
@@ -11088,6 +11098,7 @@ function initLotsDragAndDrop(tbody){
 
   tbody.addEventListener('drop', async (e)=>{
     e.preventDefault();
+    refreshLotDisplayIds();
     // Persist new order
     const order = Array
       .from(tbody.querySelectorAll('tr[data-lot-id], tr'))
@@ -11095,7 +11106,11 @@ function initLotsDragAndDrop(tbody){
       .filter(Number.isFinite);
     try {
       await api(`/projects/${currentProject.id}/lots/order`, { method:'POST', body:{ order } });
+      currentProjectLots = order
+        .map(id => currentProjectLots.find(l => Number(l.id) === Number(id)))
+        .filter(Boolean);
     } catch(err) {
+      await loadLotsForRound();
       showNotify({ title:'Erreur', message:'Mise à jour de l\'ordre: '+err.message, type:'error' });
     }
   });

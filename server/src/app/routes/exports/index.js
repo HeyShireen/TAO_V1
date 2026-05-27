@@ -845,7 +845,7 @@ async function handleSummaryExport(req, res) {
 
     // Récupérer les lots
     const lotsRes = await query(
-      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY sort_order ASC, id ASC`,
       [round.project_id]
     );
     const lots = lotsRes.rows;
@@ -1454,8 +1454,11 @@ async function handleRoundsComparison(req, res) {
 
     // Récupérer les lots (tri numérique par code)
     const lotsRes = await query(
-      `SELECT id, code, name FROM lots WHERE project_id = $1
-       ORDER BY CASE WHEN code ~ '^[0-9]+' THEN CAST(SUBSTRING(code FROM '^[0-9]+') AS INTEGER) ELSE 999999 END, code, name`,
+      `SELECT id, code, name, sort_order,
+              ROW_NUMBER() OVER (ORDER BY sort_order ASC, id ASC) AS lot_order
+       FROM lots
+       WHERE project_id = $1
+       ORDER BY sort_order ASC, id ASC`,
       [projectId]
     );
     const lots = lotsRes.rows;
@@ -2499,7 +2502,7 @@ router.get('/rao/:projectId', async (req, res) => {
 
     // Récupérer tous les lots du projet
     const lotsRes = await query(
-      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+      `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY sort_order ASC, id ASC`,
       [projectId]
     );
     const lots = lotsRes.rows;
@@ -2978,7 +2981,7 @@ function addDivergingPercentDataBars(worksheet, refs, priority = 1) {
 
 async function getBundleLotSelection({ projectId, questionLotId, questionLotIds }) {
   const projectLotsRes = await query(
-    `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY id`,
+    `SELECT id, code, name FROM lots WHERE project_id = $1 ORDER BY sort_order ASC, id ASC`,
     [projectId]
   );
   const projectLots = projectLotsRes.rows || [];

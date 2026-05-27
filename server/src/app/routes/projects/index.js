@@ -173,7 +173,9 @@ router.post('/:id/lots', isResponsableOrAdmin, async (req, res) => {
     }
     
     const r = await query(
-      'INSERT INTO lots (project_id, code, name, macro_lot) VALUES ($1,$2,$3,$4) RETURNING *',
+      `INSERT INTO lots (project_id, code, name, macro_lot, sort_order)
+       VALUES ($1,$2,$3,$4,(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM lots WHERE project_id = $1))
+       RETURNING *`,
       [id, code ? code.trim() : null, name.trim(), macro_lot ? macro_lot.trim() : null]
     );
     res.json(r.rows[0]);
@@ -254,9 +256,9 @@ router.post('/:id/lots/order', isResponsableOrAdmin, async (req, res) => {
 
     // Validate/normalize: only keep lots that belong to the project
     const lotsRes = await query('SELECT id FROM lots WHERE project_id = $1 ORDER BY sort_order ASC, id ASC', [projectId]);
-    const projectLotIds = lotsRes.rows.map(r => r.id);
+    const projectLotIds = lotsRes.rows.map(r => Number(r.id)).filter(Number.isFinite);
     const lotIdsSet = new Set(projectLotIds);
-    const filteredOrder = order.filter(id => lotIdsSet.has(id));
+    const filteredOrder = order.map(id => Number(id)).filter(id => Number.isFinite(id) && lotIdsSet.has(id));
     // Append any remaining lots not included to preserve a complete ordering
     const remaining = projectLotIds.filter(id => !filteredOrder.includes(id));
     const finalOrder = [...filteredOrder, ...remaining];
@@ -379,7 +381,9 @@ router.post('/:id/import-dpgf', isResponsableOrAdmin, uploadDpgf.single('file'),
 
     // Créer le lot
     const lotRes = await query(
-      'INSERT INTO lots (project_id, code, name) VALUES ($1, $2, $3) RETURNING *',
+      `INSERT INTO lots (project_id, code, name, sort_order)
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM lots WHERE project_id = $1))
+       RETURNING *`,
       [projectId, lotCode ? String(lotCode).trim() : null, String(lotName).trim()]
     );
     const lot = lotRes.rows[0];

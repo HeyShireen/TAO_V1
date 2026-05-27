@@ -86,6 +86,8 @@ ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS created_by BIGINT;
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS position INTEGER;
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS source_company_id BIGINT REFERENCES public.companies(id) ON DELETE SET NULL;
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS parent_item_id BIGINT REFERENCES public.items(id) ON DELETE SET NULL;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_lots_sort_order ON public.lots(project_id, sort_order);
 
 -- Amount calculé sur offers (compatibilité)
 ALTER TABLE public.offers ADD COLUMN IF NOT EXISTS amount NUMERIC;
