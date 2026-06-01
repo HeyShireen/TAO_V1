@@ -1307,6 +1307,8 @@ router.get('/lot/:lotId', async (req, res) => {
     if (status) {
       sql += ` AND gq.status = $${params.length + 1}`;
       params.push(status);
+    } else {
+      sql += ` AND gq.status <> 'dismissed'`;
     }
     
     // Si utilisateur entreprise, forcer le filtre sur sa company_id
@@ -1511,9 +1513,9 @@ router.put('/question/:id/validate', requireManager, async (req, res) => {
     const questionId = Number(id);
     const result = await query(
       `UPDATE generated_questions
-       SET status = 'validated',
-           answered_at = COALESCE(answered_at, now())
+       SET status = 'validated'
        WHERE id = $1
+         AND status <> 'dismissed'
        RETURNING *`,
       [questionId]
     );
@@ -1542,6 +1544,7 @@ router.put('/question/:id/unvalidate', requireManager, async (req, res) => {
       `UPDATE generated_questions
        SET status = 'pending'
        WHERE id = $1
+         AND status <> 'dismissed'
        RETURNING *`,
       [questionId]
     );
@@ -1577,10 +1580,10 @@ router.put('/lot/:lotId/validate', requireManager, async (req, res) => {
     const params = [Number(lotId), Number(roundId)];
     let sql = `
       UPDATE generated_questions
-      SET status = 'validated',
-          answered_at = COALESCE(answered_at, now())
+      SET status = 'validated'
       WHERE lot_id = $1
         AND round_id = $2
+        AND status <> 'dismissed'
     `;
 
     if (companyId != null && companyId !== '') {
@@ -1622,8 +1625,20 @@ router.delete('/question/:id', async (req, res) => {
       }
     }
     
-    await query('DELETE FROM generated_questions WHERE id = $1', [questionId]);
-    res.json({ ok: true });
+    const result = await query(
+      `UPDATE generated_questions
+       SET status = 'dismissed',
+           manual_edited = true
+       WHERE id = $1
+       RETURNING id`,
+      [questionId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+
+    res.json({ ok: true, id: result.rows[0].id });
   } catch (err) {
     console.error('Erreur suppression fiche question:', err);
     res.status(500).json({ error: 'Impossible de supprimer la fiche question' });
@@ -1675,6 +1690,8 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     if (status) {
       sql += ` AND gq.status = $${params.length + 1}`;
       params.push(status);
+    } else {
+      sql += ` AND gq.status <> 'dismissed'`;
     }
     
     // Si utilisateur entreprise, forcer le filtre sur sa company_id

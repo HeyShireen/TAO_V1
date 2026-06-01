@@ -3963,11 +3963,19 @@ async function deleteAllQuestions(){
     extra: '<strong>⚠️ Attention:</strong> Cette action supprimera toutes les fiches questions générées. Les réponses des entreprises seront perdues. Cette action ne peut pas être annulée.',
     onConfirm: async () => {
       try {
+        qsa('.question-text-editor').forEach(textarea => {
+          if (textarea.dataset.itemId) suppressedQuestionSaveItemIds.add(String(textarea.dataset.itemId));
+        });
+        pendingQuestionSaves.clear();
+        hasUnsavedQuestionChanges = false;
+        await waitForQuestionSaveIdle();
         const result = await api(`/question-config/lot/${currentLot.id}?round_id=${currentRound.id}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          showLoader: false
         });
         showNotify({ title: 'Succès', message: `${result.deleted || 0} fiche(s) supprimée(s)`, type: 'success' });
-        await refreshQuestions();
+        await loadQuestionsEditor({ force: true, silent: true });
+        refreshQuestionsInBackground();
       } catch (err) {
         showNotify({ title:'Erreur', message: err.message, type:'error' });
       }
@@ -4926,6 +4934,11 @@ async function refreshQuestions({ silent = false } = {}){
 
 /* ================= Éditeur de Questions ================= */
 let questionsDesigCollapsed = false;
+let hasUnsavedQuestionChanges = false;
+let isQuestionSaving = false;
+let activeQuestionSavePromise = null;
+const pendingQuestionSaves = new Map();
+const suppressedQuestionSaveItemIds = new Set();
 
 // Démarrer l'auto-actualisation de l'éditeur de questions (chaque 10 secondes)
 function startQuestionsEditorAutoRefresh() {
@@ -4934,6 +4947,9 @@ function startQuestionsEditorAutoRefresh() {
   
   // Démarrer le nouvel intervalle (10 secondes)
   questionsEditorAutoRefreshInterval = setInterval(() => {
+    const activeElement = document.activeElement;
+    const isEditingQuestion = activeElement?.classList?.contains('question-text-editor');
+    if (hasUnsavedQuestionChanges || isQuestionSaving || activeQuestionSavePromise || isEditingQuestion) return;
     loadQuestionsEditor({ silent: true });
   }, 10000);
 }
@@ -4946,8 +4962,9 @@ function stopQuestionsEditorAutoRefresh() {
   }
 }
 
-async function loadQuestionsEditor({ silent = false } = {}){
+async function loadQuestionsEditor({ silent = false, force = false } = {}){
   if (!currentLot || !currentRound) return;
+  if (!force && (hasUnsavedQuestionChanges || isQuestionSaving || activeQuestionSavePromise)) return;
   
   try {
     // Sauvegarder la sélection actuelle d'entreprise ciblée
@@ -5283,6 +5300,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     
     const questionId = existingQuestion?.id || '';
     const questionText = displayQuestions.map(q => q.question_text || '').filter(Boolean).join('\n• ');
+    const questionIdsData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.id).filter(Boolean)));
+    const questionLinesData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.question_text || '')));
     const questionStatus = existingQuestion?.status || 'pending';
     const questionCompanyId = existingQuestion?.company_id || '';
     const sourceCompany = Number.isFinite(Number(item.source_company_id))
@@ -5295,7 +5314,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const isValidated = questionStatus === 'validated';
     const validateTitle = isValidated
       ? 'Désactiver la validation'
-      : (questionId ? 'Valider' : 'Créer et valider');
+      : 'Valider';
     const hierarchyClass = getQuestionHierarchyClass(item.num);
     const desigPills = offerDesigPillsHtml(itemOffers);
 
@@ -5303,15 +5322,15 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
     // Actions (déplacées à gauche)
     html += '<td class="sticky-actions">';
-    html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
     if (questionId) {
-      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" title="Supprimer">${icon('trash','icon-only')}</button>`;
     }
     html += '</td>';
     html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}"><span class="desig-text">${sourceCompanyBadge}${item.designation || ''}${desigPills}</span></td>`;
     // Question (figée, après Désignation)
     html += '<td class="sticky-question questions-group-start">';
-    html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-item-id="${item.id}" data-question-id="${questionId}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
+    html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-item-id="${item.id}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
     if (displayQuestions.length > 1) {
       html += `<div style="font-size:11px;color:var(--muted);margin-top:4px">${displayQuestions.length} questions affichées</div>`;
     }
@@ -5513,6 +5532,148 @@ function recalcQuestionsHeaderOffsets() {
   if (window.requestAnimationFrame) requestAnimationFrame(setFromMeasure);
 }
 
+async function handleValidateEditorQuestionButton(currentBtn) {
+  let questionId = currentBtn.dataset.questionId ? Number(currentBtn.dataset.questionId) : null;
+  const isValidated = currentBtn.dataset.isValidated === '1';
+  try {
+    if (isValidated) {
+      if (!questionId) {
+        showNotify({ title:'Validation', message:'Aucune fiche Ã  dÃ©valider', type:'info' });
+        return;
+      }
+      await api(`/question-config/question/${questionId}`, {
+        method: 'PUT',
+        body: { status: 'pending' },
+        showLoader: false
+      });
+      currentBtn.dataset.isValidated = '0';
+      currentBtn.title = 'Valider';
+      currentBtn.innerHTML = icon('check-circle','icon-only');
+      refreshQuestionsInBackground();
+      return;
+    }
+
+    if (!questionId) {
+      showNotify({ title:'Validation', message:'Sauvegardez la fiche avant de la valider', type:'info' });
+      return;
+    }
+
+    await api(`/question-config/question/${questionId}/validate`, { method: 'PUT', showLoader: false });
+    currentBtn.dataset.isValidated = '1';
+    currentBtn.title = 'Desactiver la validation';
+    currentBtn.innerHTML = icon('x-circle','icon-only');
+    refreshQuestionsInBackground();
+  } catch (err) {
+    showNotify({ title:'Erreur', message: err.message, type:'error' });
+  }
+}
+
+async function handleDeleteEditorQuestionButton(currentBtn) {
+  const questionId = currentBtn.dataset.questionId;
+  const itemId = currentBtn.dataset.itemId;
+
+  showDeleteConfirmation({
+    title: 'Supprimer une fiche question',
+    message: 'Confirmer la suppression de cette fiche question ?',
+    extra: '<strong>Attention:</strong> Les reponses des entreprises seront perdues. Cette action ne peut pas etre annulee.',
+    onConfirm: async () => {
+      try {
+        if (itemId) {
+          suppressedQuestionSaveItemIds.add(String(itemId));
+          pendingQuestionSaves.delete(String(itemId));
+          hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
+        }
+        await waitForQuestionSaveIdle();
+        await api(`/question-config/question/${questionId}`, {
+          method: 'DELETE',
+          showLoader: false
+        });
+
+        const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
+        const textarea = itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null;
+        if (row) {
+          row.dataset.questionId = '';
+          row.dataset.questionCompanyId = '';
+          const actionsCell = row.querySelector('.sticky-actions');
+          if (actionsCell) actionsCell.innerHTML = '';
+        }
+        if (textarea) {
+          textarea.value = '';
+          textarea.dataset.questionId = '';
+        }
+
+        showNotify({ title:'Succes', message:'Question supprimee', type:'success' });
+        refreshQuestionsInBackground();
+      } catch (err) {
+        showNotify({ title:'Erreur', message: err.message, type:'error' });
+      }
+    }
+  });
+}
+
+function ensureQuestionEditorActionButtons(row, itemId, questionId, isValidated = false) {
+  if (!row || !questionId) return;
+  const actionsCell = row.querySelector('.sticky-actions');
+  if (!actionsCell || actionsCell.querySelector('.btn-validate-editor-question')) return;
+
+  const validateTitle = isValidated ? 'Desactiver la validation' : 'Valider';
+  actionsCell.innerHTML =
+    `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
+    `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+
+  actionsCell.querySelector('.btn-validate-editor-question')
+    ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
+  actionsCell.querySelector('.btn-delete-editor-question')
+    ?.addEventListener('click', (e) => handleDeleteEditorQuestionButton(e.currentTarget));
+}
+
+function parseQuestionTextareaLines(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*(?:[•\-\*]|â€¢)\s*/, '').trim())
+    .filter(Boolean);
+}
+
+function normalizeQuestionLine(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function parseQuestionTextareaMetadata(textarea) {
+  try {
+    const ids = JSON.parse(decodeURIComponent(textarea.dataset.questionIds || '[]'));
+    const lines = JSON.parse(decodeURIComponent(textarea.dataset.questionLines || '[]'));
+    return ids.map((id, index) => ({
+      id: Number(id),
+      text: String(lines[index] || '')
+    })).filter(question => Number.isFinite(question.id));
+  } catch {
+    return [];
+  }
+}
+
+function detectDismissedQuestionIds(originalQuestions, currentText) {
+  if (originalQuestions.length <= 1) return [];
+  const currentLines = parseQuestionTextareaLines(currentText);
+  if (currentLines.length === 0 || currentLines.length >= originalQuestions.length) return [];
+
+  const usedLineIndexes = new Set();
+  const dismissedIds = [];
+
+  for (const original of originalQuestions) {
+    const originalText = normalizeQuestionLine(original.text);
+    const matchIndex = currentLines.findIndex((line, index) =>
+      !usedLineIndexes.has(index) && normalizeQuestionLine(line) === originalText
+    );
+    if (matchIndex >= 0) {
+      usedLineIndexes.add(matchIndex);
+    } else {
+      dismissedIds.push(original.id);
+    }
+  }
+
+  return dismissedIds;
+}
+
 function bindQuestionsEditorEvents() {
   // Auto-save avec le même pattern que la grille d'édition:
   // - état "modifié"
@@ -5524,13 +5685,40 @@ function bindQuestionsEditorEvents() {
       const questionId = textarea.dataset.questionId;
       const questionText = textarea.value.trim();
       const statusIndicator = qs(`.save-status[data-item-id="${itemId}"]`);
+      suppressedQuestionSaveItemIds.delete(String(itemId));
 
       if (!statusIndicator) return;
 
-      // Si vide, ne pas sauvegarder
+      // Si le champ est vidé, traiter cela comme une suppression utilisateur.
       if (!questionText) {
-        statusIndicator.style.display = 'none';
-        pendingQuestionSaves.delete(String(itemId));
+        if (questionId) {
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('clock', 'icon-only');
+          statusIndicator.style.color = 'var(--muted)';
+          markQuestionAsChanged({
+            itemId: String(itemId),
+            questionId: Number(questionId),
+            deleteQuestion: true,
+          });
+        } else {
+          statusIndicator.style.display = 'none';
+          pendingQuestionSaves.delete(String(itemId));
+        }
+        return;
+      }
+
+      const originalQuestions = parseQuestionTextareaMetadata(textarea);
+      const dismissQuestionIds = detectDismissedQuestionIds(originalQuestions, questionText);
+      if (dismissQuestionIds.length > 0) {
+        statusIndicator.style.display = 'block';
+        statusIndicator.innerHTML = icon('clock', 'icon-only');
+        statusIndicator.style.color = 'var(--muted)';
+        markQuestionAsChanged({
+          itemId: String(itemId),
+          questionId: questionId ? Number(questionId) : null,
+          dismissQuestionIds,
+          questionText,
+        });
         return;
       }
 
@@ -5571,43 +5759,26 @@ function bindQuestionsEditorEvents() {
           }
           await api(`/question-config/question/${questionId}`, {
             method: 'PUT',
-            body: { status: 'pending' }
+            body: { status: 'pending' },
+            showLoader: false
           });
-          await loadQuestionsEditor();
-          await refreshQuestions();
+          currentBtn.dataset.isValidated = '0';
+          currentBtn.title = 'Valider';
+          currentBtn.innerHTML = icon('check-circle','icon-only');
+          refreshQuestionsInBackground();
           return;
         }
 
-        const textarea = qs(`.question-text-editor[data-item-id="${itemId}"]`);
-        const questionText = textarea?.value?.trim() || '';
-        if (!questionText) {
-          showNotify({ title:'Validation', message:'Saisissez une question avant de valider', type:'info' });
-          return;
-        }
-
-        const row = qs(`#questions-editor-body tr[data-item-id="${itemId}"]`);
-        const companyId = Number(qs('#questions-target-company')?.value || row?.dataset.questionCompanyId || 0);
-        if (!companyId) {
-          showNotify({ title:'Validation', message:'Sélectionnez une entreprise ciblée avant de valider', type:'info' });
-          return;
-        }
-
-        const saveResult = await saveQuestionWithCompany(
-          itemId,
-          questionId,
-          companyId,
-          questionText,
-          { refreshList: false, silentError: true }
-        );
-
-        questionId = Number(saveResult?.id || questionId);
         if (!questionId) {
-          throw new Error('Impossible de sauvegarder la fiche avant validation');
+          showNotify({ title:'Validation', message:'Sauvegardez la fiche avant de la valider', type:'info' });
+          return;
         }
 
-        await api(`/question-config/question/${questionId}/validate`, { method: 'PUT' });
-        await loadQuestionsEditor();
-        await refreshQuestions();
+        await api(`/question-config/question/${questionId}/validate`, { method: 'PUT', showLoader: false });
+        currentBtn.dataset.isValidated = '1';
+        currentBtn.title = 'Désactiver la validation';
+        currentBtn.innerHTML = icon('x-circle','icon-only');
+        refreshQuestionsInBackground();
       } catch (err) {
         showNotify({ title:'Erreur', message: err.message, type:'error' });
       }
@@ -5617,7 +5788,9 @@ function bindQuestionsEditorEvents() {
   // Supprimer une question
   qsa('.btn-delete-editor-question').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      const questionId = e.currentTarget.dataset.questionId;
+      const currentBtn = e.currentTarget;
+      const questionId = currentBtn.dataset.questionId;
+      const itemId = currentBtn.dataset.itemId;
       
       showDeleteConfirmation({
         title: 'Supprimer une fiche question',
@@ -5625,13 +5798,32 @@ function bindQuestionsEditorEvents() {
         extra: '<strong>⚠️ Attention:</strong> Les réponses des entreprises seront perdues. Cette action ne peut pas être annulée.',
         onConfirm: async () => {
           try {
+            if (itemId) {
+              suppressedQuestionSaveItemIds.add(String(itemId));
+              pendingQuestionSaves.delete(String(itemId));
+              hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
+            }
+            await waitForQuestionSaveIdle();
             await api(`/question-config/question/${questionId}`, {
-              method: 'DELETE'
+              method: 'DELETE',
+              showLoader: false
             });
+
+            const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
+            const textarea = itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null;
+            if (row) {
+              row.dataset.questionId = '';
+              row.dataset.questionCompanyId = '';
+              const actionsCell = row.querySelector('.sticky-actions');
+              if (actionsCell) actionsCell.innerHTML = '';
+            }
+            if (textarea) {
+              textarea.value = '';
+              textarea.dataset.questionId = '';
+            }
             
             showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
-            await loadQuestionsEditor();
-            await refreshQuestions();
+            refreshQuestionsInBackground();
             
           } catch (err) {
             showNotify({ title:'Erreur', message: err.message, type:'error' });
@@ -5642,12 +5834,22 @@ function bindQuestionsEditorEvents() {
   });
 }
 
+function refreshQuestionsInBackground() {
+  refreshQuestions({ silent: true }).catch(err => {
+    console.warn('Erreur rafraichissement questions:', err);
+  });
+}
+
 async function validateAllQuestionsEditor() {
   if (isVisionneur() || isEntreprise()) {
     showNotify({ title:'Accès refusé', message:'Vous ne pouvez pas valider les fiches questions.', type:'error' });
     return;
   }
   if (!currentLot || !currentRound) return;
+  if (hasUnsavedQuestionChanges || isQuestionSaving || activeQuestionSavePromise) {
+    showNotify({ title:'Enregistrement', message:'Une question est encore en cours de sauvegarde.', type:'info' });
+    return;
+  }
 
   const selectedCompanyId = qs('#questions-target-company')?.value || '';
   const selectedCompanyName = selectedCompanyId
@@ -5657,93 +5859,211 @@ async function validateAllQuestionsEditor() {
   try {
     const params = new URLSearchParams({ round_id: String(currentRound.id) });
     if (selectedCompanyId) params.set('company_id', selectedCompanyId);
-    await api(`/question-config/lot/${currentLot.id}/validate?${params.toString()}`, { method: 'PUT' });
-    await loadQuestionsEditor();
-    await refreshQuestions();
+    await api(`/question-config/lot/${currentLot.id}/validate?${params.toString()}`, { method: 'PUT', showLoader: false });
+    await loadQuestionsEditor({ force: true, silent: true });
+    refreshQuestionsInBackground();
   } catch (err) {
     showNotify({ title:'Erreur', message: err.message, type:'error' });
   }
 }
 
-let hasUnsavedQuestionChanges = false;
-let isQuestionSaving = false;
-const pendingQuestionSaves = new Map();
-
 function markQuestionAsChanged(change) {
   hasUnsavedQuestionChanges = true;
   pendingQuestionSaves.set(String(change.itemId), change);
-  debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 800);
+  debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 350);
 }
 
 async function autoSaveQuestionsEditor() {
-  if (isQuestionSaving || pendingQuestionSaves.size === 0) return;
+  if (activeQuestionSavePromise || pendingQuestionSaves.size === 0) return;
   if (!currentLot || !currentRound) return;
 
+  activeQuestionSavePromise = runQuestionsAutoSaveBatch();
+  try {
+    await activeQuestionSavePromise;
+  } finally {
+    activeQuestionSavePromise = null;
+    if (pendingQuestionSaves.size > 0) {
+      debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 120);
+    }
+  }
+}
+
+async function waitForQuestionSaveIdle() {
+  if (!activeQuestionSavePromise) return;
+  try {
+    await activeQuestionSavePromise;
+  } catch {}
+}
+
+async function runQuestionsAutoSaveBatch() {
   isQuestionSaving = true;
   let hasSavedAtLeastOne = false;
 
   try {
     const changes = Array.from(pendingQuestionSaves.values());
-    for (const change of changes) {
+    const results = await Promise.all(changes.map(async (change) => {
+      const key = String(change.itemId);
+      if (pendingQuestionSaves.get(key) !== change || suppressedQuestionSaveItemIds.has(key)) {
+        return false;
+      }
+
       const textarea = qs(`.question-text-editor[data-item-id="${change.itemId}"]`);
       const statusIndicator = qs(`.save-status[data-item-id="${change.itemId}"]`);
       if (!textarea || !statusIndicator) {
-        if (pendingQuestionSaves.get(String(change.itemId)) === change) {
-          pendingQuestionSaves.delete(String(change.itemId));
+        if (pendingQuestionSaves.get(key) === change) {
+          pendingQuestionSaves.delete(key);
         }
-        continue;
+        return false;
+      }
+
+      const questionId = textarea.dataset.questionId ? Number(textarea.dataset.questionId) : null;
+      const dismissQuestionIds = Array.isArray(change.dismissQuestionIds)
+        ? change.dismissQuestionIds.map(Number).filter(Number.isFinite)
+        : [];
+      if (dismissQuestionIds.length > 0) {
+        try {
+          await Promise.all(dismissQuestionIds.map(id => api(`/question-config/question/${id}`, {
+            method: 'DELETE',
+            showLoader: false
+          })));
+
+          if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
+
+          const remainingQuestions = parseQuestionTextareaMetadata(textarea)
+            .filter(question => !dismissQuestionIds.includes(Number(question.id)));
+          textarea.dataset.questionIds = encodeURIComponent(JSON.stringify(remainingQuestions.map(q => q.id)));
+          textarea.dataset.questionLines = encodeURIComponent(JSON.stringify(remainingQuestions.map(q => q.text)));
+
+          const newPrimaryId = remainingQuestions[0]?.id || '';
+          textarea.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
+          const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
+          if (row) {
+            row.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
+            const validateBtn = row.querySelector('.btn-validate-editor-question');
+            const deleteBtn = row.querySelector('.btn-delete-editor-question');
+            if (newPrimaryId) {
+              if (validateBtn) validateBtn.dataset.questionId = String(newPrimaryId);
+              if (deleteBtn) deleteBtn.dataset.questionId = String(newPrimaryId);
+            } else {
+              const actionsCell = row.querySelector('.sticky-actions');
+              if (actionsCell) actionsCell.innerHTML = '';
+            }
+          }
+
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('check', 'icon-only');
+          statusIndicator.style.color = 'var(--success)';
+          setTimeout(() => {
+            statusIndicator.style.display = 'none';
+          }, 1200);
+          return true;
+        } catch (err) {
+          console.error('Erreur suppression question retiree:', err);
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+          statusIndicator.style.color = 'var(--copper)';
+          return false;
+        }
+      }
+
+      if (change.deleteQuestion) {
+        const deleteQuestionId = Number(change.questionId || questionId);
+        if (!deleteQuestionId) {
+          if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
+          statusIndicator.style.display = 'none';
+          return false;
+        }
+
+        try {
+          suppressedQuestionSaveItemIds.add(key);
+          await api(`/question-config/question/${deleteQuestionId}`, {
+            method: 'DELETE',
+            showLoader: false
+          });
+
+          if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
+          textarea.dataset.questionId = '';
+          const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
+          if (row) {
+            row.dataset.questionId = '';
+            row.dataset.questionCompanyId = '';
+            const actionsCell = row.querySelector('.sticky-actions');
+            if (actionsCell) actionsCell.innerHTML = '';
+          }
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('check', 'icon-only');
+          statusIndicator.style.color = 'var(--success)';
+          setTimeout(() => {
+            statusIndicator.style.display = 'none';
+          }, 1200);
+          return true;
+        } catch (err) {
+          console.error('Erreur suppression question vide:', err);
+          suppressedQuestionSaveItemIds.delete(key);
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+          statusIndicator.style.color = 'var(--copper)';
+          return false;
+        }
       }
 
       const currentQuestionText = textarea.value.trim();
       if (!currentQuestionText) {
-        if (pendingQuestionSaves.get(String(change.itemId)) === change) {
-          pendingQuestionSaves.delete(String(change.itemId));
+        if (pendingQuestionSaves.get(key) === change) {
+          pendingQuestionSaves.delete(key);
         }
         statusIndicator.style.display = 'none';
-        continue;
+        return false;
       }
 
-      const questionId = textarea.dataset.questionId ? Number(textarea.dataset.questionId) : null;
       const companyId = qs('#questions-target-company')?.value || String(change.companyId || '');
       if (!companyId) {
         statusIndicator.style.display = 'block';
         statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
         statusIndicator.style.color = 'var(--copper)';
-        continue;
+        return false;
       }
 
-      await saveQuestionWithCompany(
-        change.itemId,
-        questionId,
-        Number(companyId),
-        currentQuestionText,
-        { refreshList: false, silentError: true, showLoader: false }
-      );
+      try {
+        const result = await saveQuestionWithCompany(
+          change.itemId,
+          questionId,
+          Number(companyId),
+          currentQuestionText,
+          { refreshList: false, silentError: true, showLoader: false }
+        );
 
-      if (pendingQuestionSaves.get(String(change.itemId)) === change) {
-        pendingQuestionSaves.delete(String(change.itemId));
+        if (!result) return false;
+
+        if (pendingQuestionSaves.get(key) === change) {
+          pendingQuestionSaves.delete(key);
+        }
+
+        statusIndicator.style.display = 'block';
+        statusIndicator.innerHTML = icon('check', 'icon-only');
+        statusIndicator.style.color = 'var(--success)';
+        setTimeout(() => {
+          statusIndicator.style.display = 'none';
+        }, 1200);
+        return true;
+      } catch (err) {
+        console.error('Erreur autosave question:', err);
+        statusIndicator.style.display = 'block';
+        statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+        statusIndicator.style.color = 'var(--copper)';
+        return false;
       }
-      hasSavedAtLeastOne = true;
+    }));
 
-      statusIndicator.style.display = 'block';
-      statusIndicator.innerHTML = icon('check', 'icon-only');
-      statusIndicator.style.color = 'var(--success)';
-      setTimeout(() => {
-        statusIndicator.style.display = 'none';
-      }, 2000);
-    }
-
+    hasSavedAtLeastOne = results.some(Boolean);
     hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
     if (hasSavedAtLeastOne) {
-      await refreshQuestions({ silent: true });
+      refreshQuestionsInBackground();
     }
   } catch (err) {
     console.error('Erreur autosave éditeur questions:', err);
   } finally {
     isQuestionSaving = false;
-    if (pendingQuestionSaves.size > 0) {
-      debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 100);
-    }
   }
 }
 
@@ -5752,6 +6072,10 @@ function showCompanySelectModal(itemId, questionId, questionText) {
   const modal = qs('#company-select-modal');
   const modalSelect = qs('#modal-target-company-select');
   const headerSelect = qs('#questions-target-company');
+  if (!modal || !modalSelect || !headerSelect) return;
+  modal.dataset.itemId = String(itemId || '');
+  modal.dataset.questionId = questionId ? String(questionId) : '';
+  modal.dataset.questionText = String(questionText || '');
   
   // Synchroniser le modal avec la sélection du header
   modalSelect.value = headerSelect.value;
@@ -5763,12 +6087,13 @@ function showCompanySelectModal(itemId, questionId, questionText) {
   const cancelBtn = qs('#cancel-company-modal');
   const cancelHandler = () => {
     modal.classList.add('hidden');
-    cancelBtn.removeEventListener('click', cancelHandler);
-    confirmBtn.removeEventListener('click', confirmHandler);
+    cancelBtn.onclick = null;
+    confirmBtn.onclick = null;
   };
   
   // Gestionnaire pour le bouton Confirmer
   const confirmBtn = qs('#confirm-company-modal');
+  if (!cancelBtn || !confirmBtn) return;
   const confirmHandler = async () => {
     const companyId = modalSelect.value;
     
@@ -5782,15 +6107,18 @@ function showCompanySelectModal(itemId, questionId, questionText) {
     
     // Masquer le modal
     modal.classList.add('hidden');
-    cancelBtn.removeEventListener('click', cancelHandler);
-    confirmBtn.removeEventListener('click', confirmHandler);
+    cancelBtn.onclick = null;
+    confirmBtn.onclick = null;
     
     // Sauvegarder la question
-    await saveQuestionWithCompany(itemId, questionId, companyId, questionText);
+    const modalItemId = modal.dataset.itemId;
+    const modalQuestionId = modal.dataset.questionId ? Number(modal.dataset.questionId) : null;
+    const modalQuestionText = modal.dataset.questionText || '';
+    await saveQuestionWithCompany(modalItemId, modalQuestionId, companyId, modalQuestionText);
   };
   
-  cancelBtn.addEventListener('click', cancelHandler);
-  confirmBtn.addEventListener('click', confirmHandler);
+  cancelBtn.onclick = cancelHandler;
+  confirmBtn.onclick = confirmHandler;
 }
 
 // Fonction pour sauvegarder une question avec l'entreprise
@@ -5804,6 +6132,8 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
   if (!Number.isFinite(safeItemId) || !Number.isFinite(safeCompanyId)) {
     throw new Error('Paramètres invalides pour la sauvegarde de question');
   }
+
+  if (suppressedQuestionSaveItemIds.has(String(safeItemId))) return null;
 
   let result;
   if (questionId) {
@@ -5837,6 +6167,7 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
     row.dataset.questionId = result.id;
     row.dataset.questionCompanyId = safeCompanyId;
     textarea.dataset.questionId = result.id;
+    ensureQuestionEditorActionButtons(row, safeItemId, result.id, result.status === 'validated');
   }
 
   if (refreshList) {

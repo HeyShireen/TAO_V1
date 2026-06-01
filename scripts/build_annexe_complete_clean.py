@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -79,7 +79,27 @@ def add_source(doc: Document, source: Path) -> None:
 
 
 def append_table(dst_doc: Document, src_table) -> None:
-    dst_doc.element.body.append(deepcopy(src_table._element))
+    rows = len(src_table.rows)
+    cols = len(src_table.columns)
+    is_large = rows > 60 or cols > 10
+    if rows > 60 or cols > 10:
+        dst_doc.add_paragraph(
+            f"Tableau volumineux resume : {rows} lignes x {cols} colonnes. "
+            "Apercu limite ci-dessous pour conserver une annexe lisible."
+        )
+    row_limit = min(rows, 12 if is_large else rows)
+    col_limit = min(cols, 6 if is_large else cols)
+    if row_limit == 0 or col_limit == 0:
+        return
+    table = dst_doc.add_table(rows=0, cols=col_limit)
+    table.style = "Table Grid"
+    for row_index in range(row_limit):
+        dst_cells = table.add_row().cells
+        for col_index in range(col_limit):
+            dst_cells[col_index].text = src_table.cell(row_index, col_index).text
+    if is_large:
+        dst_doc.add_paragraph("Apercu limite aux 12 premieres lignes et 6 premieres colonnes.")
+    dst_doc.add_paragraph("")
 
 
 def append_paragraph(dst_doc: Document, src_paragraph) -> None:
@@ -162,6 +182,10 @@ def add_xlsx_section(doc: Document, source: Path, index: int) -> None:
     add_page_break(doc)
     doc.add_heading(f"Annexe {index:02d} - {source.stem}", level=1)
     add_source(doc, source)
+    doc.add_paragraph(
+        "Le planning complet est conserve dans le fichier Excel source. "
+        "Pour garder cette annexe lisible, seuls les premiers elements non vides sont repris ci-dessous."
+    )
     workbook = load_workbook(source, data_only=True)
     for sheet in workbook.worksheets:
         doc.add_heading(f"Feuille : {sheet.title}", level=2)
@@ -171,7 +195,9 @@ def add_xlsx_section(doc: Document, source: Path, index: int) -> None:
             while values and values[-1] == "":
                 values.pop()
             if any(values):
-                rows.append(values[:8])
+                rows.append(values[:6])
+            if len(rows) >= 12:
+                break
         if not rows:
             doc.add_paragraph("Feuille vide.")
             continue
@@ -182,6 +208,7 @@ def add_xlsx_section(doc: Document, source: Path, index: int) -> None:
             cells = table.add_row().cells
             for cell_index in range(width):
                 cells[cell_index].text = row[cell_index] if cell_index < len(row) else ""
+        doc.add_paragraph("Apercu limite aux 12 premieres lignes et 6 premieres colonnes non vides.")
 
 
 def external_documents() -> tuple[list[Path], list[Path]]:
@@ -189,7 +216,10 @@ def external_documents() -> tuple[list[Path], list[Path]]:
     xlsx_files = []
     if EXTERNAL_ANNEXES.exists():
         for path in sorted(EXTERNAL_ANNEXES.iterdir(), key=lambda p: p.name.lower()):
-            if path.name.startswith("Annexe_complete_AO_Link"):
+            if path.name.startswith("~$"):
+                continue
+            lowered = path.name.lower()
+            if lowered.startswith("annexe_complete_ao_link") or lowered.startswith("annexes_ao_link"):
                 continue
             if path.suffix.lower() == ".docx":
                 docx_files.append(path)
@@ -199,6 +229,12 @@ def external_documents() -> tuple[list[Path], list[Path]]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--workspace-only", action="store_true", help="Do not write the copy in the external Annexes folder.")
+    parser.add_argument("--external-name", default=OUT_EXTERNAL.name, help="Filename to write in the external Annexes folder.")
+    args = parser.parse_args()
+    external_output = EXTERNAL_ANNEXES / args.external_name
+
     doc = setup_document()
     doc.add_paragraph("Annexe complete AO Link", style="Title")
     doc.add_paragraph("Livrables, formation utilisateur et documents annexes du memoire d'entreprise.")
@@ -244,11 +280,11 @@ def main() -> None:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     doc.save(OUT_WORKSPACE)
-    if EXTERNAL_ANNEXES.exists():
-        doc.save(OUT_EXTERNAL)
+    if EXTERNAL_ANNEXES.exists() and not args.workspace_only:
+        doc.save(external_output)
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Document propre généré : {OUT_WORKSPACE}")
-    print(f"Copie memoire : {OUT_EXTERNAL}")
+    print(f"Copie memoire : {external_output}")
     print(f"Éléments inclus : {len(manifest)}")
 
 
