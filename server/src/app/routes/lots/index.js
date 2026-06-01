@@ -897,14 +897,11 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
 
       // Préparer MOE
       let q = null, pu = null, mt = null;
-      if (r.moe?.qty != null && r.moe.qty !== '' && !isNaN(Number(r.moe.qty))) {
-        q = Number(r.moe.qty);
-      }
-      if (r.moe?.pu != null && r.moe.pu !== '' && !isNaN(Number(r.moe.pu))) {
-        pu = Number(r.moe.pu);
-      }
-      if (r.moe?.mt != null && r.moe.mt !== '' && !isNaN(Number(r.moe.mt))) {
-        mt = Number(r.moe.mt);
+      q = parseGridNumber(r.moe?.qty);
+      pu = parseGridNumber(r.moe?.pu);
+      mt = parseGridNumber(r.moe?.mt);
+      if (q != null && pu != null) {
+        mt = q * pu;
       }
       moeData.push({ itemId, q, pu, mt, rowIndex });
 
@@ -914,16 +911,9 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
           const companyId = Number(cid);
           const u  = val?.u ?? null;
           let oq = null, op = null, om = null;
-          if (val?.qty != null && val.qty !== '' && !isNaN(Number(val.qty))) {
-            oq = Number(val.qty);
-          }
-          if (val?.pu != null && val.pu !== '' && !isNaN(Number(val.pu))) {
-            op = Number(val.pu);
-          }
-          const parsedAmount = parseGridNumber(val?.mt);
-          if (parsedAmount != null) {
-            om = parsedAmount;
-          }
+          oq = parseGridNumber(val?.qty);
+          op = parseGridNumber(val?.pu);
+          om = parseGridNumber(val?.mt);
           if (oq != null && op != null) {
             om = oq * op;
           }

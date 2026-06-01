@@ -455,8 +455,10 @@ function attachOfferDesigPillDelegates(container) {
 function isOfferUnanswered(qty, pu) {
   const qStr = (qty == null ? '' : String(qty)).trim();
   const pStr = (pu  == null ? '' : String(pu )).trim();
-  const qEmpty = qStr === '' || parseFloat(qStr) === 0 || isNaN(parseFloat(qStr));
-  const pEmpty = pStr === '' || parseFloat(pStr) === 0 || isNaN(parseFloat(pStr));
+  const q = parseNum(qStr);
+  const p = parseNum(pStr);
+  const qEmpty = qStr === '' || !Number.isFinite(q) || q === 0;
+  const pEmpty = pStr === '' || !Number.isFinite(p) || p === 0;
   return qEmpty || pEmpty;
 }
 /** Returns true when an offer has values while MOE has no expected total on that row */
@@ -7165,7 +7167,7 @@ function valueForCell(row, key){
   if (key === 'unit') return row.unit ?? '';
   if (key === 'moe.qty') return row.moe?.qty ?? '';
   if (key === 'moe.pu')  return row.moe?.pu  ?? '';
-  if (key === 'moe.mt')  return row.moe?.mt ?? '';
+  if (key === 'moe.mt')  return amountOf(row.moe?.qty, row.moe?.pu) || (row.moe?.mt ?? '');
   if (key.startsWith('c.')){
     const [, cid, sub] = key.split('.');
     const o = row.offers?.[cid] || {};
@@ -7231,7 +7233,9 @@ function recalcRowAmountsRow(r){
     const qty = moeQtyVal;
     const pu  = moePuVal;
     const mt  = getCell(r,cMt );
-    if (mt) mt.textContent = sheetRows[r]?.moe?.mt ?? '';
+    const amount = amountOf(qty, pu);
+    if (sheetRows[r]?.moe) sheetRows[r].moe.mt = amount;
+    if (mt) mt.textContent = amount;
   }
   // Entreprises
   for (const c of lotCompanies){
@@ -7749,8 +7753,18 @@ function attachSheetDelegates(){
 
 function detectDelimiter(sample){
   if (sample.includes('\t')) return '\t';
-  const sc = (sample.split(';').length-1), cc = (sample.split(',').length-1);
-  return sc >= cc ? ';' : ',';
+  if (sample.includes(';')) return ';';
+  const lines = String(sample || '').replace(/\r/g, '').split('\n').filter(Boolean);
+  const commaLooksLikeDelimiter = lines.some((line) => {
+    const commaCount = (line.match(/,/g) || []).length;
+    if (commaCount === 0) return false;
+    if (commaCount > 1) return true;
+    const commaIndex = line.indexOf(',');
+    const before = line[commaIndex - 1] || '';
+    const after = line[commaIndex + 1] || '';
+    return !(/\d/.test(before) && /\d/.test(after));
+  });
+  return commaLooksLikeDelimiter ? ',' : '\t';
 }
 
 /* ====== Indicateur changements non sauvegardés ====== */

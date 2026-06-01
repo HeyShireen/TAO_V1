@@ -29,6 +29,24 @@ async function getLotIdForOptionItem(itemId) {
   return result.rows[0]?.lot_id || null;
 }
 
+function parseGridNumber(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  let s = String(value).trim();
+  if (!s) return null;
+  s = s.replace(/[â‚¬$Â£Â¥â‚¹]/g, '').replace(/[\u00A0\u202F\u2009\s]/g, '');
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  if (lastComma > -1 || lastDot > -1) {
+    const last = Math.max(lastComma, lastDot);
+    const decSep = s[last];
+    s = s.replace(/[.,]/g, (m, idx) => (idx === last ? m : '')).replace(decSep, '.');
+  }
+  s = s.replace(/[^0-9.\-]/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Récupérer les options d'un lot avec leurs items et offres
 router.get('/lot/:lotId', async (req, res) => {
   try {
@@ -443,8 +461,8 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
 
       // MOE
       let moeQty = null, moePu = null;
-      if (r.moe?.qty != null && r.moe.qty !== '' && !isNaN(Number(r.moe.qty))) moeQty = Number(r.moe.qty);
-      if (r.moe?.pu != null && r.moe.pu !== '' && !isNaN(Number(r.moe.pu))) moePu = Number(r.moe.pu);
+      moeQty = parseGridNumber(r.moe?.qty);
+      moePu = parseGridNumber(r.moe?.pu);
 
       const moeExists = await client.query('SELECT id FROM option_item_moe WHERE option_item_id = $1', [itemId]);
       if (moeExists.rowCount > 0) {
@@ -464,8 +482,8 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
         for (const [cid, val] of Object.entries(r.offers)) {
           const companyId = Number(cid);
           let oq = null, op = null;
-          if (val?.qty != null && val.qty !== '' && !isNaN(Number(val.qty))) oq = Number(val.qty);
-          if (val?.pu != null && val.pu !== '' && !isNaN(Number(val.pu))) op = Number(val.pu);
+          oq = parseGridNumber(val?.qty);
+          op = parseGridNumber(val?.pu);
 
           const exists = await client.query(
             'SELECT id FROM option_item_offers WHERE option_item_id=$1 AND company_id=$2 AND round_id=$3',
