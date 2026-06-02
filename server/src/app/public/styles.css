@@ -561,7 +561,8 @@ h1,h2{
   flex: 1;
 }
 .analysis-mode-switch[data-value="company"] .ams-btn[data-mode="company"],
-.analysis-mode-switch[data-value="comparison"] .ams-btn[data-mode="comparison"] {
+.analysis-mode-switch[data-value="comparison"] .ams-btn[data-mode="comparison"],
+.analysis-mode-switch[data-value="questions"] .ams-btn[data-mode="questions"] {
   color: #fff;
 }
 
@@ -1918,6 +1919,116 @@ body.demo-tutorial [data-demo-tip]::after {
 #questions-editor-table .question-text-col:hover .question-column-resize-handle::after {
   background: var(--accent);
 }
+#questions-editor-table .questions-multi-group {
+  position: relative;
+  text-align: left;
+  border-left: 2px solid var(--accent) !important;
+}
+#questions-editor-table .sticky-question-company {
+  width: var(--question-company-width, 320px);
+  min-width: var(--question-company-width, 320px);
+  max-width: var(--question-company-width, 320px);
+  white-space: normal;
+  overflow: visible;
+}
+#questions-editor-table th.sticky-question-company {
+  position: sticky;
+  top: 0;
+  z-index: 52;
+  vertical-align: middle;
+  height: var(--questions-head-combined-height, auto);
+  min-height: var(--questions-head-combined-height, auto);
+  line-height: 1.25;
+  overflow: hidden;
+}
+#questions-editor-table td.sticky-question-company {
+  position: relative;
+}
+#questions-editor-table th.sticky-question-company .questions-toggle-label {
+  display: inline-block;
+  max-width: calc(var(--question-company-width, 320px) - 42px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+#questions-editor-table .question-company-cell {
+  padding-right: 18px;
+  vertical-align: top;
+}
+#questions-editor-table .question-company-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 90;
+}
+#questions-editor-table .question-company-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+#questions-editor-table .question-company-col:hover .question-company-resize-handle::after {
+  background: var(--accent);
+}
+.questions-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: color .15s, background .15s;
+  vertical-align: middle;
+}
+.questions-toggle-btn:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.10); }
+.questions-toggle-btn::after { content: '\25C0'; }
+#questions-editor-table.questions-columns-collapsed .questions-toggle-btn::after { content: '\25B6'; }
+.questions-toggle-label { margin-left: 4px; }
+#questions-editor-table.questions-columns-collapsed .sticky-question-company {
+  width: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+  padding: 2px 4px !important;
+  overflow: hidden;
+}
+#questions-editor-table.questions-columns-collapsed .sticky-question-company textarea,
+#questions-editor-table.questions-columns-collapsed .sticky-question-company .question-cell-actions,
+#questions-editor-table.questions-columns-collapsed .sticky-question-company .save-status {
+  display: none !important;
+}
+.question-cell-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+.question-cell-actions .btn-validate-editor-question,
+.question-cell-actions .btn-delete-editor-question {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  cursor: pointer;
+}
+.question-cell-actions .btn-validate-editor-question { color: var(--success); }
+.question-cell-actions .btn-delete-editor-question { color: var(--danger); }
 /* Bouton rétraction colonne Désignation */
 .desig-toggle-btn {
   display: inline-flex;

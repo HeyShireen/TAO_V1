@@ -188,12 +188,17 @@ router.put('/:optionId', isResponsableOrAdmin, async (req, res) => {
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
     if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
+    const cleanDesignation = designation ? String(designation).trim() : '';
+    if (!cleanDesignation) {
+      return res.status(400).json({ error: 'DÃ©signation requise' });
+    }
+
     const result = await query(
       `UPDATE options
        SET designation = $1
        WHERE id = $2
        RETURNING *`,
-      [designation, optionId]
+      [cleanDesignation, optionId]
     );
 
     if (result.rowCount === 0) {
@@ -435,6 +440,7 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
     await client.query('BEGIN');
 
     const resultItems = [];
+    const affectedOptionIds = new Set();
 
     for (const r of rows) {
       const optionId = r.option_id ? Number(r.option_id) : null;
@@ -442,12 +448,20 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
       const num = r.num ?? '';
       const designation = (r.designation ?? '').trim();
       const unit = r.unit ?? '';
+      if (optionId) affectedOptionIds.add(optionId);
 
       // Update or insert item
       if (itemId) {
         await client.query(
-          'UPDATE option_items SET num=$1, designation=$2, unit=$3 WHERE id=$4',
-          [num, designation, unit, itemId]
+          `UPDATE option_items oi
+           SET num=$1, designation=$2, unit=$3
+           FROM options o
+           WHERE oi.id=$4
+             AND oi.option_id=$5
+             AND o.id=oi.option_id
+             AND o.lot_id=$6
+             AND o.round_id=$7`,
+          [num, designation, unit, itemId, optionId, lotId, roundId]
         );
       } else if (optionId) {
         const ins = await client.query(
@@ -507,14 +521,19 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
     }
 
     const keptItemIds = resultItems.map((item) => item.id).filter(Boolean);
-    await client.query(
-      `DELETE FROM option_items oi
-       USING options o
-       WHERE o.id = oi.option_id
-         AND o.lot_id = $1
-         AND NOT (oi.id = ANY($2::bigint[]))`,
-      [lotId, keptItemIds]
-    );
+    const affectedOptionIdsArray = Array.from(affectedOptionIds).filter(Number.isFinite);
+    if (affectedOptionIdsArray.length > 0) {
+      await client.query(
+        `DELETE FROM option_items oi
+         USING options o
+         WHERE o.id = oi.option_id
+           AND o.lot_id = $1
+           AND o.round_id = $2
+           AND o.id = ANY($3::int[])
+           AND NOT (oi.id = ANY($4::bigint[]))`,
+        [lotId, roundId, affectedOptionIdsArray, keptItemIds]
+      );
+    }
 
     await client.query('COMMIT');
     res.json({ ok: true, items: resultItems });

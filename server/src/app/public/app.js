@@ -58,6 +58,8 @@ let currentProjectExport = { projectId: null, projectName: '', lots: [], scopeLe
 let nextSimulationId = 1;
 const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
 const QUESTION_COLUMN_WIDTH_STORAGE_KEY = 'questionsEditorQuestionColumnWidth';
+const QUESTION_COMPANY_WIDTHS_STORAGE_KEY = 'questionsEditorQuestionColumnWidths';
+const QUESTION_COMPANY_COLLAPSED_STORAGE_KEY = 'questionsEditorQuestionColumnsCollapsed';
 const LOT_THRESHOLD_FIELDS = [
   'qty_very_low_threshold', 'qty_low_threshold', 'qty_high_threshold', 'qty_very_high_threshold',
   'price_very_low_threshold', 'price_low_threshold', 'price_high_threshold', 'price_very_high_threshold',
@@ -205,6 +207,80 @@ function initQuestionColumnResize() {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+  });
+}
+
+function clampQuestionCompanyColumnWidth(width) {
+  const n = Number(width);
+  if (!Number.isFinite(n)) return 320;
+  return Math.max(220, Math.min(900, Math.round(n)));
+}
+
+function getQuestionCompanyColumnWidths() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(QUESTION_COMPANY_WIDTHS_STORAGE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setQuestionCompanyColumnWidth(companyId, width) {
+  const table = qs('#questions-editor-table');
+  if (!table || !companyId) return;
+  const safeWidth = clampQuestionCompanyColumnWidth(width);
+  table.style.setProperty(`--questions-company-${companyId}-width`, `${safeWidth}px`);
+  const widths = getQuestionCompanyColumnWidths();
+  widths[String(companyId)] = safeWidth;
+  localStorage.setItem(QUESTION_COMPANY_WIDTHS_STORAGE_KEY, JSON.stringify(widths));
+}
+
+function getQuestionCompanyColumnWidth(companyId) {
+  const widths = getQuestionCompanyColumnWidths();
+  return clampQuestionCompanyColumnWidth(widths[String(companyId)] || 320);
+}
+
+function applyQuestionCompanyColumnWidths(companies = []) {
+  const table = qs('#questions-editor-table');
+  if (!table) return;
+  for (const company of companies) {
+    table.style.setProperty(`--questions-company-${company.id}-width`, `${getQuestionCompanyColumnWidth(company.id)}px`);
+  }
+}
+
+function initQuestionCompanyColumnResizes(companies = []) {
+  const table = qs('#questions-editor-table');
+  if (!table) return;
+  applyQuestionCompanyColumnWidths(companies);
+
+  qsa('.question-company-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const companyId = handle.dataset.companyId;
+      const startX = event.clientX;
+      const startWidth = getQuestionCompanyColumnWidth(companyId);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMove = (moveEvent) => {
+        const nextWidth = clampQuestionCompanyColumnWidth(startWidth + moveEvent.clientX - startX);
+        table.style.setProperty(`--questions-company-${companyId}-width`, `${nextWidth}px`);
+      };
+
+      const onUp = (upEvent) => {
+        const nextWidth = clampQuestionCompanyColumnWidth(startWidth + upEvent.clientX - startX);
+        setQuestionCompanyColumnWidth(companyId, nextWidth);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
   });
 }
 
@@ -3371,12 +3447,17 @@ async function openLot(id, lotMeta){
 async function loadLotOptions(){
   if (!currentLot || !currentRound) return;
   try {
+    const selectedOptionId = qs('#options-add-select')?.value || '';
     const options = await api(`/options/lot/${currentLot.id}?round_id=${currentRound.id}`);
     lotOptions = options.map(opt => ({ ...opt }));
     const optSheet = qs('#options-sheet-view');
     if (optSheet && !optSheet.classList.contains('hidden')) {
-      renderOptionsSheetTable();
       setupOptionsSheetControls();
+      const sel = qs('#options-add-select');
+      if (sel && selectedOptionId && sel.querySelector(`option[value="${selectedOptionId}"]`)) {
+        sel.value = selectedOptionId;
+      }
+      renderOptionsSheetTable();
     }
   } catch (err) {
     console.error('Erreur chargement options:', err);
@@ -3387,13 +3468,23 @@ function setupOptionsSheetControls(){
   const sel = qs('#options-add-select');
   const btn = qs('#options-add-btn');
   const createBtn = qs('#options-create-btn');
+  const renameBtn = qs('#options-rename-btn');
+  const deleteBtn = qs('#options-delete-btn');
   if (!sel || !btn) return;
+  const previousValue = sel.value;
   sel.innerHTML = '';
   for (const opt of lotOptions){
     const o = document.createElement('option');
     o.value = String(opt.id); o.textContent = opt.designation;
     sel.appendChild(o);
   }
+  if (previousValue && sel.querySelector(`option[value="${previousValue}"]`)) {
+    sel.value = previousValue;
+  }
+  const hasOptions = lotOptions.length > 0;
+  btn.disabled = !hasOptions || isVisionneur();
+  if (renameBtn) renameBtn.disabled = !hasOptions || isVisionneur();
+  if (deleteBtn) deleteBtn.disabled = !hasOptions || isVisionneur();
   if (createBtn) {
     createBtn.onclick = async () => {
       if (isVisionneur()) return;
@@ -3404,19 +3495,82 @@ function setupOptionsSheetControls(){
       const design = prompt('Désignation de l\'option:');
       if (!design) return;
       try {
-        await api(`/options/lot/${currentLot.id}`, {
+        const created = await api(`/options/lot/${currentLot.id}`, {
           method: 'POST', body: { round_id: currentRound.id, designation: design }
         });
         await loadLotOptions();
+        setupOptionsSheetControls();
+        if (created?.id && sel.querySelector(`option[value="${created.id}"]`)) {
+          sel.value = String(created.id);
+        }
+        renderOptionsSheetTable();
         await refreshCompare();
       } catch (err) {
         showNotify({ title: 'Erreur', message: err.message, type: 'error' });
       }
     };
   }
+  if (renameBtn) {
+    renameBtn.onclick = async () => {
+      if (isVisionneur()) return;
+      const optionId = Number(sel.value);
+      if (!optionId) return;
+      const opt = lotOptions.find(o => Number(o.id) === optionId);
+      const nextName = prompt('Nouveau nom de l\'option:', opt?.designation || '');
+      if (!nextName || !nextName.trim()) return;
+      try {
+        const updated = await api(`/options/${optionId}`, {
+          method: 'PUT',
+          body: { designation: nextName.trim() }
+        });
+        if (opt) opt.designation = updated?.designation || nextName.trim();
+        await loadLotOptions();
+        setupOptionsSheetControls();
+        if (sel.querySelector(`option[value="${optionId}"]`)) sel.value = String(optionId);
+        renderOptionsSheetTable();
+        await refreshCompare({ silent: true });
+      } catch (err) {
+        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
+      }
+    };
+  }
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      if (isVisionneur()) return;
+      const optionId = Number(sel.value);
+      if (!optionId) return;
+      const opt = lotOptions.find(o => Number(o.id) === optionId);
+      showDeleteConfirmation({
+        title: 'Supprimer une option',
+        message: `Confirmer la suppression de l'option "${opt?.designation || 'selectionnee'}" ?`,
+        extra: '<strong>Attention:</strong> tous les articles, montants MOE, offres et questions rattaches a cette option seront supprimes.',
+        onConfirm: async () => {
+          try {
+            await api(`/options/${optionId}`, { method: 'DELETE', showLoader: false });
+            selectedRoundOptions.delete(optionId);
+            lotOptions = lotOptions.filter(o => Number(o.id) !== optionId);
+            setupOptionsSheetControls();
+            renderOptionsSheetTable();
+            await refreshCompare({ silent: true });
+            showNotify({ title:'Option', message:'Option supprimee', type:'success' });
+          } catch (err) {
+            showNotify({ title:'Erreur', message: err.message, type:'error' });
+          }
+        }
+      });
+    };
+  }
+  sel.onchange = async () => {
+    if (hasUnsavedOptionsChanges) {
+      await autoSaveOptionsGrid();
+    }
+    renderOptionsSheetTable();
+  };
   if (isVisionneur()) {
     btn.disabled = true;
     if (createBtn) createBtn.style.display = 'none';
+    if (renameBtn) renameBtn.style.display = 'none';
+    if (deleteBtn) deleteBtn.style.display = 'none';
   }
   const addOptionItem = async () => {
     if (isVisionneur()) return;
@@ -3966,7 +4120,9 @@ async function deleteAllQuestions(){
     onConfirm: async () => {
       try {
         qsa('.question-text-editor').forEach(textarea => {
-          if (textarea.dataset.itemId) suppressedQuestionSaveItemIds.add(String(textarea.dataset.itemId));
+          if (textarea.dataset.itemId) {
+            suppressedQuestionSaveItemIds.add(textarea.dataset.saveKey || questionSaveKey(textarea.dataset.itemId, textarea.dataset.companyId || ''));
+          }
         });
         pendingQuestionSaves.clear();
         hasUnsavedQuestionChanges = false;
@@ -4936,11 +5092,35 @@ async function refreshQuestions({ silent = false } = {}){
 
 /* ================= Éditeur de Questions ================= */
 let questionsDesigCollapsed = false;
+let questionsColumnsCollapsed = localStorage.getItem(QUESTION_COMPANY_COLLAPSED_STORAGE_KEY) === '1';
 let hasUnsavedQuestionChanges = false;
 let isQuestionSaving = false;
 let activeQuestionSavePromise = null;
 const pendingQuestionSaves = new Map();
 const suppressedQuestionSaveItemIds = new Set();
+
+function questionSaveKey(itemId, companyId = '') {
+  return `${itemId}_${companyId || ''}`;
+}
+
+function findQuestionTextarea(saveKey) {
+  return qsa('.question-text-editor').find(textarea => textarea.dataset.saveKey === String(saveKey)) || null;
+}
+
+function findQuestionStatusIndicator(saveKey) {
+  return qsa('.save-status').find(indicator => indicator.dataset.saveKey === String(saveKey)) || null;
+}
+
+function setQuestionsTargetCompanyControlState(analysisMode) {
+  const disabled = analysisMode === 'questions';
+  const label = qs('#questions-target-company-label');
+  const select = qs('#questions-target-company');
+  if (label) label.style.opacity = disabled ? '0.45' : '';
+  if (select) {
+    select.disabled = disabled;
+    select.title = disabled ? 'Le mode Questions affiche toutes les entreprises.' : '';
+  }
+}
 
 // Démarrer l'auto-actualisation de l'éditeur de questions (chaque 10 secondes)
 function startQuestionsEditorAutoRefresh() {
@@ -4977,6 +5157,40 @@ async function loadQuestionsEditor({ silent = false, force = false } = {}){
     const roundParam = `?round_id=${currentRound.id}`;
     const lotData = await api(`/lots/${currentLot.id}${roundParam}`, { showLoader: !silent });
     const questionsData = await api(`/question-config/lot/${currentLot.id}${roundParam}`, { showLoader: !silent });
+    const optionsData = await api(`/options/lot/${currentLot.id}${roundParam}`, { showLoader: false }).catch(() => []);
+    lotOptions = Array.isArray(optionsData) ? optionsData.map(opt => ({ ...opt })) : [];
+
+    for (const opt of lotOptions) {
+      for (const optionItem of (opt.items || [])) {
+        const optionItemId = Number(optionItem.id);
+        if (!Number.isFinite(optionItemId)) continue;
+        const syntheticItemId = -optionItemId;
+        lotData.items = lotData.items || [];
+        lotData.moe = lotData.moe || [];
+        lotData.offers = lotData.offers || [];
+        lotData.items.push({
+          id: syntheticItemId,
+          option_item_id: optionItemId,
+          is_option: true,
+          num: formatOptionNum(optionItem.num),
+          designation: `${opt.designation || 'Option'} - ${optionItem.designation || ''}`,
+          unit: optionItem.unit || ''
+        });
+        lotData.moe.push({
+          item_id: syntheticItemId,
+          qty: optionItem.moe_qty,
+          unit_price: optionItem.moe_unit_price,
+          amount: amountOf(optionItem.moe_qty, optionItem.moe_unit_price)
+        });
+        for (const offer of (optionItem.offers || [])) {
+          lotData.offers.push({
+            ...offer,
+            item_id: syntheticItemId,
+            unit: offer.unit || ''
+          });
+        }
+      }
+    }
 
     // Calcul du statut de validation par entreprise (toutes les fiches du tour validées)
     const companyValidation = new Map();
@@ -5036,9 +5250,11 @@ async function loadQuestionsEditor({ silent = false, force = false } = {}){
 
 function renderQuestionsEditorTable(lotData, questionsData) {
   const viewFilter = qs('#questions-view-filter').value;
-  const analysisMode = qs('#questions-analysis-mode')?.dataset?.value || 'company';
+  const analysisMode = qs('#questions-analysis-mode')?.value || qs('#questions-analysis-mode')?.dataset?.value || 'company';
   const isComparisonMode = analysisMode === 'comparison';
-  const targetCompany = qs('#questions-target-company').value;
+  const isQuestionsMode = analysisMode === 'questions';
+  setQuestionsTargetCompanyControlState(analysisMode);
+  const targetCompany = isQuestionsMode ? '' : qs('#questions-target-company').value;
   const amountFilter = qs('#questions-amount-filter')?.value || 'all';
   const thead = qs('#questions-editor-head');
   const tbody = qs('#questions-editor-body');
@@ -5140,7 +5356,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   // Créer une map des questions par item_id + company_id (plusieurs questions possibles)
   const questionsMap = new Map();
   for (const q of questionsData || []) {
-    const key = `${q.item_id}_${q.company_id}`;
+    const rowId = q.option_item_id != null ? -Number(q.option_item_id) : Number(q.item_id);
+    const key = `${rowId}_${q.company_id}`;
     if (!questionsMap.has(key)) questionsMap.set(key, []);
     questionsMap.get(key).push(q);
   }
@@ -5157,7 +5374,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     (showQuantities ? (isComparisonMode ? 3 : (1 + companies.length)) : 0) +
     (showUnitPrices ? (isComparisonMode ? 3 : (1 + companies.length)) : 0) +
     (showTotals ? (isComparisonMode ? 3 : (1 + companies.length)) : 0);
-  const emptyColspan = 5 + metricsColCount;
+  const questionColCount = isQuestionsMode ? companies.length : 1;
+  const emptyColspan = 4 + questionColCount + 1 + metricsColCount;
 
   const formatDeltaPct = (referenceValue, comparedValue) => {
     const reference = parseNum(referenceValue);
@@ -5177,11 +5395,31 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     return `<td class="${deviationClass}${highlightClass}">${sign}${deviation.toFixed(1)}%</td>`;
   };
 
+  const companyHeaderStyle = (company, strong = false) => {
+    if (!company?.color) return '';
+    return ` style="border-left:${strong ? 3 : 2}px solid ${company.color};background:${hexToRgba(company.color, strong ? 0.18 : 0.08)}"`;
+  };
+
   let headerTop = '<tr class="head-row-1">';
   headerTop += '<th rowspan="2" class="sticky-col question-num-col">Num</th>';
   headerTop += '<th rowspan="2" class="sticky-actions question-actions-col">Actions</th>';
   headerTop += '<th rowspan="2" class="sticky-col2 question-designation-col"><button class="desig-toggle-btn" id="questions-desig-toggle" title="Afficher / masquer la désignation"></button><span class="desig-toggle-label">Désignation</span></th>';
-  headerTop += '<th rowspan="2" class="sticky-question questions-group-start question-text-col">Question<span id="questions-question-resize" class="question-column-resize-handle" title="Redimensionner la colonne Question"></span></th>';
+  if (isQuestionsMode) {
+    if (companies.length === 0) {
+      headerTop += '<th rowspan="2" class="questions-group-start sticky-question-company">Aucune entreprise</th>';
+    } else {
+      for (let i = 0; i < companies.length; i++) {
+        const c = companies[i];
+        const toggle = i === 0
+          ? '<button class="questions-toggle-btn" id="questions-columns-toggle" title="Reduire / afficher les questions"></button>'
+          : '';
+        const colorStyle = c.color ? `border-left:3px solid ${c.color};background:${hexToRgba(c.color, 0.10)};` : '';
+        headerTop += `<th rowspan="2" class="questions-group-start sticky-question-company question-company-col" style="--question-company-width:var(--questions-company-${c.id}-width, 320px);${colorStyle}">${toggle}<span class="questions-toggle-label">Question - ${escapeHtml(c.name)}</span><span class="question-company-resize-handle" data-company-id="${c.id}" title="Redimensionner cette colonne"></span></th>`;
+      }
+    }
+  } else {
+    headerTop += '<th rowspan="2" class="sticky-question questions-group-start question-text-col">Question<span id="questions-question-resize" class="question-column-resize-handle" title="Redimensionner la colonne Question"></span></th>';
+  }
   headerTop += '<th rowspan="2" class="question-unit-col">Unité</th>';
 
   if (showCompanyUnits) headerTop += `<th colspan="${isComparisonMode ? 1 : companies.length}" class="company-unit-group">Unités entreprise</th>`;
@@ -5215,43 +5453,95 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     if (showCompanyUnits) {
       for (const c of companies) {
         const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-        headerSub += `<th class="questions-group-start question-company-unit-col${highlightClass}">Unité ${c.name}</th>`;
+        headerSub += `<th class="questions-group-start question-company-unit-col${highlightClass}"${companyHeaderStyle(c, true)}>Unité ${c.name}</th>`;
       }
     }
     if (showQuantities) {
       headerSub += `<th class="${showCompanyUnits ? '' : 'questions-group-start '}moe-border moe-highlight">Qté MOE</th>`;
       for (const c of companies) {
         const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-        headerSub += `<th class="${highlightClass}">Qté ${c.name}</th>`;
+        headerSub += `<th class="${highlightClass}"${companyHeaderStyle(c)}>Qté ${c.name}</th>`;
       }
     }
     if (showUnitPrices) {
       headerSub += '<th class="questions-group-start moe-highlight">PU MOE</th>';
       for (const c of companies) {
         const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-        headerSub += `<th class="${highlightClass}">PU ${c.name}</th>`;
+        headerSub += `<th class="${highlightClass}"${companyHeaderStyle(c)}>PU ${c.name}</th>`;
       }
     }
     if (showTotals) {
       headerSub += '<th class="questions-group-start moe-highlight">Montant MOE</th>';
       for (const c of companies) {
         const highlightClass = targetCompany && c.id == targetCompany ? ' target-company-highlight' : '';
-        headerSub += `<th class="${highlightClass}">Montant ${c.name}</th>`;
+        headerSub += `<th class="${highlightClass}"${companyHeaderStyle(c)}>Montant ${c.name}</th>`;
       }
     }
   }
   headerSub += '</tr>';
 
   thead.innerHTML = headerTop + headerSub;
-  initQuestionColumnResize();
+  if (isQuestionsMode) initQuestionCompanyColumnResizes(companies);
+  else initQuestionColumnResize();
   recalcQuestionsHeaderOffsets();
   // Restaurer l'état rétracté et lier le bouton toggle
-  qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
+  const questionsTable = qs('#questions-editor-table');
+  questionsTable?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
+  questionsTable?.classList.toggle('questions-columns-collapsed', isQuestionsMode && questionsColumnsCollapsed);
   qs('#questions-desig-toggle')?.addEventListener('click', () => {
     questionsDesigCollapsed = !questionsDesigCollapsed;
     qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
     recalcQuestionsHeaderOffsets();
   });
+  qs('#questions-columns-toggle')?.addEventListener('click', () => {
+    questionsColumnsCollapsed = !questionsColumnsCollapsed;
+    localStorage.setItem(QUESTION_COMPANY_COLLAPSED_STORAGE_KEY, questionsColumnsCollapsed ? '1' : '0');
+    qs('#questions-editor-table')?.classList.toggle('questions-columns-collapsed', questionsColumnsCollapsed);
+    recalcQuestionsHeaderOffsets();
+  });
+
+  const getDisplayQuestionsForCompany = (item, companyId, itemOffers) => {
+    const questionKey = `${item.id}_${companyId}`;
+    const existingQuestions = (questionsMap.get(questionKey) || []).slice();
+    const selectedOfferForQuestion = itemOffers.find(o => Number(o.company_id) === Number(companyId)) || null;
+
+    if (existingQuestions.length > 1 && selectedOfferForQuestion?.unitMismatchInfo?.hasMismatch) {
+      const mismatchOnly = existingQuestions.filter(q => q.question_type === 'unit_mismatch');
+      if (mismatchOnly.length > 0) return mismatchOnly;
+    }
+    if (existingQuestions.length > 1 && selectedOfferForQuestion?.isUnanswered) {
+      return [existingQuestions[0]];
+    }
+    return existingQuestions;
+  };
+
+  const renderQuestionCell = (item, company, displayQuestions, extraClass = '') => {
+    const existingQuestion = displayQuestions[0] || null;
+    const questionId = existingQuestion?.id || '';
+    const questionText = displayQuestions.map(q => q.question_text || '').filter(Boolean).join('\n- ');
+    const questionIdsData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.id).filter(Boolean)));
+    const questionLinesData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.question_text || '')));
+    const questionStatus = existingQuestion?.status || 'pending';
+    const isValidated = questionStatus === 'validated';
+    const saveKey = questionSaveKey(item.id, company?.id || '');
+    const companyId = company?.id || '';
+    const validateTitle = isValidated ? 'Désactiver la validation' : 'Valider';
+    const disabled = isVisionneur() || isEntreprise() ? 'disabled' : '';
+    const rows = displayQuestions.length > 1 ? 3 : 1;
+
+    const widthStyle = companyId ? ` style="--question-company-width:var(--questions-company-${companyId}-width, 320px)"` : '';
+    let cell = `<td class="${extraClass}" data-save-key="${saveKey}" data-company-id="${companyId}"${widthStyle}>`;
+    if (questionId) {
+      cell += '<div class="question-cell-actions">';
+      cell += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+      cell += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      cell += '</div>';
+    }
+    cell += `<textarea id="question-${item.id}-${companyId || 'target'}" name="question-${item.id}-${companyId || 'target'}" class="question-text-editor" data-save-key="${saveKey}" data-item-id="${item.id}" data-company-id="${companyId}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${rows}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${disabled}>${escapeHtml(questionText)}</textarea>`;
+    cell += `<div class="save-status" data-save-key="${saveKey}" data-item-id="${item.id}" data-company-id="${companyId}" style="position:absolute;top:4px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
+    cell += '</td>';
+    return cell;
+  };
 
   let html = '';
   
@@ -5301,11 +5591,13 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const existingQuestion = displayQuestions[0] || null;
     
     const questionId = existingQuestion?.id || '';
-    const questionText = displayQuestions.map(q => q.question_text || '').filter(Boolean).join('\n• ');
+    const questionText = displayQuestions.map(q => q.question_text || '').filter(Boolean).join('\n- ');
     const questionIdsData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.id).filter(Boolean)));
     const questionLinesData = encodeURIComponent(JSON.stringify(displayQuestions.map(q => q.question_text || '')));
     const questionStatus = existingQuestion?.status || 'pending';
     const questionCompanyId = existingQuestion?.company_id || '';
+    const singleQuestionCompanyId = questionCompanyId || targetCompany || '';
+    const singleQuestionSaveKey = questionSaveKey(item.id, singleQuestionCompanyId);
     const sourceCompany = Number.isFinite(Number(item.source_company_id))
       ? companiesById.get(Number(item.source_company_id))
       : null;
@@ -5324,20 +5616,30 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
     // Actions (déplacées à gauche)
     html += '<td class="sticky-actions">';
-    if (questionId) {
-      html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
-      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+    if (!isQuestionsMode && questionId) {
+      const actionCompanyId = questionCompanyId || targetCompany || '';
+      const actionSaveKey = questionSaveKey(item.id, actionCompanyId);
+      html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
     }
     html += '</td>';
     html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}"><span class="desig-text">${sourceCompanyBadge}${item.designation || ''}${desigPills}</span></td>`;
+    if (isQuestionsMode) {
+      if (companies.length === 0) {
+        html += '<td class="sticky-question-company questions-group-start"></td>';
+      } else {
+        for (const company of companies) {
+          const companyQuestions = getDisplayQuestionsForCompany(item, company.id, itemOffers);
+          html += renderQuestionCell(item, company, companyQuestions, `sticky-question-company questions-group-start question-company-cell question-company-${company.id}`);
+        }
+      }
+    } else {
     // Question (figée, après Désignation)
     html += '<td class="sticky-question questions-group-start">';
-    html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-item-id="${item.id}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
-    if (displayQuestions.length > 1) {
-      html += `<div style="font-size:11px;color:var(--muted);margin-top:4px">${displayQuestions.length} questions affichées</div>`;
-    }
-    html += `<div class="save-status" data-item-id="${item.id}" style="position:absolute;top:4px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
+    html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-save-key="${singleQuestionSaveKey}" data-item-id="${item.id}" data-company-id="${singleQuestionCompanyId}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
+    html += `<div class="save-status" data-save-key="${singleQuestionSaveKey}" data-item-id="${item.id}" data-company-id="${singleQuestionCompanyId}" style="position:absolute;top:4px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
     html += '</td>';
+    }
     html += `<td>${item.unit || ''}</td>`;
     
     if (isComparisonMode) {
@@ -5526,7 +5828,9 @@ function recalcQuestionsHeaderOffsets() {
     const headRect = head.getBoundingClientRect();
     const row2Rect = row2.getBoundingClientRect();
     const offset = Math.max(0, Math.round(row2Rect.top - headRect.top) - 1);
+    const combinedHeight = Math.max(offset, Math.round(row2Rect.bottom - headRect.top));
     head.style.setProperty('--questions-head-row1-height', `${offset}px`);
+    head.style.setProperty('--questions-head-combined-height', `${combinedHeight}px`);
     head.querySelectorAll('tr.head-row-2 th').forEach(th => { th.style.top = `${offset}px`; });
   };
 
@@ -5540,7 +5844,7 @@ async function handleValidateEditorQuestionButton(currentBtn) {
   try {
     if (isValidated) {
       if (!questionId) {
-        showNotify({ title:'Validation', message:'Aucune fiche Ã  dÃ©valider', type:'info' });
+        showNotify({ title:'Validation', message:'Aucune fiche à dévalider', type:'info' });
         return;
       }
       await api(`/question-config/question/${questionId}`, {
@@ -5573,6 +5877,8 @@ async function handleValidateEditorQuestionButton(currentBtn) {
 async function handleDeleteEditorQuestionButton(currentBtn) {
   const questionId = currentBtn.dataset.questionId;
   const itemId = currentBtn.dataset.itemId;
+  const companyId = currentBtn.dataset.companyId || '';
+  const saveKey = currentBtn.dataset.saveKey || questionSaveKey(itemId, companyId);
 
   showDeleteConfirmation({
     title: 'Supprimer une fiche question',
@@ -5581,8 +5887,8 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
     onConfirm: async () => {
       try {
         if (itemId) {
-          suppressedQuestionSaveItemIds.add(String(itemId));
-          pendingQuestionSaves.delete(String(itemId));
+          suppressedQuestionSaveItemIds.add(saveKey);
+          pendingQuestionSaves.delete(saveKey);
           hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
         }
         await waitForQuestionSaveIdle();
@@ -5592,7 +5898,7 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
         });
 
         const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
-        const textarea = itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null;
+        const textarea = findQuestionTextarea(saveKey) || (itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null);
         if (row) {
           row.dataset.questionId = '';
           row.dataset.questionCompanyId = '';
@@ -5602,6 +5908,7 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
         if (textarea) {
           textarea.value = '';
           textarea.dataset.questionId = '';
+          textarea.closest('td')?.querySelector('.question-cell-actions')?.remove();
         }
 
         showNotify({ title:'Succes', message:'Question supprimee', type:'success' });
@@ -5613,15 +5920,30 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
   });
 }
 
-function ensureQuestionEditorActionButtons(row, itemId, questionId, isValidated = false) {
+function ensureQuestionEditorActionButtons(row, itemId, questionId, isValidated = false, companyId = '', saveKey = '') {
   if (!row || !questionId) return;
+  const cell = saveKey ? findQuestionTextarea(saveKey)?.closest('td') : null;
+  if (cell?.classList?.contains('question-company-cell') && !cell.querySelector('.btn-validate-editor-question')) {
+    const validateTitle = isValidated ? 'Desactiver la validation' : 'Valider';
+    const actions = document.createElement('div');
+    actions.className = 'question-cell-actions';
+    actions.innerHTML =
+      `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
+      `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+    cell.insertBefore(actions, cell.firstChild);
+    actions.querySelector('.btn-validate-editor-question')
+      ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
+    actions.querySelector('.btn-delete-editor-question')
+      ?.addEventListener('click', (e) => handleDeleteEditorQuestionButton(e.currentTarget));
+    return;
+  }
   const actionsCell = row.querySelector('.sticky-actions');
   if (!actionsCell || actionsCell.querySelector('.btn-validate-editor-question')) return;
 
   const validateTitle = isValidated ? 'Desactiver la validation' : 'Valider';
   actionsCell.innerHTML =
-    `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
-    `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+    `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
+    `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
 
   actionsCell.querySelector('.btn-validate-editor-question')
     ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
@@ -5684,10 +6006,12 @@ function bindQuestionsEditorEvents() {
   qsa('.question-text-editor').forEach(textarea => {
     textarea.addEventListener('input', () => {
       const itemId = textarea.dataset.itemId;
+      const companyIdFromCell = textarea.dataset.companyId || '';
+      const saveKey = textarea.dataset.saveKey || questionSaveKey(itemId, companyIdFromCell || qs('#questions-target-company')?.value || '');
       const questionId = textarea.dataset.questionId;
       const questionText = textarea.value.trim();
-      const statusIndicator = qs(`.save-status[data-item-id="${itemId}"]`);
-      suppressedQuestionSaveItemIds.delete(String(itemId));
+      const statusIndicator = findQuestionStatusIndicator(saveKey);
+      suppressedQuestionSaveItemIds.delete(saveKey);
 
       if (!statusIndicator) return;
 
@@ -5699,12 +6023,14 @@ function bindQuestionsEditorEvents() {
           statusIndicator.style.color = 'var(--muted)';
           markQuestionAsChanged({
             itemId: String(itemId),
+            companyId: companyIdFromCell ? Number(companyIdFromCell) : null,
+            saveKey,
             questionId: Number(questionId),
             deleteQuestion: true,
           });
         } else {
           statusIndicator.style.display = 'none';
-          pendingQuestionSaves.delete(String(itemId));
+          pendingQuestionSaves.delete(saveKey);
         }
         return;
       }
@@ -5717,6 +6043,8 @@ function bindQuestionsEditorEvents() {
         statusIndicator.style.color = 'var(--muted)';
         markQuestionAsChanged({
           itemId: String(itemId),
+          companyId: companyIdFromCell ? Number(companyIdFromCell) : null,
+          saveKey,
           questionId: questionId ? Number(questionId) : null,
           dismissQuestionIds,
           questionText,
@@ -5724,7 +6052,7 @@ function bindQuestionsEditorEvents() {
         return;
       }
 
-      const companyId = qs('#questions-target-company')?.value;
+      const companyId = companyIdFromCell || qs('#questions-target-company')?.value;
       if (!companyId) {
         showCompanySelectModal(itemId, questionId, questionText);
         statusIndicator.style.display = 'block';
@@ -5739,6 +6067,7 @@ function bindQuestionsEditorEvents() {
 
       markQuestionAsChanged({
         itemId: String(itemId),
+        saveKey,
         questionId: questionId ? Number(questionId) : null,
         companyId: Number(companyId),
         questionText,
@@ -5793,6 +6122,8 @@ function bindQuestionsEditorEvents() {
       const currentBtn = e.currentTarget;
       const questionId = currentBtn.dataset.questionId;
       const itemId = currentBtn.dataset.itemId;
+      const companyId = currentBtn.dataset.companyId || '';
+      const saveKey = currentBtn.dataset.saveKey || questionSaveKey(itemId, companyId);
       
       showDeleteConfirmation({
         title: 'Supprimer une fiche question',
@@ -5801,8 +6132,8 @@ function bindQuestionsEditorEvents() {
         onConfirm: async () => {
           try {
             if (itemId) {
-              suppressedQuestionSaveItemIds.add(String(itemId));
-              pendingQuestionSaves.delete(String(itemId));
+              suppressedQuestionSaveItemIds.add(saveKey);
+              pendingQuestionSaves.delete(saveKey);
               hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
             }
             await waitForQuestionSaveIdle();
@@ -5812,7 +6143,7 @@ function bindQuestionsEditorEvents() {
             });
 
             const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
-            const textarea = itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null;
+            const textarea = findQuestionTextarea(saveKey) || (itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null);
             if (row) {
               row.dataset.questionId = '';
               row.dataset.questionCompanyId = '';
@@ -5822,6 +6153,7 @@ function bindQuestionsEditorEvents() {
             if (textarea) {
               textarea.value = '';
               textarea.dataset.questionId = '';
+              textarea.closest('td')?.querySelector('.question-cell-actions')?.remove();
             }
             
             showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
@@ -5871,7 +6203,7 @@ async function validateAllQuestionsEditor() {
 
 function markQuestionAsChanged(change) {
   hasUnsavedQuestionChanges = true;
-  pendingQuestionSaves.set(String(change.itemId), change);
+  pendingQuestionSaves.set(change.saveKey || questionSaveKey(change.itemId, change.companyId || ''), change);
   debounceAutoSave('questions-editor', autoSaveQuestionsEditor, 350);
 }
 
@@ -5904,13 +6236,13 @@ async function runQuestionsAutoSaveBatch() {
   try {
     const changes = Array.from(pendingQuestionSaves.values());
     const results = await Promise.all(changes.map(async (change) => {
-      const key = String(change.itemId);
+      const key = change.saveKey || questionSaveKey(change.itemId, change.companyId || '');
       if (pendingQuestionSaves.get(key) !== change || suppressedQuestionSaveItemIds.has(key)) {
         return false;
       }
 
-      const textarea = qs(`.question-text-editor[data-item-id="${change.itemId}"]`);
-      const statusIndicator = qs(`.save-status[data-item-id="${change.itemId}"]`);
+      const textarea = findQuestionTextarea(key);
+      const statusIndicator = findQuestionStatusIndicator(key);
       if (!textarea || !statusIndicator) {
         if (pendingQuestionSaves.get(key) === change) {
           pendingQuestionSaves.delete(key);
@@ -5938,6 +6270,15 @@ async function runQuestionsAutoSaveBatch() {
 
           const newPrimaryId = remainingQuestions[0]?.id || '';
           textarea.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
+          const cell = textarea.closest('td');
+          const cellValidateBtn = cell?.querySelector('.btn-validate-editor-question');
+          const cellDeleteBtn = cell?.querySelector('.btn-delete-editor-question');
+          if (newPrimaryId) {
+            if (cellValidateBtn) cellValidateBtn.dataset.questionId = String(newPrimaryId);
+            if (cellDeleteBtn) cellDeleteBtn.dataset.questionId = String(newPrimaryId);
+          } else if (cell?.classList?.contains('question-company-cell')) {
+            cell.querySelector('.question-cell-actions')?.remove();
+          }
           const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
           if (row) {
             row.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
@@ -5985,6 +6326,10 @@ async function runQuestionsAutoSaveBatch() {
 
           if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
           textarea.dataset.questionId = '';
+          const cell = textarea.closest('td');
+          if (cell?.classList?.contains('question-company-cell')) {
+            cell.querySelector('.question-cell-actions')?.remove();
+          }
           const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
           if (row) {
             row.dataset.questionId = '';
@@ -6018,7 +6363,7 @@ async function runQuestionsAutoSaveBatch() {
         return false;
       }
 
-      const companyId = qs('#questions-target-company')?.value || String(change.companyId || '');
+      const companyId = String(change.companyId || textarea.dataset.companyId || qs('#questions-target-company')?.value || '');
       if (!companyId) {
         statusIndicator.style.display = 'block';
         statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
@@ -6032,7 +6377,7 @@ async function runQuestionsAutoSaveBatch() {
           questionId,
           Number(companyId),
           currentQuestionText,
-          { refreshList: false, silentError: true, showLoader: false }
+          { refreshList: false, silentError: true, showLoader: false, saveKey: key }
         );
 
         if (!result) return false;
@@ -6125,7 +6470,7 @@ function showCompanySelectModal(itemId, questionId, questionText) {
 
 // Fonction pour sauvegarder une question avec l'entreprise
 async function saveQuestionWithCompany(itemId, questionId, companyId, questionText, options = {}) {
-  const { refreshList = true, silentError = false, showLoader = true } = options;
+  const { refreshList = true, silentError = false, showLoader = true, saveKey = null } = options;
 
   if (!currentLot || !currentRound) return null;
 
@@ -6135,7 +6480,11 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
     throw new Error('Paramètres invalides pour la sauvegarde de question');
   }
 
-  if (suppressedQuestionSaveItemIds.has(String(safeItemId))) return null;
+  const isOptionItemQuestion = safeItemId < 0;
+  const optionItemId = isOptionItemQuestion ? Math.abs(safeItemId) : null;
+
+  const effectiveSaveKey = saveKey || questionSaveKey(safeItemId, safeCompanyId);
+  if (suppressedQuestionSaveItemIds.has(effectiveSaveKey)) return null;
 
   let result;
   if (questionId) {
@@ -6148,12 +6497,15 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
       showLoader,
     });
   } else {
+    const itemRef = isOptionItemQuestion
+      ? { option_item_id: optionItemId }
+      : { item_id: safeItemId };
     result = await api('/question-config/question', {
       method: 'POST',
       body: {
         lot_id: currentLot.id,
         round_id: currentRound.id,
-        item_id: safeItemId,
+        ...itemRef,
         company_id: safeCompanyId,
         question_text: String(questionText || '').trim(),
         question_type: 'manual',
@@ -6164,12 +6516,12 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
   }
 
   const row = qs(`#questions-editor-body tr[data-item-id="${safeItemId}"]`);
-  const textarea = qs(`.question-text-editor[data-item-id="${safeItemId}"]`);
+  const textarea = findQuestionTextarea(effectiveSaveKey) || qs(`.question-text-editor[data-item-id="${safeItemId}"]`);
   if (result?.id && row && textarea) {
     row.dataset.questionId = result.id;
     row.dataset.questionCompanyId = safeCompanyId;
     textarea.dataset.questionId = result.id;
-    ensureQuestionEditorActionButtons(row, safeItemId, result.id, result.status === 'validated');
+    ensureQuestionEditorActionButtons(row, safeItemId, result.id, result.status === 'validated', safeCompanyId, effectiveSaveKey);
   }
 
   if (refreshList) {
@@ -6540,7 +6892,9 @@ function renderOptionsCompareTable(companies, entrepriseMode){
 
   function buildOptionsSheetModel(){
     optionsSheetRows = [];
+    const selectedOptionId = Number(qs('#options-add-select')?.value || lotOptions[0]?.id || 0);
     for (const opt of lotOptions){
+      if (selectedOptionId && Number(opt.id) !== selectedOptionId) continue;
       for (const item of (opt.items || [])){
         const row = {
           item_id: Number(item.id),
@@ -6635,6 +6989,18 @@ function renderOptionsCompareTable(companies, entrepriseMode){
 
   function appendOptionsRowDOM(rIndex, data){
     const tr = document.createElement('tr');
+    const tdActions = document.createElement('td');
+    tdActions.className = 'cell-readonly options-row-actions';
+    tdActions.style.cssText = 'text-align:center;padding:4px 8px;width:44px';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn ghost btn-delete-option-row';
+    deleteBtn.dataset.r = String(rIndex);
+    deleteBtn.title = 'Supprimer cette ligne option';
+    deleteBtn.innerHTML = icon('trash', 'icon-only');
+    if (isVisionneur()) deleteBtn.disabled = true;
+    tdActions.appendChild(deleteBtn);
+    tr.appendChild(tdActions);
     for (let c=0; c<optionsColModel.length; c++){
       const col = optionsColModel[c];
       const td = document.createElement('td');
@@ -6652,10 +7018,43 @@ function renderOptionsCompareTable(companies, entrepriseMode){
     qs('#options-sheet-body').appendChild(tr);
   }
 
+  async function deleteOptionsRow(rIndex){
+    const row = optionsSheetRows[rIndex];
+    if (!row) return;
+    const itemId = row.item_id ? Number(row.item_id) : null;
+    const removeLocalRow = () => {
+      optionsSheetRows.splice(rIndex, 1);
+      const opt = lotOptions.find(o => Number(o.id) === Number(row.option_id));
+      if (opt) {
+        opt.items = (opt.items || []).filter(item => Number(item.id) !== Number(itemId));
+      }
+      renderOptionsSheetTable();
+      setupOptionsSheetControls();
+    };
+
+    showDeleteConfirmation({
+      title: 'Supprimer une ligne option',
+      message: 'Confirmer la suppression de cette ligne option ?',
+      onConfirm: async () => {
+        try {
+          if (itemId) {
+            await api(`/options/items/${itemId}`, { method: 'DELETE', showLoader: false });
+          }
+          removeLocalRow();
+          await refreshCompare({ silent: true });
+          showNotify({ title:'Option', message:'Ligne supprimee', type:'success' });
+        } catch (err) {
+          showNotify({ title:'Erreur', message: err.message, type:'error' });
+        }
+      }
+    });
+  }
+
   function ensureOptionsRows(n){
     while (qsa('#options-sheet-body tr').length < n){
       const lastRow = optionsSheetRows[optionsSheetRows.length - 1];
-      const optionId = lastRow?.option_id || lotOptions[0]?.id;
+      const selectedOptionId = Number(qs('#options-add-select')?.value || 0);
+      const optionId = selectedOptionId || lastRow?.option_id || lotOptions[0]?.id;
       if (!optionId) break;
       const blank = { item_id:null, option_id:optionId, option_designation: lotOptions.find(o=>o.id===optionId)?.designation||'', num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
       for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
@@ -6759,6 +7158,14 @@ function renderOptionsCompareTable(companies, entrepriseMode){
     body.addEventListener('focusin', (e) => {
       const td = e.target.closest('td'); if (!td) return;
       td.dataset.prev = td.textContent;
+    });
+
+    body.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-delete-option-row');
+      if (!btn) return;
+      e.preventDefault();
+      const r = Number(btn.dataset.r);
+      if (Number.isInteger(r)) deleteOptionsRow(r);
     });
 
     body.addEventListener('input', (e) => {
@@ -6869,12 +7276,17 @@ function renderOptionsCompareTable(companies, entrepriseMode){
     body.innerHTML = '';
 
     if (optionsSheetRows.length === 0){
-      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Aucune option disponible</td></tr>';
+      body.innerHTML = `<tr><td colspan="${optionsColModel.length + 1}" style="text-align:center;padding:16px;color:var(--muted)">Aucun article dans cette option</td></tr>`;
       return;
     }
 
     // Header row 1: base cols (rowSpan=2) + company groups
     const tr1 = document.createElement('tr');
+    const thActions = document.createElement('th');
+    thActions.textContent = '';
+    thActions.rowSpan = 2;
+    thActions.style.cssText = 'text-align:center;width:44px';
+    tr1.appendChild(thActions);
     const baseCount = optionsColModel.findIndex(col => col.key.startsWith('c.'));
     const actualBaseCount = baseCount === -1 ? optionsColModel.length : baseCount;
     for (let i=0; i<actualBaseCount; i++){
@@ -8284,6 +8696,7 @@ function renderSheetBindings(){
     if (typeof hasUnsavedOptionsChanges !== 'undefined' && hasUnsavedOptionsChanges) {
       await autoSaveOptionsGrid();
     }
+    await loadLotOptions();
     await refreshCompare({ silent: true });
     clearSheetSelection();
     hide('#sheet-view'); hide('#sheet-actions'); show('#compare-view');
@@ -8298,8 +8711,8 @@ function renderSheetBindings(){
     show('#sheet-view'); show('#sheet-actions'); hide('#compare-view');
     show('#options-sheet-view'); hide('#options-compare-view');
     qs('#mode-edit').classList.add('active-mode'); qs('#mode-compare').classList.remove('active-mode');
-    renderOptionsSheetTable();
     setupOptionsSheetControls();
+    renderOptionsSheetTable();
   });
 
   // Raccourcis globaux
@@ -11623,15 +12036,10 @@ if (typeof window !== 'undefined') {
 
   // Éditeur de questions
   qs('#questions-view-filter')?.addEventListener('change', loadQuestionsEditor);
-  qs('#questions-analysis-mode')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('.ams-btn');
-    if (!btn) return;
-    const sw = qs('#questions-analysis-mode');
-    const mode = btn.dataset.mode;
-    if (sw && mode && sw.dataset.value !== mode) {
-      sw.dataset.value = mode;
-      loadQuestionsEditor();
-    }
+  qs('#questions-analysis-mode')?.addEventListener('change', (e) => {
+    const mode = e.target.value || 'company';
+    setQuestionsTargetCompanyControlState(mode);
+    loadQuestionsEditor();
   });
   qs('#questions-target-company')?.addEventListener('change', loadQuestionsEditor);
   qs('#questions-amount-filter')?.addEventListener('change', loadQuestionsEditor);

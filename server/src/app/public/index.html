@@ -323,6 +323,8 @@
                 <select id="options-add-select"></select>
               </label>
               <button id="options-create-btn" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-plus"></use></svg>Ajouter option</button>
+              <button id="options-rename-btn" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-edit"></use></svg>Renommer</button>
+              <button id="options-delete-btn" class="btn ghost" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-trash"></use></svg>Supprimer option</button>
               <button id="options-add-btn" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-plus"></use></svg>Ajouter article</button>
             </div>
             <table id="options-sheet-table">
@@ -365,13 +367,14 @@
                 <option value="totals">Montants totaux uniquement</option>
               </select>
 
-              <label style="font-weight:600;margin-left:16px">Mode :</label>
-              <div class="analysis-mode-switch" id="questions-analysis-mode" data-value="company" role="group" aria-label="Mode d'analyse">
-                <button class="ams-btn" data-mode="company" type="button">Entreprises</button>
-                <button class="ams-btn" data-mode="comparison" type="button">MOE vs Entreprise</button>
-              </div>
+              <label for="questions-analysis-mode" style="font-weight:600;margin-left:16px">Mode :</label>
+              <select id="questions-analysis-mode" name="questions-analysis-mode" class="compact-select" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)">
+                <option value="company">Entreprises</option>
+                <option value="comparison">MOE vs Entreprise</option>
+                <option value="questions">Questions</option>
+              </select>
               
-              <label for="questions-target-company" style="font-weight:600;margin-left:16px;color:var(--copper)">Entreprise ciblée:</label>
+              <label id="questions-target-company-label" for="questions-target-company" style="font-weight:600;margin-left:16px;color:var(--copper)">Entreprise ciblée:</label>
               <select id="questions-target-company" name="questions-target-company" class="compact-select" style="padding:8px;border-radius:8px;border:2px solid var(--copper);background:var(--input-bg);color:var(--fg);font-weight:600">
                 <option value="">Sélectionner une entreprise...</option>
               </select>
