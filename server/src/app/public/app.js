@@ -54,6 +54,8 @@ let roundsSimulations = [];
 let roundsSimulationsInitialized = false;
 let pendingEmailExport = null;
 let dataExportContext = 'data-sheet';
+let dataExportSelectedOptions = new Set();
+let dataExportAvailableOptions = [];
 let currentProjectExport = { projectId: null, projectName: '', lots: [], scopeLevel: 'project', scopeLotId: null };
 let nextSimulationId = 1;
 const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
@@ -1946,6 +1948,7 @@ async function confirmProjectExport() {
         questionLotId,
         questionLotIds,
         selections,
+        selectedOptions: exportParams.selectedOptions || [],
         roundsComparisonParams: {
           roundFrom: exportParams.roundFrom,
           roundTo: exportParams.roundTo,
@@ -2017,6 +2020,7 @@ async function exportFullProjectBundleFromRound(round) {
           lotAnalysis: true,
           questionSheets: true
         },
+        selectedOptions: roundsComparisonParams.selectedOptions || [],
         roundsComparisonParams
       },
       filenameFallback: `Exports_Affaire_${currentProject.id}.zip`
@@ -4396,6 +4400,8 @@ async function exportRAO(){
   if (!currentProject) return;
   try {
     await downloadFromApi(`${API_BASE}/exports/rao/${currentProject.id}`, {
+      method: 'POST',
+      body: { selectedOptions: Array.from(selectedRoundOptions) },
       filenameFallback: `RAO_${currentProject.name}_${new Date().toISOString().split('T')[0]}.docx`
     });
     showNotify({ title: 'Succès', message: 'RAO généré avec succès', type: 'success' });
@@ -4466,7 +4472,7 @@ async function confirmRaoExport() {
           subject,
           message,
           exportType: 'rao',
-          exportParams: { projectId: currentProject.id }
+          exportParams: { projectId: currentProject.id, selectedOptions: Array.from(selectedRoundOptions) }
         }
       });
       closeRaoExportModal();
@@ -4554,6 +4560,93 @@ function getRoundsComparisonExportParams() {
       selectedOptions: Array.from(selectedRoundOptions)
     }
   };
+}
+
+function getDataExportSelectedOptions() {
+  return qsa('#data-export-options-list input[type="checkbox"]:checked')
+    .map(input => Number(input.value))
+    .filter(Number.isFinite);
+}
+
+function renderDataExportOptions(options = []) {
+  const field = qs('#data-export-options-field');
+  const list = qs('#data-export-options-list');
+  if (!field || !list) return;
+  dataExportAvailableOptions = Array.isArray(options) ? options : [];
+  list.innerHTML = '';
+  dataExportSelectedOptions = new Set();
+  if (dataExportContext !== 'lot-compare' || !options.length) {
+    field.classList.add('hidden');
+    return;
+  }
+  field.classList.remove('hidden');
+  for (const opt of options) {
+    const id = Number(opt.id);
+    const label = document.createElement('label');
+    label.className = 'checkbox-row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = String(id);
+    input.addEventListener('change', () => {
+      if (input.checked) dataExportSelectedOptions.add(id);
+      else dataExportSelectedOptions.delete(id);
+    });
+    const text = document.createElement('span');
+    text.textContent = opt.designation || `Option ${id}`;
+    label.appendChild(input);
+    label.appendChild(text);
+    list.appendChild(label);
+  }
+}
+
+async function loadDataExportOptionsForCurrentLot() {
+  if (dataExportContext !== 'lot-compare' || !currentLot || !currentRound) {
+    renderDataExportOptions([]);
+    return [];
+  }
+  try {
+    const options = await api(`/options/lot/${currentLot.id}?round_id=${currentRound.id}`, { showLoader: false });
+    renderDataExportOptions(Array.isArray(options) ? options : []);
+    return Array.isArray(options) ? options : [];
+  } catch (err) {
+    renderDataExportOptions([]);
+    showNotify({ title: 'Options', message: 'Options indisponibles pour cet export', type: 'info' });
+    return [];
+  }
+}
+
+function buildSelectedOptionsPrintHtml(options = []) {
+  const selected = new Set(getDataExportSelectedOptions());
+  const selectedOptions = options.filter(opt => selected.has(Number(opt.id)));
+  if (!selectedOptions.length) return '';
+  const companyById = new Map((lotCompanies || []).map(c => [Number(c.id), c.name || `Entreprise ${c.id}`]));
+  const rows = [];
+  for (const opt of selectedOptions) {
+    for (const item of (opt.items || [])) {
+      const moeQty = parseFloat(item.moe_qty);
+      const moePu = parseFloat(item.moe_unit_price);
+      const moeAmount = Number.isFinite(moeQty) && Number.isFinite(moePu) ? moeQty * moePu : null;
+      const offerParts = (item.offers || []).map(offer => {
+        const qty = parseFloat(offer.qty);
+        const pu = parseFloat(offer.unit_price);
+        const amount = Number.isFinite(qty) && Number.isFinite(pu) ? qty * pu : null;
+        return `${escapeHtml(companyById.get(Number(offer.company_id)) || `Entreprise ${offer.company_id}`)}: ${amount === null ? '-' : amount.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR'}`;
+      });
+      rows.push(`
+        <tr>
+          <td>${escapeHtml(opt.designation || '')}</td>
+          <td>${escapeHtml(`${item.num || ''} ${item.designation || ''}`.trim())}</td>
+          <td>${moeAmount === null ? '-' : moeAmount.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR'}</td>
+          <td>${offerParts.join('<br>') || '-'}</td>
+        </tr>`);
+    }
+  }
+  return `
+    <h3>Options retenues</h3>
+    <table>
+      <thead><tr><th>Option</th><th>Article</th><th>MOE option</th><th>Offres option</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>`;
 }
 
 function exportRoundsComparisonPDF() {
@@ -4664,13 +4757,14 @@ async function confirmRoundsExport() {
   }
 }
 
-function exportCurrentDataPDF() {
+async function exportCurrentDataPDF() {
   const isCompareContext = dataExportContext === 'lot-compare';
   const selector = isCompareContext ? '#compare-table' : '#sheet-table';
   const title = isCompareContext
     ? `Comparatif Lot - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim()
     : `Données Lot - ${currentProject?.name || ''} ${currentRound ? `(Tour ${currentRound.round_number} - ${currentRound.name})` : ''}`.trim();
-  exportTableToPDF(selector, title || 'Données Lot');
+  const options = isCompareContext ? dataExportAvailableOptions : [];
+  exportTableToPDF(selector, title || 'Données Lot', buildSelectedOptionsPrintHtml(options));
 }
 
 async function exportCurrentDataExcel() {
@@ -4687,21 +4781,13 @@ async function exportCurrentDataExcel() {
     const exportUrl = isCompareContext
       ? `${API_BASE}/exports/lot-comparison/${currentLot.id}?round_id=${currentRound.id}`
       : `${API_BASE}/exports/summary/${currentRound.id}`;
-    const res = await fetch(exportUrl, {
-      credentials: 'include'
+    await downloadFromApi(exportUrl, {
+      method: 'POST',
+      filenameFallback: isCompareContext
+        ? `Comparatif_${currentLot?.code || currentLot?.id}_${currentLot?.name || ''}_Tour${currentRound.round_number}.xlsx`
+        : `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`,
+      body: { selectedOptions: getDataExportSelectedOptions() }
     });
-    if (!res.ok) throw new Error('Erreur export');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = isCompareContext
-      ? `Comparatif_${currentLot?.code || currentLot?.id}_${currentLot?.name || ''}_Tour${currentRound.round_number}.xlsx`
-      : `Recap_${currentProject?.name}_Tour${currentRound.round_number}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   } catch (err) {
     showNotify({ title:'Erreur', message:'Export: ' + err.message, type:'error' });
   }
@@ -4713,6 +4799,7 @@ function openDataExportModal() {
     return;
   }
   dataExportContext = 'data-sheet';
+  renderDataExportOptions([]);
   const formatEl = qs('#data-export-format');
   const toEl = qs('#data-export-email-to');
   const subjectEl = qs('#data-export-email-subject');
@@ -4728,12 +4815,13 @@ function openDataExportModal() {
   show('#data-export-modal');
 }
 
-function openLotCompareExportModal() {
+async function openLotCompareExportModal() {
   if (!currentRound) {
     showNotify({ title:'Validation', message:'Sélectionnez un tour', type:'info' });
     return;
   }
   dataExportContext = 'lot-compare';
+  await loadDataExportOptionsForCurrentLot();
   const formatEl = qs('#data-export-format');
   const toEl = qs('#data-export-email-to');
   const subjectEl = qs('#data-export-email-subject');
@@ -4766,7 +4854,7 @@ async function confirmDataExport() {
 
   if (format === 'pdf') {
     closeDataExportModal();
-    exportCurrentDataPDF();
+    await exportCurrentDataPDF();
     return;
   }
 
@@ -4803,8 +4891,8 @@ async function confirmDataExport() {
           message,
           exportType: dataExportContext === 'lot-compare' ? 'lot-comparison' : 'summary',
           exportParams: dataExportContext === 'lot-compare'
-            ? { lotId: currentLot?.id, roundId: currentRound.id }
-            : { roundId: currentRound.id }
+            ? { lotId: currentLot?.id, roundId: currentRound.id, selectedOptions: getDataExportSelectedOptions() }
+            : { roundId: currentRound.id, selectedOptions: getDataExportSelectedOptions() }
         }
       });
       closeDataExportModal();
@@ -12256,7 +12344,7 @@ function initPasswordSettings() {
 }
 
 /* ================== EXPORT PDF ================== */
-function exportTableToPDF(tableSelector, title) {
+function exportTableToPDF(tableSelector, title, extraHtml = '') {
   const table = qs(tableSelector);
   if (!table) {
     showNotify({ title:'Validation', message:'Tableau introuvable', type:'info' });
@@ -12286,6 +12374,7 @@ function exportTableToPDF(tableSelector, title) {
       <h2>${escapeHtml(title)}</h2>
       <div class="meta">Projet: ${escapeHtml(currentProject?.name || '-')}${currentRound ? ` · Tour ${currentRound.round_number} - ${escapeHtml(currentRound.name || '')}` : ''} · ${dateStr}</div>
       ${table.outerHTML}
+      ${extraHtml || ''}
     </body>
     </html>`;
     

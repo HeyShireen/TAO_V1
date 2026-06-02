@@ -312,6 +312,210 @@ function formatLotWorksheetName(lot) {
   return sanitizeWorksheetName(`${code}${name}`.trim(), code);
 }
 
+function parseSelectedOptionIds(reqOrValue) {
+  const raw = reqOrValue?.body?.selectedOptions
+    ?? reqOrValue?.query?.selectedOptions
+    ?? reqOrValue?.selectedOptions
+    ?? reqOrValue;
+  const values = Array.isArray(raw)
+    ? raw
+    : String(raw || '').split(',');
+  return [...new Set(values.map(Number).filter(Number.isFinite))];
+}
+
+function itemExportKey(item) {
+  if (item?.export_key) return item.export_key;
+  return item?.is_option ? `option:${item.id}` : `item:${item?.id}`;
+}
+
+function addToMapTotal(map, key, value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return;
+  map.set(key, (map.get(key) || 0) + amount);
+}
+
+async function fetchSelectedOptionItemsForLot({ lotId, roundId, selectedOptionIds, isEntreprise, userCompanyId }) {
+  if (!selectedOptionIds?.length || !roundId) {
+    return {
+      rows: [],
+      moeByItem: new Map(),
+      offersByItemCompany: new Map()
+    };
+  }
+
+  const itemsRes = await query(
+    `SELECT oi.id, oi.num, oi.designation, oi.unit,
+            opt.id AS option_id, opt.designation AS option_designation,
+            oim.qty AS moe_qty, oim.unit_price AS moe_unit_price
+     FROM option_items oi
+     JOIN options opt ON opt.id = oi.option_id
+     LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
+     WHERE opt.lot_id = $1
+       AND opt.round_id = $2
+       AND opt.id = ANY($3::int[])
+     ORDER BY opt.created_at ASC, opt.id ASC, oi.num ASC, oi.id ASC`,
+    [lotId, roundId, selectedOptionIds]
+  );
+
+  const optionItemIds = itemsRes.rows.map(row => Number(row.id)).filter(Number.isFinite);
+  const rows = itemsRes.rows.map(row => ({
+    id: Number(row.id),
+    export_key: `option:${row.id}`,
+    is_option: true,
+    option_id: Number(row.option_id),
+    option_designation: row.option_designation,
+    num: row.num ? `O${row.num}` : 'Option',
+    designation: `Option - ${row.option_designation}${row.designation ? ` - ${row.designation}` : ''}`,
+    unit: row.unit
+  }));
+
+  const moeByItem = new Map();
+  if (!isEntreprise) {
+    for (const row of itemsRes.rows) {
+      moeByItem.set(`option:${row.id}`, {
+        qty: row.moe_qty,
+        unit_price: row.moe_unit_price
+      });
+    }
+  }
+
+  const offersParams = [optionItemIds, roundId];
+  let offersWhere = '';
+  if (isEntreprise && userCompanyId) {
+    offersParams.push(userCompanyId);
+    offersWhere = ` AND oio.company_id = $${offersParams.length}`;
+  }
+  const offersRes = optionItemIds.length
+    ? await query(
+      `SELECT oio.*
+       FROM option_item_offers oio
+       WHERE oio.option_item_id = ANY($1::int[])
+         AND oio.round_id = $2
+         ${offersWhere}`,
+      offersParams
+    )
+    : { rows: [] };
+
+  const offersByItemCompany = new Map();
+  for (const offer of offersRes.rows) {
+    offersByItemCompany.set(`option:${Number(offer.option_item_id)}:${Number(offer.company_id)}`, {
+      ...offer,
+      item_id: Number(offer.option_item_id),
+      amount: toNumberOrNull(offer.qty) !== null && toNumberOrNull(offer.unit_price) !== null
+        ? Number(offer.qty) * Number(offer.unit_price)
+        : null
+    });
+  }
+
+  return { rows, moeByItem, offersByItemCompany };
+}
+
+async function fetchSelectedOptionTotals({ projectId, lotIds = [], roundIds = [], selectedOptionIds = [], isEntreprise = false, companyId = null, includeMoe = true }) {
+  const empty = {
+    moeByLot: new Map(),
+    moeByOption: new Map(),
+    offersByLotRoundCompany: new Map(),
+    companiesByLot: new Map(),
+    details: []
+  };
+  if (!selectedOptionIds.length) return empty;
+
+  const params = [selectedOptionIds];
+  const where = ['opt.id = ANY($1::int[])'];
+  if (projectId) {
+    params.push(projectId);
+    where.push(`l.project_id = $${params.length}`);
+  }
+  if (lotIds.length) {
+    params.push(lotIds);
+    where.push(`opt.lot_id = ANY($${params.length}::int[])`);
+  }
+  if (roundIds.length) {
+    params.push(roundIds);
+    where.push(`opt.round_id = ANY($${params.length}::int[])`);
+  }
+  if (isEntreprise && companyId) {
+    params.push(companyId);
+    where.push(`oio.company_id = $${params.length}`);
+  }
+
+  const offersRes = await query(
+    `SELECT opt.id AS option_id, opt.designation AS option_designation,
+            opt.lot_id, opt.round_id, oio.company_id,
+            COALESCE(NULLIF(lc.display_name, ''), c.name) AS company_name,
+            COALESCE(SUM(COALESCE(oio.qty, 0) * COALESCE(oio.unit_price, 0)), 0) AS total
+     FROM options opt
+     JOIN lots l ON l.id = opt.lot_id
+     JOIN option_items oi ON oi.option_id = opt.id
+     JOIN option_item_offers oio ON oio.option_item_id = oi.id
+     JOIN companies c ON c.id = oio.company_id
+     LEFT JOIN lot_companies lc ON lc.company_id = oio.company_id AND lc.lot_id = opt.lot_id
+     WHERE ${where.join(' AND ')}
+     GROUP BY opt.id, opt.designation, opt.lot_id, opt.round_id, oio.company_id, lc.display_name, c.name
+     ORDER BY opt.lot_id, opt.round_id, opt.designation, company_name`,
+    params
+  );
+
+  const offersByLotRoundCompany = new Map();
+  const companiesByLot = new Map();
+  const details = [];
+  for (const row of offersRes.rows) {
+    const lotId = Number(row.lot_id);
+    const roundId = Number(row.round_id);
+    const compId = Number(row.company_id);
+    const total = Number(row.total) || 0;
+    addToMapTotal(offersByLotRoundCompany, `${lotId}:${roundId}:${compId}`, total);
+    if (!companiesByLot.has(lotId)) companiesByLot.set(lotId, new Map());
+    companiesByLot.get(lotId).set(compId, row.company_name);
+    details.push({
+      option_id: Number(row.option_id),
+      option_designation: row.option_designation,
+      lot_id: lotId,
+      round_id: roundId,
+      company_id: compId,
+      company_name: row.company_name,
+      offer_total: total
+    });
+  }
+
+  const moeByLot = new Map();
+  const moeByOption = new Map();
+  if (includeMoe && !isEntreprise) {
+    const moeParams = [selectedOptionIds];
+    const moeWhere = ['opt.id = ANY($1::int[])'];
+    if (projectId) {
+      moeParams.push(projectId);
+      moeWhere.push(`l.project_id = $${moeParams.length}`);
+    }
+    if (lotIds.length) {
+      moeParams.push(lotIds);
+      moeWhere.push(`opt.lot_id = ANY($${moeParams.length}::int[])`);
+    }
+    if (roundIds.length) {
+      moeParams.push(roundIds);
+      moeWhere.push(`opt.round_id = ANY($${moeParams.length}::int[])`);
+    }
+    const moeRes = await query(
+      `SELECT opt.id AS option_id, opt.lot_id,
+              COALESCE(SUM(COALESCE(oim.qty, 0) * COALESCE(oim.unit_price, 0)), 0) AS total
+       FROM options opt
+       JOIN lots l ON l.id = opt.lot_id
+       JOIN option_items oi ON oi.option_id = opt.id
+       LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
+       WHERE ${moeWhere.join(' AND ')}
+       GROUP BY opt.id, opt.lot_id`,
+      moeParams
+    );
+    for (const row of moeRes.rows) {
+      const total = Number(row.total) || 0;
+      moeByOption.set(Number(row.option_id), total);
+      moeByLot.set(Number(row.lot_id), (moeByLot.get(Number(row.lot_id)) || 0) + total);
+    }
+  }
+
+  return { moeByLot, moeByOption, offersByLotRoundCompany, companiesByLot, details };
+}
+
 // Transporteur email (réutilise la même config que utils/email.js)
 let emailTransporter = null;
 function getEmailTransporter() {
@@ -334,7 +538,7 @@ function getEmailTransporter() {
 }
 
 // Export Excel du récapitulatif d'un tour
-async function fetchLotComparisonData({ lotId, roundId, req }) {
+async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds = [] }) {
   const userId = req.user.id;
   const isEntreprise = req.user?.role === 'entreprise';
   const userCompanyId = req.user?.company_id || null;
@@ -372,13 +576,13 @@ async function fetchLotComparisonData({ lotId, roundId, req }) {
      ORDER BY i.position NULLS LAST, i.id`,
     [lotId]
   );
-  const items = itemsRes.rows;
+  const items = itemsRes.rows.map(item => ({ ...item, export_key: `item:${item.id}` }));
   const itemIds = items.map(i => Number(i.id)).filter(Number.isFinite);
 
   const moeRes = (!isEntreprise && itemIds.length)
     ? await query('SELECT * FROM moe_items WHERE item_id = ANY($1::int[])', [itemIds])
     : { rows: [] };
-  const moeByItem = new Map(moeRes.rows.map(row => [Number(row.item_id), row]));
+  const moeByItem = new Map(moeRes.rows.map(row => [`item:${Number(row.item_id)}`, row]));
 
   const companiesParams = [lotId];
   let companyWhere = '';
@@ -412,7 +616,22 @@ async function fetchLotComparisonData({ lotId, roundId, req }) {
 
   const offersByItemCompany = new Map();
   for (const offer of offersRes.rows) {
-    offersByItemCompany.set(`${Number(offer.item_id)}:${Number(offer.company_id)}`, offer);
+    offersByItemCompany.set(`item:${Number(offer.item_id)}:${Number(offer.company_id)}`, offer);
+  }
+
+  const optionData = await fetchSelectedOptionItemsForLot({
+    lotId,
+    roundId,
+    selectedOptionIds,
+    isEntreprise,
+    userCompanyId
+  });
+  items.push(...optionData.rows);
+  for (const [key, value] of optionData.moeByItem.entries()) {
+    moeByItem.set(key, value);
+  }
+  for (const [key, value] of optionData.offersByItemCompany.entries()) {
+    offersByItemCompany.set(key, value);
   }
 
   const thresholdsRes = await query('SELECT * FROM lot_threshold_config WHERE lot_id = $1', [lotId]);
@@ -431,22 +650,26 @@ async function fetchLotComparisonData({ lotId, roundId, req }) {
     generatedQuestionsWhere = `AND round_id = $${generatedQuestionsParams.length}`;
   }
   const generatedQuestionsRes = await query(
-    `SELECT item_id, company_id, status, question_text, question_type
+    `SELECT item_id, option_item_id, company_id, status, question_text, question_type
      FROM generated_questions
      WHERE lot_id = $1 ${generatedQuestionsWhere}`,
     generatedQuestionsParams
   );
   const questionsByItemCompany = new Map();
   for (const q of generatedQuestionsRes.rows) {
-    if (!q.item_id || !q.company_id) continue;
-    const key = `${Number(q.item_id)}:${Number(q.company_id)}`;
+    if ((!q.item_id && !q.option_item_id) || !q.company_id) continue;
+    const sourceKey = q.option_item_id ? `option:${Number(q.option_item_id)}` : `item:${Number(q.item_id)}`;
+    const key = `${sourceKey}:${Number(q.company_id)}`;
     if (!questionsByItemCompany.has(key)) questionsByItemCompany.set(key, []);
     questionsByItemCompany.get(key).push(q);
   }
   const validatedQuestions = new Set(
     generatedQuestionsRes.rows
-      .filter(q => q.status === 'validated' && q.item_id && q.company_id)
-      .map(q => `${Number(q.item_id)}:${Number(q.company_id)}`)
+      .filter(q => q.status === 'validated' && (q.item_id || q.option_item_id) && q.company_id)
+      .map(q => {
+        const sourceKey = q.option_item_id ? `option:${Number(q.option_item_id)}` : `item:${Number(q.item_id)}`;
+        return `${sourceKey}:${Number(q.company_id)}`;
+      })
   );
 
   return {
@@ -648,7 +871,8 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     const rowNumber = dataStartRow + idx;
     const row = ws.getRow(rowNumber);
     const questionStyleIntents = [];
-    const moe = moeByItem.get(Number(item.id)) || {};
+    const key = itemExportKey(item);
+    const moe = moeByItem.get(key) || {};
     const moeQty = toNumberOrNull(moe.qty);
     const moePu = toNumberOrNull(moe.unit_price);
 
@@ -661,7 +885,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
 
     companies.forEach((company, cIdx) => {
       const start = firstCompanyCol + cIdx * companyWidth;
-      const offer = offersByItemCompany.get(`${Number(item.id)}:${Number(company.id)}`) || {};
+      const offer = offersByItemCompany.get(`${key}:${Number(company.id)}`) || {};
       const qty = toNumberOrNull(offer.qty);
       const pu = toNumberOrNull(offer.unit_price);
       const amount = toNumberOrNull(offer.amount) ?? (qty !== null && pu !== null ? qty * pu : null);
@@ -671,12 +895,12 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       const moeHasTotal = moeQty !== null && moeQty > 0 && moePu !== null && moePu > 0;
       const isUnanswered = moeHasTotal && !hasQty && !hasPu;
       const unitMismatch = hasBlockingUnitMismatch(item.unit, offer.unit, amount);
-      const isValidated = validatedQuestions?.has(`${Number(item.id)}:${Number(company.id)}`);
+      const isValidated = validatedQuestions?.has(`${key}:${Number(company.id)}`);
       const qtyDeviation = moeQty && qty !== null ? ((qty - moeQty) / moeQty) * 100 : null;
       const puDeviation = moePu && pu !== null ? ((pu - moePu) / moePu) * 100 : null;
       const moeAmount = moeQty !== null && moePu !== null ? moeQty * moePu : null;
       const amountDeviation = moeAmount && amount !== null ? ((amount - moeAmount) / moeAmount) * 100 : null;
-      const generatedQuestions = questionsByItemCompany?.get(`${Number(item.id)}:${Number(company.id)}`) || [];
+      const generatedQuestions = questionsByItemCompany?.get(`${key}:${Number(company.id)}`) || [];
       const questionTexts = generatedQuestions
         .map(q => String(q.question_text || '').trim())
         .filter(Boolean);
@@ -787,9 +1011,10 @@ async function handleLotComparisonExport(req, res) {
   try {
     const lotId = Number(req.params.lotId);
     const roundId = req.query.round_id ? Number(req.query.round_id) : null;
+    const selectedOptionIds = parseSelectedOptionIds(req);
     if (!Number.isFinite(lotId)) return res.status(400).json({ error: 'lotId invalide' });
 
-    const data = await fetchLotComparisonData({ lotId, roundId, req });
+    const data = await fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds });
     const workbook = await buildLotComparisonWorkbook(data);
     const buffer = await workbook.xlsx.writeBuffer();
     const lotPart = sanitizeFilenamePart(`${data.lot.code || `Lot_${lotId}`}_${data.lot.name || ''}`, `Lot_${lotId}`);
@@ -806,11 +1031,15 @@ async function handleLotComparisonExport(req, res) {
 }
 
 router.get('/lot-comparison/:lotId', handleLotComparisonExport);
+router.post('/lot-comparison/:lotId', handleLotComparisonExport);
 
 async function handleSummaryExport(req, res) {
   try {
     const { roundId } = req.params;
     const userId = req.user.id;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const userCompanyId = req.user?.company_id || null;
+    const selectedOptionIds = parseSelectedOptionIds(req);
 
     // Récupérer les infos du tour et du projet
     const roundRes = await query(
@@ -849,6 +1078,7 @@ async function handleSummaryExport(req, res) {
       [round.project_id]
     );
     const lots = lotsRes.rows;
+    const lotIds = lots.map(l => Number(l.id)).filter(Number.isFinite);
 
     // Récupérer les entreprises actives pour ce tour
     const companiesRes = await query(
@@ -912,6 +1142,16 @@ async function handleSummaryExport(req, res) {
     }
 
     // Créer le workbook Excel
+    const optionTotals = await fetchSelectedOptionTotals({
+      projectId: round.project_id,
+      lotIds,
+      roundIds: [Number(roundId)],
+      selectedOptionIds,
+      isEntreprise,
+      companyId: userCompanyId,
+      includeMoe: true
+    });
+
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'AO Link';
     workbook.created = new Date();
@@ -955,6 +1195,7 @@ async function handleSummaryExport(req, res) {
         const amount = parseFloat(item.moe_amount);
         if (Number.isFinite(amount)) moeTotal += amount;
       }
+      moeTotal += optionTotals.moeByLot.get(Number(lot.id)) || 0;
 
       // Totaux par entreprise
       const companyTotals = companies.map(company => {
@@ -967,6 +1208,7 @@ async function handleSummaryExport(req, res) {
             total += qty * pu;
           }
         }
+        total += optionTotals.offersByLotRoundCompany.get(`${Number(lot.id)}:${Number(roundId)}:${Number(company.id)}`) || 0;
         return total || null;
       });
 
@@ -1031,6 +1273,10 @@ async function handleSummaryExport(req, res) {
           }
         });
       }
+      moeGrandTotal += optionTotals.moeByLot.get(Number(lot.id)) || 0;
+      companies.forEach((company, idx) => {
+        companyGrandTotals[idx] += optionTotals.offersByLotRoundCompany.get(`${Number(lot.id)}:${Number(roundId)}:${Number(company.id)}`) || 0;
+      });
     }
 
     totalRow.getCell(2).value = moeGrandTotal;
@@ -1081,6 +1327,7 @@ async function handleSummaryExport(req, res) {
   }
 }
 router.get('/summary/:roundId', handleSummaryExport);
+router.post('/summary/:roundId', handleSummaryExport);
 
 function cloneExcelStyle(style) {
   return style ? JSON.parse(JSON.stringify(style)) : {};
@@ -1423,6 +1670,7 @@ async function handleRoundsComparison(req, res) {
     const companyId = req.user?.company_id;
     const roundFromId = Number(req.query.round_from || req.query.roundFromId || req.query.from);
     const roundToId = Number(req.query.round_to || req.query.roundToId || req.query.to);
+    const selectedOptionIds = parseSelectedOptionIds(req);
     const showAnalysis = Number.isFinite(roundFromId) && Number.isFinite(roundToId) && roundFromId !== roundToId;
 
     // Vérifier l'accès au projet
@@ -1521,6 +1769,39 @@ async function handleRoundsComparison(req, res) {
       }
       companiesByLot.get(lotId).set(compId, row.company_name);
 
+      const best = bestPriceByLotRound.get(roundKey);
+      if (best === undefined || total < best) {
+        bestPriceByLotRound.set(roundKey, total);
+      }
+    }
+
+    const optionTotals = await fetchSelectedOptionTotals({
+      projectId,
+      lotIds: lots.map(l => Number(l.id)).filter(Number.isFinite),
+      roundIds: rounds.map(r => Number(r.id)).filter(Number.isFinite),
+      selectedOptionIds,
+      isEntreprise,
+      companyId,
+      includeMoe: true
+    });
+    if (!isEntreprise) {
+      for (const [lotId, total] of optionTotals.moeByLot.entries()) {
+        moeTotals.set(lotId, (moeTotals.get(lotId) || 0) + total);
+      }
+    }
+    for (const [key, total] of optionTotals.offersByLotRoundCompany.entries()) {
+      offersByLotRoundCompany.set(key, (offersByLotRoundCompany.get(key) || 0) + total);
+    }
+    for (const [lotId, companyMap] of optionTotals.companiesByLot.entries()) {
+      if (!companiesByLot.has(lotId)) companiesByLot.set(lotId, new Map());
+      for (const [compId, name] of companyMap.entries()) {
+        companiesByLot.get(lotId).set(compId, name);
+      }
+    }
+    bestPriceByLotRound.clear();
+    for (const [key, total] of offersByLotRoundCompany.entries()) {
+      const [lotId, roundId] = key.split(':');
+      const roundKey = `${lotId}:${roundId}`;
       const best = bestPriceByLotRound.get(roundKey);
       if (best === undefined || total < best) {
         bestPriceByLotRound.set(roundKey, total);
@@ -1818,8 +2099,6 @@ async function handleRoundsComparison(req, res) {
       ? req.body.simulations.filter(sim => sim && typeof sim === 'object')
       : [];
     const simulationRoundId = Number(req.body?.simulationRoundId);
-    const selectedOptionIds = (req.body?.selectedOptions || []).map(Number).filter(Number.isFinite);
-
     if (simulationData.length > 0 && Number.isFinite(simulationRoundId)) {
       // Calculer les totaux d'offres par lot/entreprise pour le tour de simulation
       const simOffersRes = await query(
@@ -2346,7 +2625,7 @@ async function replaceRaoCoverLogo(zip) {
   zip.file('word/media/dmx-logo.png', await fs.readFile(DMX_LOGO_PATH));
 }
 
-function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
+function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions, selectedOptionDetails = [], selectedOptionMoeByOption = new Map() }) {
   const latestRound = rounds[rounds.length - 1] || null;
   const projectRows = [
     ['Variable', 'Valeur'],
@@ -2418,6 +2697,25 @@ function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals,
     questionRows.push([raoValue('', '{{LOT}}'), raoValue('', '{{ENTREPRISE}}'), raoValue('', '{{ARTICLE}}'), raoValue('', '{{QUESTION_OU_RESERVE}}')]);
   }
 
+  const optionRows = [
+    ['Tour', 'Lot', 'Option', 'Entreprise', 'MOE option', 'Montant offre option']
+  ];
+  for (const detail of selectedOptionDetails) {
+    const round = rounds.find(r => Number(r.id) === Number(detail.round_id));
+    const lot = lots.find(l => Number(l.id) === Number(detail.lot_id));
+    optionRows.push([
+      round ? `Tour ${round.round_number}${round.name ? ` - ${round.name}` : ''}` : '',
+      lot ? `${lot.code || ''} ${lot.name || ''}`.trim() : '',
+      detail.option_designation || `Option ${detail.option_id}`,
+      detail.company_name || `Entreprise ${detail.company_id || ''}`,
+      formatMoneyFr(selectedOptionMoeByOption.get(Number(detail.option_id)) || 0),
+      formatMoneyFr(detail.offer_total)
+    ]);
+  }
+  if (optionRows.length === 1) {
+    optionRows.push(['-', '-', 'Aucune option cochee', '-', '-', '-']);
+  }
+
   const toTable = rows => wordTable(rows.map((row, rowIndex) => row.map(value => wordSimpleCell(value, { header: rowIndex === 0 }))));
 
   return [
@@ -2435,6 +2733,9 @@ function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals,
     wordParagraph(wordRun('Montants d\'offres par tour', { bold: true }), { style: 'Titre2' }),
     toTable(offerRows),
     wordParagraph('', { spacingAfter: 160 }),
+    wordParagraph(wordRun('Options retenues', { bold: true }), { style: 'Titre2' }),
+    toTable(optionRows),
+    wordParagraph('', { spacingAfter: 160 }),
     wordParagraph(wordRun('Questions et reserves', { bold: true }), { style: 'Titre2' }),
     toTable(questionRows),
     wordParagraph('', { spacingAfter: 160 }),
@@ -2450,7 +2751,7 @@ function buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals,
   ].join('');
 }
 
-async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions }) {
+async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions, selectedOptionDetails = [], selectedOptionMoeByOption = new Map() }) {
   const templateBuffer = await fs.readFile(RAO_TEMPLATE);
   const zip = await JSZip.loadAsync(templateBuffer);
   const documentFile = zip.file('word/document.xml');
@@ -2470,7 +2771,17 @@ async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeT
   documentXml = highlightRemainingRaoPlaceholders(documentXml);
   await replaceRaoCoverLogo(zip);
 
-  const generatedSection = buildRaoGeneratedSection({ project, lots, rounds, companies, moeTotals, offersByRoundCompanyLot, questions });
+  const generatedSection = buildRaoGeneratedSection({
+    project,
+    lots,
+    rounds,
+    companies,
+    moeTotals,
+    offersByRoundCompanyLot,
+    questions,
+    selectedOptionDetails,
+    selectedOptionMoeByOption
+  });
   documentXml = appendWordSection(documentXml, generatedSection);
   zip.file('word/document.xml', documentXml);
 
@@ -2478,10 +2789,11 @@ async function buildRaoTemplateDocument({ project, lots, rounds, companies, moeT
 }
 
 // Générer le RAO (Rapport d'Analyse d'Offre) complet pour un projet en Word
-router.get('/rao/:projectId', async (req, res) => {
+async function handleRaoExport(req, res) {
   try {
     const { projectId } = req.params;
     const userId = req.user.id;
+    const selectedOptionIds = parseSelectedOptionIds(req);
 
     // Récupérer le projet
     const projectRes = await query(
@@ -2565,6 +2877,34 @@ router.get('/rao/:projectId', async (req, res) => {
       offersByRoundCompanyLot[o.round_id][o.company_id][o.lot_id] = (offersByRoundCompanyLot[o.round_id][o.company_id][o.lot_id] || 0) + Number(o.amount || 0);
     });
 
+    const optionTotals = await fetchSelectedOptionTotals({
+      projectId,
+      lotIds: lots.map(l => Number(l.id)).filter(Number.isFinite),
+      roundIds: rounds.map(r => Number(r.id)).filter(Number.isFinite),
+      selectedOptionIds,
+      isEntreprise: req.user?.role === 'entreprise',
+      companyId: req.user?.company_id || null,
+      includeMoe: true
+    });
+    for (const [lotId, total] of optionTotals.moeByLot.entries()) {
+      moeTotals[lotId] = (moeTotals[lotId] || 0) + total;
+    }
+    for (const [key, total] of optionTotals.offersByLotRoundCompany.entries()) {
+      const [lotId, roundId, companyId] = key.split(':').map(Number);
+      if (!offersByRoundCompanyLot[roundId]) offersByRoundCompanyLot[roundId] = {};
+      if (!offersByRoundCompanyLot[roundId][companyId]) offersByRoundCompanyLot[roundId][companyId] = {};
+      offersByRoundCompanyLot[roundId][companyId][lotId] = (offersByRoundCompanyLot[roundId][companyId][lotId] || 0) + total;
+    }
+    const companyIds = new Set(companies.map(c => Number(c.id)));
+    for (const companyMap of optionTotals.companiesByLot.values()) {
+      for (const [optionCompanyId, companyName] of companyMap.entries()) {
+        if (!companyIds.has(Number(optionCompanyId))) {
+          companies.push({ id: Number(optionCompanyId), name: companyName });
+          companyIds.add(Number(optionCompanyId));
+        }
+      }
+    }
+
     // Questions par lot / entreprise
     const questionsRes = await query(
       `SELECT gq.*,
@@ -2593,7 +2933,9 @@ router.get('/rao/:projectId', async (req, res) => {
       companies,
       moeTotals,
       offersByRoundCompanyLot,
-      questions
+      questions,
+      selectedOptionDetails: optionTotals.details,
+      selectedOptionMoeByOption: optionTotals.moeByOption
     });
     const raoFilename = `RAO_${project.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.docx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -2808,7 +3150,9 @@ router.get('/rao/:projectId', async (req, res) => {
     console.error('Erreur génération RAO:', err);
     res.status(500).json({ error: 'Erreur lors de la génération du RAO: ' + err.message });
   }
-});
+}
+router.get('/rao/:projectId', handleRaoExport);
+router.post('/rao/:projectId', handleRaoExport);
 
 // ===== Envoi d'export par email =====
 function extractFilenameFromDisposition(contentDisposition, fallback) {
@@ -2860,19 +3204,23 @@ async function generateExportFile(req, exportType, exportParams = {}) {
   }
 
   if (exportType === 'summary') {
-    const { roundId } = exportParams;
+    const { roundId, selectedOptions = [] } = exportParams;
     if (!roundId) throw new Error('roundId requis pour cet export');
     return fetchInternalExport(req, `/api/exports/summary/${roundId}`, {
+      method: 'POST',
+      body: { selectedOptions },
       fallbackFilename: `AnalyseLot_Tour${roundId}.xlsx`
     });
   }
 
   if (exportType === 'lot-comparison') {
-    const { lotId, roundId } = exportParams;
+    const { lotId, roundId, selectedOptions = [] } = exportParams;
     if (!lotId) throw new Error('lotId requis pour cet export');
     const params = new URLSearchParams();
     if (roundId) params.set('round_id', roundId);
     return fetchInternalExport(req, `/api/exports/lot-comparison/${lotId}${params.toString() ? `?${params.toString()}` : ''}`, {
+      method: 'POST',
+      body: { selectedOptions },
       fallbackFilename: `Comparatif_Lot_${lotId}.xlsx`
     });
   }
@@ -2890,9 +3238,11 @@ async function generateExportFile(req, exportType, exportParams = {}) {
   }
 
   if (exportType === 'rao') {
-    const { projectId } = exportParams;
+    const { projectId, selectedOptions = [] } = exportParams;
     if (!projectId) throw new Error('projectId requis pour cet export');
     return fetchInternalExport(req, `/api/exports/rao/${projectId}`, {
+      method: 'POST',
+      body: { selectedOptions },
       fallbackFilename: `RAO_${projectId}.docx`
     });
   }
@@ -3021,8 +3371,10 @@ router.post('/project-bundle-zip', async (req, res) => {
       questionLotId,
       questionLotIds = [],
       selections = {},
-      roundsComparisonParams = {}
+      roundsComparisonParams = {},
+      selectedOptions = []
     } = req.body || {};
+    const bundleSelectedOptions = parseSelectedOptionIds(selectedOptions);
 
     if (!projectId) return res.status(400).json({ error: 'projectId requis' });
     const selectedKeys = Object.entries(selections).filter(([, enabled]) => !!enabled).map(([key]) => key);
@@ -3078,12 +3430,16 @@ router.post('/project-bundle-zip', async (req, res) => {
     }
 
     if (selections.rao) {
-      const file = await generateExportFile(req, 'rao', { projectId });
+      const file = await generateExportFile(req, 'rao', { projectId, selectedOptions: bundleSelectedOptions });
       zip.file(`${zipStructure.rao}/${sanitizeZipSegment(file.filename, 'RAO.docx')}`, file.buffer);
     }
 
     if (selections.roundsCompare) {
-      const file = await generateExportFile(req, 'rounds-comparison', { projectId, ...roundsComparisonParams });
+      const file = await generateExportFile(req, 'rounds-comparison', {
+        projectId,
+        ...roundsComparisonParams,
+        selectedOptions: roundsComparisonParams.selectedOptions || bundleSelectedOptions
+      });
       zip.file(`${zipStructure.roundsComparison}/${sanitizeZipSegment(file.filename, 'Comparaison_Tours.xlsx')}`, file.buffer);
     }
 
@@ -3092,7 +3448,7 @@ router.post('/project-bundle-zip', async (req, res) => {
         const roundLbl = `Tour_${round.round_number}${round.name ? `_${round.name}` : ''}`;
         const rStruct = getZipStructure({ projectId, projectName, projectReference, roundLabel: roundLbl });
         try {
-          const file = await generateExportFile(req, 'summary', { roundId: round.id });
+          const file = await generateExportFile(req, 'summary', { roundId: round.id, selectedOptions: bundleSelectedOptions });
           zip.file(`${rStruct.roundSummaries}/${sanitizeZipSegment(file.filename, `Recapitulatif_Tour_${round.id}.xlsx`)}`, file.buffer);
         } catch (e) {
           if (e.status !== 404) throw e;
@@ -3109,7 +3465,7 @@ router.post('/project-bundle-zip', async (req, res) => {
           const lot = byId.get(Number(lotId));
           const lotPrefix = sanitizeZipSegment(`${lot?.code || `Lot_${lotId}`}_${lot?.name || ''}`, `Lot_${lotId}`);
           try {
-            const file = await generateExportFile(req, 'lot-comparison', { lotId, roundId: round.id });
+            const file = await generateExportFile(req, 'lot-comparison', { lotId, roundId: round.id, selectedOptions: bundleSelectedOptions });
             const filename = sanitizeZipSegment(file.filename, `Comparatif_Lot_${lotId}_Tour_${round.round_number}.xlsx`);
             zip.file(`${rStruct.lotComparisons}/${lotPrefix}/${filename}`, file.buffer);
           } catch (e) {
