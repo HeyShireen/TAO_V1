@@ -6830,8 +6830,9 @@ function renderOptionsCompareTable(companies, entrepriseMode){
     for (const c of companies){
       const off = (item.offers||[]).find(o => Number(o.company_id) === Number(c.id));
       const qty = off?.qty || 0; const pu = off?.unit_price || 0; const mt = (parseNum(qty)||0) * (parseNum(pu)||0);
+      const offUnit = off?.unit || '';
       if (entrepriseMode){
-        tr += `<td class="company-border"></td><td>${fmtNum(qty)}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td>`;
+        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td>`;
       } else {
         const moeQty = parseNum(item.moe_qty);
         const moePu = parseNum(item.moe_unit_price);
@@ -6840,7 +6841,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
         const deltaPuPct = (Number.isFinite(moePu) && moePu !== 0 && Number.isFinite(parseNum(pu)))
           ? ((parseNum(pu) - moePu) / moePu) * 100
           : null;
-        tr += `<td class="company-border"></td><td>${fmtNum(qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td><td>${fmtPct(deltaPuPct)}</td>`;
+        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td><td>${fmtPct(deltaPuPct)}</td>`;
       }
       if (mt) totalsByCompany[c.id] = (totalsByCompany[c.id] || 0) + mt;
     }
@@ -7115,6 +7116,7 @@ function renderOptionsCompareTable(companies, entrepriseMode){
         for (const c of lotCompanies){
           const base = `c.${c.id}.`;
           row.offers[c.id] = {
+            u:   getByKey(base+'u'),
             qty: getByKey(base+'qty'),
             pu:  getByKey(base+'pu')
           };

@@ -94,13 +94,13 @@ router.get('/lot/:lotId', async (req, res) => {
         for (const item of itemsRes.rows) {
           const offersRes = roundId
             ? await query(
-              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.round_id
+              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
                FROM option_item_offers oio
                WHERE oio.option_item_id = $1 AND oio.round_id = $2`,
               [item.id, Number(roundId)]
             )
             : await query(
-              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.round_id
+              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
                FROM option_item_offers oio
                WHERE oio.option_item_id = $1`,
               [item.id]
@@ -498,6 +498,7 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
           let oq = null, op = null;
           oq = parseGridNumber(val?.qty);
           op = parseGridNumber(val?.pu);
+          const ou = val?.u != null ? String(val.u) : null;
 
           const exists = await client.query(
             'SELECT id FROM option_item_offers WHERE option_item_id=$1 AND company_id=$2 AND round_id=$3',
@@ -505,13 +506,13 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
           );
           if (exists.rowCount > 0) {
             await client.query(
-              'UPDATE option_item_offers SET qty=$1, unit_price=$2 WHERE option_item_id=$3 AND company_id=$4 AND round_id=$5',
-              [oq, op, itemId, companyId, roundId]
+              'UPDATE option_item_offers SET qty=$1, unit_price=$2, unit=$3 WHERE option_item_id=$4 AND company_id=$5 AND round_id=$6',
+              [oq, op, ou, itemId, companyId, roundId]
             );
           } else {
             await client.query(
-              'INSERT INTO option_item_offers (option_item_id, company_id, qty, unit_price, round_id) VALUES ($1,$2,$3,$4,$5)',
-              [itemId, companyId, oq, op, roundId]
+              'INSERT INTO option_item_offers (option_item_id, company_id, qty, unit_price, unit, round_id) VALUES ($1,$2,$3,$4,$5,$6)',
+              [itemId, companyId, oq, op, ou, roundId]
             );
           }
         }
