@@ -37,6 +37,12 @@ const DEFAULT_QUESTION_CONFIG = {
   question_amount_high: 'Pourquoi le montant est-il supérieur à la MOE ?',
   question_amount_very_high: 'Pourquoi le montant est-il bien supérieur à la MOE ?'
 };
+Object.assign(DEFAULT_QUESTION_CONFIG, {
+  unanswered_comment: 'Article sans réponse',
+  unanswered_color: '#fff3cd',
+  offer_amount_mismatch_comment: 'Montant incohérent dans la DPGF : le montant importé est conservé.',
+  question_unit_mismatch: 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?'
+});
 const QUESTION_CONFIG_FIELDS = Object.keys(DEFAULT_QUESTION_CONFIG);
 
 function normalizeThreshold(value, fallback) {
@@ -435,13 +441,7 @@ router.get('/lot/:lotId/question-config', requireManager, async (req, res) => {
     if (lotRes.rowCount === 0) return res.status(404).json({ error: 'Lot introuvable' });
     const projectConfig = await getProjectQuestionConfig(lotRes.rows[0].project_id);
     const lotConfig = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [lotId]);
-    res.json({
-      ...effectiveQuestions(projectConfig, lotConfig.rows[0] || {}),
-      unanswered_comment: projectConfig.unanswered_comment,
-      unanswered_color: projectConfig.unanswered_color,
-      offer_amount_mismatch_comment: projectConfig.offer_amount_mismatch_comment,
-      question_unit_mismatch: projectConfig.question_unit_mismatch
-    });
+    res.json(effectiveQuestions(projectConfig, lotConfig.rows[0] || {}));
   } catch (err) {
     console.error('Erreur recuperation questions lot:', err);
     res.status(500).json({ error: 'Impossible de recuperer les questions du lot' });
@@ -460,7 +460,7 @@ router.put('/lot/:lotId/question-config', requireManager, async (req, res) => {
     const result = await query(
       `INSERT INTO lot_question_config
         (lot_id, ${QUESTION_CONFIG_FIELDS.join(', ')}, ${QUESTION_CONFIG_FIELDS.map(field => `${field}_override`).join(', ')}, updated_at)
-       VALUES ($1, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 14}`).join(', ')}, now())
+       VALUES ($1, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 2}`).join(', ')}, ${QUESTION_CONFIG_FIELDS.map((_, idx) => `$${idx + 2 + QUESTION_CONFIG_FIELDS.length}`).join(', ')}, now())
        ON CONFLICT (lot_id)
        DO UPDATE SET
          ${[...QUESTION_CONFIG_FIELDS, ...QUESTION_CONFIG_FIELDS.map(field => `${field}_override`)].map(field => `${field} = EXCLUDED.${field}`).join(',\n         ')},

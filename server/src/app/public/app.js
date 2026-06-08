@@ -127,6 +127,45 @@ const QUESTION_CONFIG_FIELDS = {
   amount_high_threshold: 'question_amount_high',
   amount_very_high_threshold: 'question_amount_very_high'
 };
+const GLOBAL_SPECIAL_QUESTION_FIELDS = [
+  {
+    key: 'unanswered_comment',
+    label: 'Réponses Oubliées',
+    fieldLabel: 'Commentaire',
+    icon: 'alert-triangle',
+    color: '#ffc107',
+    type: 'text',
+    fallback: 'Article sans réponse'
+  },
+  {
+    key: 'unanswered_color',
+    label: 'Couleur Réponses Oubliées',
+    fieldLabel: 'Couleur de fond',
+    icon: 'alert-triangle',
+    color: '#ffc107',
+    type: 'color',
+    fallback: '#fff3cd'
+  },
+  {
+    key: 'offer_amount_mismatch_comment',
+    label: 'Incohérence de Montant Import',
+    fieldLabel: 'Commentaire automatique',
+    icon: 'file',
+    color: '#0dcaf0',
+    type: 'text',
+    fallback: 'Montant incohérent dans la DPGF : le montant importé est conservé.'
+  },
+  {
+    key: 'question_unit_mismatch',
+    label: "Incohérence d'Unité",
+    fieldLabel: 'Question automatique',
+    icon: 'alert-triangle',
+    color: '#6f42c1',
+    type: 'text',
+    fallback: "Pourquoi l'unité de chiffrage est-elle différente de l'unité MOE ({unit}) ?"
+  }
+];
+const GLOBAL_SPECIAL_QUESTION_FIELD_KEYS = GLOBAL_SPECIAL_QUESTION_FIELDS.map(field => field.key);
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -3904,7 +3943,8 @@ function attachProjectQuestionsListeners(){
   const questionFieldIds = ['q-qty-very-low', 'q-qty-low', 'q-qty-high', 'q-qty-very-high',
                            'q-price-very-low', 'q-price-low', 'q-price-high', 'q-price-very-high',
                            'q-amount-very-low', 'q-amount-low', 'q-amount-high', 'q-amount-very-high',
-                           'q-unanswered-comment', 'q-unanswered-color', 'q-offer-amount-mismatch-comment'];
+                           'q-unanswered-comment', 'q-unanswered-color', 'q-offer-amount-mismatch-comment',
+                           'q-unit-mismatch'];
   questionFieldIds.forEach(id => {
     const el = qs(`#${id}`);
     if (el) {
@@ -3962,7 +4002,8 @@ function readGlobalThresholdRowsFromDom() {
 }
 
 function readGlobalQuestionConfigFromDom() {
-  return Object.values(QUESTION_CONFIG_FIELDS).reduce((data, field) => {
+  const questionFields = [...Object.values(QUESTION_CONFIG_FIELDS), ...GLOBAL_SPECIAL_QUESTION_FIELD_KEYS];
+  return questionFields.reduce((data, field) => {
     data[field] = (qs(`#global-thresholds-body [data-question-field="${field}"]`)?.value || '').trim();
     return data;
   }, {});
@@ -3974,7 +4015,7 @@ function renderGlobalLotThresholds(rows = []) {
 
   const globalThresholds = globalLotThresholds?.global_thresholds || {};
   const questionConfig = globalLotThresholds?.question_config || {};
-  const sections = GLOBAL_THRESHOLD_GROUPS.map(group => `
+  const thresholdSections = GLOBAL_THRESHOLD_GROUPS.map(group => `
     <section class="global-threshold-section">
       <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-${group.icon}"></use></svg>${group.title}</h4>
       <div class="global-threshold-grid">
@@ -4001,8 +4042,30 @@ function renderGlobalLotThresholds(rows = []) {
       </div>
     </section>
   `).join('');
+  const specialSection = `
+    <section class="global-threshold-section">
+      <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Paramètres Complémentaires</h4>
+      <div class="global-threshold-grid">
+        ${GLOBAL_SPECIAL_QUESTION_FIELDS.map(field => `
+          <div class="global-threshold-card" style="--threshold-color:${field.color};--threshold-bg:${hexToRgba(field.color, 0.08)}">
+            <div class="global-threshold-card-title">
+              <span></span>
+              <strong>${field.label}</strong>
+            </div>
+            <div class="global-threshold-lot-list">
+              <label class="global-threshold-question-row">
+                <span>${field.fieldLabel}</span>
+                <input type="${field.type}" data-question-field="${field.key}"
+                  value="${escapeHtml(questionConfig[field.key] || field.fallback)}" />
+              </label>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
 
-  container.innerHTML = sections;
+  container.innerHTML = thresholdSections + specialSection;
 
   qsa('.global-threshold-input, [data-question-field]').forEach(input => {
     input.removeEventListener('input', autosaveHandlers.globalThresholds);
@@ -5205,6 +5268,7 @@ function setQuestionsTargetCompanyControlState(analysisMode) {
   const select = qs('#questions-target-company');
   if (label) label.style.opacity = disabled ? '0.45' : '';
   if (select) {
+    if (disabled) select.value = '';
     select.disabled = disabled;
     select.title = disabled ? 'Le mode Questions affiche toutes les entreprises.' : '';
   }

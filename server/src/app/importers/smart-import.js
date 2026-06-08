@@ -558,9 +558,13 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     }
 
     const projectConfigRes = await client.query(
-      `SELECT pqc.offer_amount_mismatch_comment
+      `SELECT CASE
+          WHEN COALESCE(lqc.offer_amount_mismatch_comment_override, false) THEN lqc.offer_amount_mismatch_comment
+          ELSE pqc.offer_amount_mismatch_comment
+        END AS offer_amount_mismatch_comment
        FROM lots l
        LEFT JOIN project_question_config pqc ON pqc.project_id = l.project_id
+       LEFT JOIN lot_question_config lqc ON lqc.lot_id = l.id
        WHERE l.id = $1`,
       [lotId]
     );

@@ -16,6 +16,8 @@
   --success:#65b98f;
   --success-rgb:101,185,143;
   --sticky:#0d181d;
+  --z-app-chrome:2000;
+  --z-app-tabs:1999;
   --warning:#d99a44;
   --blueprint:#54a9d8;
   --blueprint-rgb:84,169,216;
@@ -220,7 +222,7 @@ h1,h2{
 .header{
   position:sticky;
   top:0;
-  z-index:500;
+  z-index:var(--z-app-chrome);
   padding:12px 20px;
   background:rgba(var(--bg-rgb),0.95);
   backdrop-filter: blur(12px);
@@ -331,7 +333,7 @@ h1,h2{
   box-shadow: 4px 0 16px rgba(0,0,0,0.15);
   transition: width 0.25s ease;
   overflow:hidden;
-  z-index:500;
+  z-index:var(--z-app-chrome);
 }
 #dashboard .header:hover{
   width:180px;
@@ -492,7 +494,13 @@ h1,h2{
 }
 
 /* Sous-navigation pour les tours */
-.subnav{ background:var(--input-bg); border-bottom:1px solid var(--border); padding:6px 12px }
+.subnav{
+  background:var(--input-bg);
+  border-bottom:1px solid var(--border);
+  padding:6px 12px;
+  position:relative;
+  z-index:var(--z-app-tabs);
+}
 .subnav-tabs{ display:flex; gap:6px; overflow-x:auto; padding:2px 0 }
 .subnav-tabs button{ background:var(--card-bg); color:var(--muted); border:1px solid var(--border);
   border-radius:6px; padding:5px 12px; cursor:pointer; transition:all .2s; font-size:12px; white-space:nowrap }
@@ -584,6 +592,7 @@ h1,h2{
   background:rgba(var(--bg-rgb),0.6);
   border-bottom:1px solid var(--border);
   position: relative;
+  z-index:var(--z-app-tabs);
 }
 .tour-subnav::after {
   content: '';
@@ -928,6 +937,21 @@ input:focus,textarea:focus,select:focus{
 .global-threshold-question-row textarea{
   min-height:88px;
   resize:vertical;
+}
+.global-threshold-question-row input{
+  width:100%;
+  padding:7px 8px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--input-bg);
+  color:var(--fg);
+  font:inherit;
+}
+.global-threshold-question-row input[type="color"]{
+  width:64px;
+  height:38px;
+  padding:2px;
+  cursor:pointer;
 }
 .global-threshold-input{
   width:100%;
@@ -3254,7 +3278,7 @@ body:has(> .max-480.card) > .max-480.card{
   border-bottom:1px solid var(--border);
   box-shadow:0 1px 2px rgba(15,23,42,0.12);
   overflow:visible;
-  z-index:500;
+  z-index:var(--z-app-chrome);
 }
 
 #dashboard .header-top,
@@ -3314,6 +3338,8 @@ body:has(> .max-480.card) > .max-480.card{
   gap:2px;
   border-top:1px solid var(--border);
   background:var(--sticky);
+  position:relative;
+  z-index:1;
 }
 
 #dashboard .nav-btn,
@@ -3402,6 +3428,8 @@ body:has(> .max-480.card) > .max-480.card{
   background:var(--sticky);
   border:1px solid var(--border);
   border-radius:var(--radius-md) var(--radius-md) 0 0;
+  position:relative;
+  z-index:var(--z-app-tabs);
 }
 
 .subnav-tabs{

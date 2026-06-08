@@ -638,8 +638,20 @@ async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds =
   const thresholds = { ...DEFAULT_LOT_THRESHOLDS, ...(thresholdsRes.rows[0] || {}) };
 
   const questionConfigRes = await query(
-    'SELECT unanswered_comment, unanswered_color FROM project_question_config WHERE project_id = $1',
-    [lot.project_id]
+    `SELECT
+       CASE
+         WHEN COALESCE(lqc.unanswered_comment_override, false) THEN lqc.unanswered_comment
+         ELSE pqc.unanswered_comment
+       END AS unanswered_comment,
+       CASE
+         WHEN COALESCE(lqc.unanswered_color_override, false) THEN lqc.unanswered_color
+         ELSE pqc.unanswered_color
+       END AS unanswered_color
+     FROM lots l
+     LEFT JOIN project_question_config pqc ON pqc.project_id = l.project_id
+     LEFT JOIN lot_question_config lqc ON lqc.lot_id = l.id
+     WHERE l.id = $1`,
+    [lotId]
   );
   const questionConfig = questionConfigRes.rows[0] || {};
 
