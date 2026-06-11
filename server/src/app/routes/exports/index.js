@@ -733,8 +733,8 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   clearWorksheetDrawings(ws);
   clearWorksheetValues(ws);
 
-  const moeStartCol = 7;
-  const firstCompanyCol = 11;
+  const moeStartCol = 5;
+  const firstCompanyCol = 9;
   const companyWidth = 9;
   const companyCount = companies.length;
   const lastCol = Math.max(moeStartCol + 3, getCompanyTableEndColumn(companyCount, firstCompanyCol, companyWidth));
@@ -770,7 +770,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   ws.pageSetup.printArea = `A1:${ws.getColumn(lastCol).letter}${totalRowNumber + 3}`;
   const unansweredFill = normalizeHexColor(questionConfig?.unanswered_color, QUESTION_EXPORT_STYLES.unanswered.bg);
 
-  const baseWidths = { 1: 15.6, 2: 50.1, 3: 50.1, 4: 50.1, 5: 50.1, 6: 50.1, 7: 10.6, 8: 16.1, 9: 23, 10: 25.5 };
+  const baseWidths = { 1: 15.6, 2: 50.1, 3: 50.1, 4: 50.1, 5: 10.6, 6: 16.1, 7: 23, 8: 25.5 };
   for (let c = 1; c <= lastCol; c += 1) {
     if (baseWidths[c]) {
       ws.getColumn(c).width = baseWidths[c];
@@ -873,7 +873,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   ws.getCell(headerGroupRow, moeStartCol).alignment = { horizontal: 'center', vertical: 'middle' };
   applyBorder(ws.getCell(headerGroupRow, moeStartCol), { left: { style: 'double' } });
 
-  ['Num', 'Désignation', '', '', '', '', 'U', 'Quantité', 'PU', 'Montant '].forEach((label, idx) => {
+  ['Num', 'Désignation', '', '', 'U', 'Quantité', 'PU', 'Montant '].forEach((label, idx) => {
     const cell = ws.getCell(headerRow, idx + 1);
     if (label) cell.value = label;
     cell.font = headerFont;
@@ -883,7 +883,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       left: idx + 1 === moeStartCol ? { style: 'double' } : undefined
     });
   });
-  ws.mergeCells(headerRow, 2, headerRow, 6);
+  ws.mergeCells(headerRow, 2, headerRow, 4);
 
   companies.forEach((company, index) => {
     const start = firstCompanyCol + index * companyWidth;
@@ -921,7 +921,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
 
     row.getCell(1).value = item.num || '';
     row.getCell(2).value = item.designation || '';
-    ws.mergeCells(rowNumber, 2, rowNumber, 6);
+    ws.mergeCells(rowNumber, 2, rowNumber, 4);
     row.getCell(moeStartCol).value = item.unit || '';
     row.getCell(moeStartCol + 1).value = moeQty;
     row.getCell(moeStartCol + 2).value = moePu;

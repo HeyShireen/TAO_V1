@@ -8133,6 +8133,8 @@ function setSheetSelectionRange(anchor, focus, explicit = false){
   }
 }
 
+let sheetInternalClipboard = null; // { text, colKeys } — dernière copie interne de la grille
+
 function getSheetClipboardValue(r, c){
   const key = colModel[c]?.key;
   if (!key) return '';
@@ -8153,6 +8155,13 @@ function sheetSelectionToClipboardText(range = getSheetSelectionRange()){
     rows.push(cells.join('\t'));
   }
   return rows.join('\n');
+}
+
+function rememberSheetInternalClipboard(range, text){
+  if (!range) { sheetInternalClipboard = null; return; }
+  const colKeys = [];
+  for (let c = range.minC; c <= range.maxC; c++) colKeys.push(colModel[c]?.key || '');
+  sheetInternalClipboard = { text: String(text).replace(/\r/g, ''), colKeys };
 }
 
 function getActiveSheetPoint(){
@@ -8194,7 +8203,7 @@ function normalizeSheetPastedValue(colKey, value){
   return val;
 }
 
-function applySheetClipboardGrid(startR, startC, grid){
+function applySheetClipboardGrid(startR, startC, grid, sourceKeys = null){
   ensureRows(startR + grid.length);
   let wrote = false;
   let maxR = startR;
@@ -8203,6 +8212,9 @@ function applySheetClipboardGrid(startR, startC, grid){
   for (let i = 0; i < grid.length; i++) {
     let col = startC;
     for (let j = 0; j < grid[i].length; j++) {
+      // Collage interne : ignorer les valeurs issues des colonnes calculées (.mt)
+      // sans consommer de colonne cible — elles seront recalculées par recalcRowAmountsRow
+      if (sourceKeys && sourceKeys[j] && sourceKeys[j].endsWith('.mt')) continue;
       let guard = 0;
       while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
       if (col >= colModel.length) break;
@@ -8259,6 +8271,7 @@ function writeSheetSelectionClipboard(e, cut = false){
   const range = getEffectiveSheetRange(pointFromSheetCell(e.target?.closest?.('#sheet-body td[data-r][data-c]')));
   if (!range) return false;
   const text = sheetSelectionToClipboardText(range);
+  rememberSheetInternalClipboard(range, text);
   if (e.clipboardData) {
     e.clipboardData.setData('text/plain', text);
     e.preventDefault();
@@ -8311,13 +8324,17 @@ function attachSheetDelegates(){
     if (ctrl && (e.key==='c' || e.key==='C')) {
       e.preventDefault();
       const range = getEffectiveSheetRange(point);
-      await copyTextToClipboard(sheetSelectionToClipboardText(range));
+      const text = sheetSelectionToClipboardText(range);
+      rememberSheetInternalClipboard(range, text);
+      await copyTextToClipboard(text);
       return;
     }
     if (ctrl && (e.key==='x' || e.key==='X')) {
       e.preventDefault();
       const range = getEffectiveSheetRange(point);
-      await copyTextToClipboard(sheetSelectionToClipboardText(range));
+      const text = sheetSelectionToClipboardText(range);
+      rememberSheetInternalClipboard(range, text);
+      await copyTextToClipboard(text);
       clearSheetSelectionCells(range);
       return;
     }
@@ -8429,49 +8446,20 @@ function attachSheetDelegates(){
 
     const text = e.clipboardData.getData('text/plain') || '';
     if (!text) return;
-    const delim = detectDelimiter(text);
+    const normalized = text.replace(/\r/g,'');
+
+    // Collage interne : si le texte correspond à la dernière copie de la grille,
+    // on connaît les colonnes d'origine et on peut ignorer les montants calculés
+    const internal = sheetInternalClipboard;
+    let isInternalPaste = !!internal && internal.text === normalized && internal.colKeys.length > 0;
+
+    const delim = isInternalPaste ? '\t' : detectDelimiter(text);
     // Garder toutes les lignes, même vides, pour préserver l'espacement DPGF
-    const lines = text.replace(/\r/g,'').split('\n');
+    const lines = normalized.split('\n');
     if (!lines.length) return;
     const grid = lines.map(l => l.split(delim));
-    applySheetClipboardGrid(startR, startC, grid);
-    return;
-    for (let i = 0; i < grid.length; i++) {
-      let col = startC;
-      for (let j = 0; j < grid[i].length; j++) {
-        // sauter colonnes non éditables (ex: Mt)
-        let guard = 0;
-        while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
-        if (col >= colModel.length) break;
-
-        let val = String(grid[i][j]).trim();
-        const cellTarget = getCell(startR+i, col);
-        if (!cellTarget) break;
-        
-        // Nettoyer automatiquement les valeurs numériques (colonnes qty, pu)
-        const colKey = colModel[col]?.key || '';
-        const isNumericCol = colKey.includes('qty') || colKey.includes('pu');
-        
-        if (isNumericCol && val !== '') {
-          const parsed = parseNum(val);
-          // Si la conversion réussit, utiliser le nombre formaté proprement
-          if (Number.isFinite(parsed)) {
-            val = String(parsed);
-          }
-          // Sinon, laisser la valeur telle quelle (sera validée à la sauvegarde)
-        }
-        
-        const prev = cellTarget.textContent;
-
-        setCell(startR+i, col, val, true); // updateDOM = true pour le collage
-        if (prev !== val) { pushUndo({ r:startR+i, c:col, key: colModel[col].key, prev, next: val }); redoStack.length = 0; }
-        col++;
-      }
-      recalcRowAmountsRow(startR + i);
-    }
-    
-    // Marquer comme modifié après collage
-    markAsChanged();
+    if (isInternalPaste && !grid.every(row => row.length === internal.colKeys.length)) isInternalPaste = false;
+    applySheetClipboardGrid(startR, startC, grid, isInternalPaste ? internal.colKeys : null);
   }, true);
 
   // Suppression de lignes (boutons de suppression)
