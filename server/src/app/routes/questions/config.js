@@ -122,7 +122,7 @@ function questionValueNumberFormat(questionType, unit) {
     if (String(questionType || '').startsWith('amount_') || questionType === 'unit_mismatch') return '€';
     return normalizedUnit;
   })();
-  return suffix ? `#,##0.0000 "${escapeExcelFormatText(suffix)}"` : '#,##0.0000';
+  return suffix ? `#,##0.00 "${escapeExcelFormatText(suffix)}"` : '#,##0.00';
 }
 
 function normalizeUnitLabel(value) {
@@ -173,6 +173,22 @@ function buildUnitMismatchComment(expectedUnit) {
   const safeExpectedUnit = String(expectedUnit || '').trim();
   if (!safeExpectedUnit) return '';
   return `Ce poste doit être chiffré en ${safeExpectedUnit}.`;
+}
+
+const QUESTION_METRIC_LEVELS = ['very_low', 'low', 'high', 'very_high'];
+
+function metricQuestionTypes(metric) {
+  return QUESTION_METRIC_LEVELS.map(level => `${metric}_${level}`);
+}
+
+// Détermine le type de question correspondant à l'écart, selon les seuils effectifs.
+// Retourne null si l'écart est dans la tolérance configurée.
+function classifyDeviation(deviationPct, thresholds, metric) {
+  if (deviationPct < -Math.abs(thresholds[`${metric}_very_low_threshold`])) return `${metric}_very_low`;
+  if (deviationPct < -Math.abs(thresholds[`${metric}_low_threshold`])) return `${metric}_low`;
+  if (deviationPct > Math.abs(thresholds[`${metric}_very_high_threshold`])) return `${metric}_very_high`;
+  if (deviationPct > Math.abs(thresholds[`${metric}_high_threshold`])) return `${metric}_high`;
+  return null;
 }
 
 // Autoriser uniquement admin ou responsable pour la configuration et la génération
@@ -771,172 +787,81 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
           comment: buildUnitMismatchComment(moeUnit)
         });
         generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'unit_mismatch' });
-      }
-      
-      // Vérifier écart quantité
-      if (!shouldSkipUnitAnalysis && moe.qty != null && offer.qty != null && moe.qty !== 0) {
-        const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
-        
-        if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
-          // Quantité très basse
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'qty_very_low',
-            text: questions.question_qty_very_low,
-            moeValue: moe.qty,
-            offerValue: offer.qty,
-            deviationPct: qtyDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_very_low' });
-        } else if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
-          // Quantité basse
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'qty_low',
-            text: questions.question_qty_low,
-            moeValue: moe.qty,
-            offerValue: offer.qty,
-            deviationPct: qtyDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_low' });
-        } else if (qtyDev > Math.abs(thresholds.qty_very_high_threshold)) {
-          // Quantité très haute
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'qty_very_high',
-            text: questions.question_qty_very_high,
-            moeValue: moe.qty,
-            offerValue: offer.qty,
-            deviationPct: qtyDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_very_high' });
-        } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
-          // Quantité haute
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'qty_high',
-            text: questions.question_qty_high,
-            moeValue: moe.qty,
-            offerValue: offer.qty,
-            deviationPct: qtyDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'qty_high' });
-        }
-      }
-      
-      // Vérifier écart prix
-      if (!shouldSkipUnitAnalysis && moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
-        const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
-        
-        if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
-          // Prix très bas
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'price_very_low',
-            text: questions.question_price_very_low,
-            moeValue: moe.unit_price,
-            offerValue: offer.unit_price,
-            deviationPct: priceDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_very_low' });
-        } else if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
-          // Prix bas
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'price_low',
-            text: questions.question_price_low,
-            moeValue: moe.unit_price,
-            offerValue: offer.unit_price,
-            deviationPct: priceDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_low' });
-        } else if (priceDev > Math.abs(thresholds.price_very_high_threshold)) {
-          // Prix très haut
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'price_very_high',
-            text: questions.question_price_very_high,
-            moeValue: moe.unit_price,
-            offerValue: offer.unit_price,
-            deviationPct: priceDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_very_high' });
-        } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
-          // Prix haut
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'price_high',
-            text: questions.question_price_high,
-            moeValue: moe.unit_price,
-            offerValue: offer.unit_price,
-            deviationPct: priceDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'price_high' });
-        }
+        continue;
       }
 
+      // Synchroniser les questions de seuils : au plus une question par métrique
+      // (quantité / prix / montant) ; les niveaux devenus obsolètes sont supprimés.
+      const staleTypes = ['unit_mismatch'];
+
+      // Écart quantité
+      const moeQty = excelNumber(moe.qty);
+      const offerQty = excelNumber(offer.qty);
+      let qtyType = null;
+      if (moeQty != null && offerQty != null && moeQty !== 0) {
+        const qtyDev = ((offerQty - moeQty) / moeQty) * 100;
+        qtyType = classifyDeviation(qtyDev, thresholds, 'qty');
+        if (qtyType) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: qtyType,
+            text: questions[`question_${qtyType}`],
+            moeValue: moeQty,
+            offerValue: offerQty,
+            deviationPct: qtyDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: qtyType });
+        }
+      }
+      staleTypes.push(...metricQuestionTypes('qty').filter(type => type !== qtyType));
+
+      // Écart prix unitaire
+      const moeUnitPrice = excelNumber(moe.unit_price);
+      const offerUnitPrice = excelNumber(offer.unit_price);
+      let priceType = null;
+      if (moeUnitPrice != null && offerUnitPrice != null && moeUnitPrice !== 0) {
+        const priceDev = ((offerUnitPrice - moeUnitPrice) / moeUnitPrice) * 100;
+        priceType = classifyDeviation(priceDev, thresholds, 'price');
+        if (priceType) {
+          await upsertQuestion({
+            itemId: offer.item_id,
+            companyId: offer.company_id,
+            type: priceType,
+            text: questions[`question_${priceType}`],
+            moeValue: moeUnitPrice,
+            offerValue: offerUnitPrice,
+            deviationPct: priceDev
+          });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: priceType });
+        }
+      }
+      staleTypes.push(...metricQuestionTypes('price').filter(type => type !== priceType));
+
+      // Écart montant
       const moeAmount = getComparableAmount(moe, { allowCalculated: false });
-      if (!shouldSkipUnitAnalysis && moeAmount != null && offerAmount != null && moeAmount !== 0) {
+      let amountType = null;
+      if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
         const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
-
-        if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
+        amountType = classifyDeviation(amountDev, thresholds, 'amount');
+        if (amountType) {
           await upsertQuestion({
             itemId: offer.item_id,
             companyId: offer.company_id,
-            type: 'amount_very_low',
-            text: questions.question_amount_very_low,
+            type: amountType,
+            text: questions[`question_${amountType}`],
             moeValue: moeAmount,
             offerValue: offerAmount,
             deviationPct: amountDev
           });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_very_low' });
-        } else if (amountDev < -Math.abs(thresholds.amount_low_threshold)) {
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'amount_low',
-            text: questions.question_amount_low,
-            moeValue: moeAmount,
-            offerValue: offerAmount,
-            deviationPct: amountDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_low' });
-        } else if (amountDev > Math.abs(thresholds.amount_very_high_threshold)) {
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'amount_very_high',
-            text: questions.question_amount_very_high,
-            moeValue: moeAmount,
-            offerValue: offerAmount,
-            deviationPct: amountDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_very_high' });
-        } else if (amountDev > Math.abs(thresholds.amount_high_threshold)) {
-          await upsertQuestion({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            type: 'amount_high',
-            text: questions.question_amount_high,
-            moeValue: moeAmount,
-            offerValue: offerAmount,
-            deviationPct: amountDev
-          });
-          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'amount_high' });
+          generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: amountType });
         }
       }
+      staleTypes.push(...metricQuestionTypes('amount').filter(type => type !== amountType));
 
       // Incohérence de montant import : offer.amount ≠ qty × unit_price
-      if (!shouldSkipUnitAnalysis
-          && offer.qty != null && offer.unit_price != null && offer.amount != null) {
+      let mismatchActive = false;
+      if (offer.qty != null && offer.unit_price != null && offer.amount != null) {
         const calculatedAmt = Number(offer.qty) * Number(offer.unit_price);
         const importedAmt   = Number(offer.amount);
         const hasMismatch   = Number.isFinite(calculatedAmt) && Number.isFinite(importedAmt)
@@ -964,16 +889,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
               comment: mismatchText
             });
             generated.push({ item_id: offer.item_id, company_id: offer.company_id, type: 'offer_amount_mismatch' });
+            mismatchActive = true;
           }
-        } else {
-          // Incohérence résolue : supprimer la question si elle existait
-          await deleteQuestionTypes({
-            itemId: offer.item_id,
-            companyId: offer.company_id,
-            types: ['offer_amount_mismatch']
-          });
         }
       }
+      if (!mismatchActive) staleTypes.push('offer_amount_mismatch');
+
+      await deleteQuestionTypes({
+        itemId: offer.item_id,
+        companyId: offer.company_id,
+        types: staleTypes
+      });
     }
 
     // 5. Ajouter les options (items d'option)
@@ -1046,159 +972,81 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
             comment: buildUnitMismatchComment(optionUnit)
           });
           generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'unit_mismatch' });
+          continue;
         }
 
-        if (!shouldSkipUnitAnalysis && moe.qty != null && offer.qty != null && moe.qty !== 0) {
-          const qtyDev = ((offer.qty - moe.qty) / moe.qty) * 100;
-          if (qtyDev < -Math.abs(thresholds.qty_very_low_threshold)) {
+        // Synchroniser les questions de seuils (options) : au plus une question par
+        // métrique ; les niveaux devenus obsolètes sont supprimés.
+        const staleTypes = ['unit_mismatch'];
+
+        // Écart quantité
+        const moeQty = excelNumber(moe.qty);
+        const offerQty = excelNumber(offer.qty);
+        let qtyType = null;
+        if (moeQty != null && offerQty != null && moeQty !== 0) {
+          const qtyDev = ((offerQty - moeQty) / moeQty) * 100;
+          qtyType = classifyDeviation(qtyDev, thresholds, 'qty');
+          if (qtyType) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
               companyId: offer.company_id,
-              type: 'qty_very_low',
-              text: questions.question_qty_very_low,
-              moeValue: moe.qty,
-              offerValue: offer.qty,
+              type: qtyType,
+              text: questions[`question_${qtyType}`],
+              moeValue: moeQty,
+              offerValue: offerQty,
               deviationPct: qtyDev
             });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_very_low' });
-          } else if (qtyDev < -Math.abs(thresholds.qty_low_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'qty_low',
-              text: questions.question_qty_low,
-              moeValue: moe.qty,
-              offerValue: offer.qty,
-              deviationPct: qtyDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_low' });
-          } else if (qtyDev > Math.abs(thresholds.qty_very_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'qty_very_high',
-              text: questions.question_qty_very_high,
-              moeValue: moe.qty,
-              offerValue: offer.qty,
-              deviationPct: qtyDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_very_high' });
-          } else if (qtyDev > Math.abs(thresholds.qty_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'qty_high',
-              text: questions.question_qty_high,
-              moeValue: moe.qty,
-              offerValue: offer.qty,
-              deviationPct: qtyDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'qty_high' });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: qtyType });
           }
         }
+        staleTypes.push(...metricQuestionTypes('qty').filter(type => type !== qtyType));
 
-        if (!shouldSkipUnitAnalysis && moe.unit_price != null && offer.unit_price != null && moe.unit_price !== 0) {
-          const priceDev = ((offer.unit_price - moe.unit_price) / moe.unit_price) * 100;
-          if (priceDev < -Math.abs(thresholds.price_very_low_threshold)) {
+        // Écart prix unitaire
+        const moeUnitPrice = excelNumber(moe.unit_price);
+        const offerUnitPrice = excelNumber(offer.unit_price);
+        let priceType = null;
+        if (moeUnitPrice != null && offerUnitPrice != null && moeUnitPrice !== 0) {
+          const priceDev = ((offerUnitPrice - moeUnitPrice) / moeUnitPrice) * 100;
+          priceType = classifyDeviation(priceDev, thresholds, 'price');
+          if (priceType) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
               companyId: offer.company_id,
-              type: 'price_very_low',
-              text: questions.question_price_very_low,
-              moeValue: moe.unit_price,
-              offerValue: offer.unit_price,
+              type: priceType,
+              text: questions[`question_${priceType}`],
+              moeValue: moeUnitPrice,
+              offerValue: offerUnitPrice,
               deviationPct: priceDev
             });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_very_low' });
-          } else if (priceDev < -Math.abs(thresholds.price_low_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'price_low',
-              text: questions.question_price_low,
-              moeValue: moe.unit_price,
-              offerValue: offer.unit_price,
-              deviationPct: priceDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_low' });
-          } else if (priceDev > Math.abs(thresholds.price_very_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'price_very_high',
-              text: questions.question_price_very_high,
-              moeValue: moe.unit_price,
-              offerValue: offer.unit_price,
-              deviationPct: priceDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_very_high' });
-          } else if (priceDev > Math.abs(thresholds.price_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'price_high',
-              text: questions.question_price_high,
-              moeValue: moe.unit_price,
-              offerValue: offer.unit_price,
-              deviationPct: priceDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'price_high' });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: priceType });
           }
         }
+        staleTypes.push(...metricQuestionTypes('price').filter(type => type !== priceType));
 
+        // Écart montant
         const moeAmount = getComparableAmount(moe);
-        if (!shouldSkipUnitAnalysis && moeAmount != null && offerAmount != null && moeAmount !== 0) {
+        let amountType = null;
+        if (moeAmount != null && offerAmount != null && moeAmount !== 0) {
           const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
-          if (amountDev < -Math.abs(thresholds.amount_very_low_threshold)) {
+          amountType = classifyDeviation(amountDev, thresholds, 'amount');
+          if (amountType) {
             await upsertQuestion({
               optionItemId: offer.option_item_id,
               companyId: offer.company_id,
-              type: 'amount_very_low',
-              text: questions.question_amount_very_low,
+              type: amountType,
+              text: questions[`question_${amountType}`],
               moeValue: moeAmount,
               offerValue: offerAmount,
               deviationPct: amountDev
             });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_very_low' });
-          } else if (amountDev < -Math.abs(thresholds.amount_low_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'amount_low',
-              text: questions.question_amount_low,
-              moeValue: moeAmount,
-              offerValue: offerAmount,
-              deviationPct: amountDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_low' });
-          } else if (amountDev > Math.abs(thresholds.amount_very_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'amount_very_high',
-              text: questions.question_amount_very_high,
-              moeValue: moeAmount,
-              offerValue: offerAmount,
-              deviationPct: amountDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_very_high' });
-          } else if (amountDev > Math.abs(thresholds.amount_high_threshold)) {
-            await upsertQuestion({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              type: 'amount_high',
-              text: questions.question_amount_high,
-              moeValue: moeAmount,
-              offerValue: offerAmount,
-              deviationPct: amountDev
-            });
-            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'amount_high' });
+            generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: amountType });
           }
         }
+        staleTypes.push(...metricQuestionTypes('amount').filter(type => type !== amountType));
 
         // Incohérence de montant import (option) : offer.amount ≠ qty × unit_price
-        if (!shouldSkipUnitAnalysis
-            && offer.qty != null && offer.unit_price != null && offer.amount != null) {
+        let mismatchActive = false;
+        if (offer.qty != null && offer.unit_price != null && offer.amount != null) {
           const calculatedAmt = Number(offer.qty) * Number(offer.unit_price);
           const importedAmt   = Number(offer.amount);
           const hasMismatch   = Number.isFinite(calculatedAmt) && Number.isFinite(importedAmt)
@@ -1226,15 +1074,17 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
                 comment: mismatchText
               });
               generated.push({ option_item_id: offer.option_item_id, company_id: offer.company_id, type: 'offer_amount_mismatch' });
+              mismatchActive = true;
             }
-          } else {
-            await deleteQuestionTypes({
-              optionItemId: offer.option_item_id,
-              companyId: offer.company_id,
-              types: ['offer_amount_mismatch']
-            });
           }
         }
+        if (!mismatchActive) staleTypes.push('offer_amount_mismatch');
+
+        await deleteQuestionTypes({
+          optionItemId: offer.option_item_id,
+          companyId: offer.company_id,
+          types: staleTypes
+        });
       }
     }
 
@@ -1734,17 +1584,15 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       
       const worksheet = workbook.addWorksheet(sheetName);
       
-      // Colonnes identiques à l'affichage de la fiche question
+      // Colonnes de la fiche question exportée
       worksheet.columns = [
         { header: 'Entreprise', key: 'company', width: 20 },
-        { header: 'Article', key: 'article', width: 40 },
-        { header: 'Type', key: 'type', width: 22 },
-        { header: 'Question', key: 'question', width: 50 },
+        { header: 'Désignation', key: 'article', width: 45 },
+        { header: 'Question', key: 'question', width: 60 },
         { header: 'Écart (%)', key: 'deviation', width: 12 },
-        { header: 'Valeur MOE', key: 'moe_value', width: 14 },
-        { header: 'Valeur Offre', key: 'offer_value', width: 14 },
-        { header: 'Réponse', key: 'comment', width: 40 },
-        { header: 'Statut', key: 'status', width: 14 }
+        { header: 'Valeur MOE', key: 'moe_value', width: 16 },
+        { header: 'Valeur Offre', key: 'offer_value', width: 16 },
+        { header: 'Réponse', key: 'comment', width: 45 }
       ];
       
       // Styliser l'en-tête
@@ -1766,42 +1614,17 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       
       // Ajouter les données pour cette entreprise
       companyData.questions.forEach(q => {
-        const typeLabel = {
-          'unanswered': 'Réponse oubliée',
-          'unit_mismatch': 'Unité à vérifier',
-          'qty_very_low': 'Qté Très Basse',
-          'qty_low': 'Qté Basse',
-          'qty_high': 'Qté Haute',
-          'qty_very_high': 'Qté Très Haute',
-          'price_very_low': 'Prix Très Bas',
-          'price_low': 'Prix Bas',
-          'price_high': 'Prix Haut',
-          'price_very_high': 'Prix Très Haut',
-          'amount_very_low': 'Montant Très Bas',
-          'amount_low': 'Montant Bas',
-          'amount_high': 'Montant Haut',
-          'amount_very_high': 'Montant Très Haut'
-        }[q.question_type] || q.question_type;
-        
-        const statusLabel = {
-          'pending': 'En attente',
-          'answered': 'Répondue',
-          'dismissed': 'Ignorée'
-        }[q.status] || q.status;
-
-        // Article combiné (num - designation) comme dans l'affichage
+        // Désignation combinée (num - designation) comme dans l'affichage
         const articleLabel = q.num ? `${q.num} - ${q.designation || ''}` : (q.designation || '');
-        
+
         const row = worksheet.addRow({
           company: q.company_name,
           article: articleLabel,
-          type: typeLabel,
           question: q.question_text,
           deviation: excelNumber(q.deviation_pct),
           moe_value: excelNumber(q.moe_value),
           offer_value: excelNumber(q.offer_value),
-          comment: q.comment || '',
-          status: statusLabel
+          comment: q.comment || ''
         });
         
         // Appliquer les styles de base
@@ -1814,10 +1637,10 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         };
         
         // Colonne Écart (%) - Format et coloration selon la valeur
-        const deviationCell = row.getCell(5);
+        const deviationCell = row.getCell(4);
         const deviationValue = excelNumber(q.deviation_pct);
         if (deviationValue !== null) {
-          deviationCell.numFmt = '0.0000"%"';
+          deviationCell.numFmt = '0.00"%"';
           deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
           const ecartAbs = Math.abs(deviationValue);
           if (ecartAbs > 20) {
@@ -1830,8 +1653,8 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         }
         
         // Colonnes Valeur MOE et Valeur Offre - Format numérique
-        const moeCell = row.getCell(6);
-        const offerCell = row.getCell(7);
+        const moeCell = row.getCell(5);
+        const offerCell = row.getCell(6);
         const valueNumFmt = questionValueNumberFormat(q.question_type, q.unit);
         if (excelNumber(q.moe_value) !== null) {
           moeCell.numFmt = valueNumFmt;
@@ -1840,30 +1663,6 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         if (excelNumber(q.offer_value) !== null) {
           offerCell.numFmt = valueNumFmt;
           offerCell.alignment = { horizontal: 'right', vertical: 'top' };
-        }
-        
-        // Colonne Type - Coloration selon le type (mêmes couleurs que l'affichage)
-        const typeCell = row.getCell(3);
-        if (q.question_type === 'unit_mismatch') {
-          typeCell.font = { color: { argb: 'FF6F42C1' }, bold: true };
-        } else if (q.question_type?.includes('very_low')) {
-          typeCell.font = { color: { argb: 'FF0D6EFD' }, bold: true };
-        } else if (q.question_type?.includes('_low')) {
-          typeCell.font = { color: { argb: 'FF0DCAF0' }, bold: true };
-        } else if (q.question_type?.includes('very_high')) {
-          typeCell.font = { color: { argb: 'FFDC3545' }, bold: true };
-        } else if (q.question_type?.includes('_high')) {
-          typeCell.font = { color: { argb: 'FFFD7E14' }, bold: true };
-        }
-        
-        // Colonne Statut - Coloration selon le statut
-        const statusCell = row.getCell(9);
-        if (statusLabel === 'En attente') {
-          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
-        } else if (statusLabel === 'Répondue') {
-          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1E7DD' } };
-        } else if (statusLabel === 'Ignorée') {
-          statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
         }
       });
       

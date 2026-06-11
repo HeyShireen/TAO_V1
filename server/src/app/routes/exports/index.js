@@ -24,7 +24,7 @@ router.use(requireAuth);
 
 const EXPORT_CURRENCY_FMT = '#,##0.00 "€"';
 const EXPORT_PERCENT_FMT = '0.00%';
-const EXPORT_QTY_FMT = '#,##0.##';
+const EXPORT_QTY_FMT = '#,##0.00';
 const DEFAULT_LOT_THRESHOLDS = {
   qty_very_low_threshold: 25,
   qty_low_threshold: 10,
@@ -46,6 +46,7 @@ const QUESTION_EXPORT_STYLES = {
   veryHigh: { fg: 'FF000000', bg: 'FFF2B8BE', accent: 'FFDC3545', bold: true },
   unanswered: { fg: 'FF000000', bg: 'FFFFF3CD', accent: 'FFFFC107', bold: true },
   unitMismatch: { fg: 'FF000000', bg: 'FFFFE3A8', accent: 'FFF59E0B', bold: true },
+  amountMismatch: { fg: 'FF000000', bg: 'FFE6DAF5', accent: 'FF6F42C1', bold: true },
   validated: { fg: 'FF000000', bg: 'FFC9EBD3', accent: 'FF28A745', bold: true }
 };
 
@@ -205,14 +206,8 @@ function metricLegendLabel(metricLabel, direction, threshold) {
   return `${metricLabel} ${prefix} à ${fmtThreshold(threshold)} %`;
 }
 
-function getQuestionLegendRows(thresholds, questionConfig) {
+function getQuestionLegendRows(thresholds) {
   return [
-    {
-      qty: 'QUANTITE',
-      price: 'PRIX UNITAIRE',
-      note: 'MONTANT',
-      bg: QUESTION_EXPORT_STYLES.veryLow.bg
-    },
     {
       qty: `Quantité très basse (< -${fmtThreshold(thresholds.qty_very_low_threshold)} %)`,
       price: `Prix très bas (< -${fmtThreshold(thresholds.price_very_low_threshold)} %)`,
@@ -236,6 +231,23 @@ function getQuestionLegendRows(thresholds, questionConfig) {
       price: `Prix très haut (> ${fmtThreshold(thresholds.price_very_high_threshold)} %)`,
       note: `Montant très haut (> ${fmtThreshold(thresholds.amount_very_high_threshold)} %)`,
       bg: QUESTION_EXPORT_STYLES.veryHigh.bg
+    }
+  ];
+}
+
+function getQuestionLegendSpecialRows(unansweredFill) {
+  return [
+    {
+      label: 'Article incomplet : quantité ou prix unitaire non renseigné par l\'entreprise',
+      bg: unansweredFill || QUESTION_EXPORT_STYLES.unanswered.bg
+    },
+    {
+      label: 'Incohérence d\'unité : unité de l\'offre différente de l\'unité MOE',
+      bg: QUESTION_EXPORT_STYLES.unitMismatch.bg
+    },
+    {
+      label: 'Montant incohérent : montant importé différent de Quantité × PU',
+      bg: QUESTION_EXPORT_STYLES.amountMismatch.bg
     }
   ];
 }
@@ -719,12 +731,14 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   clearWorksheetDrawings(ws);
   clearWorksheetValues(ws);
 
-  const moeStartCol = 5;
-  const firstCompanyCol = 9;
+  const moeStartCol = 7;
+  const firstCompanyCol = 11;
   const companyWidth = 9;
   const companyCount = companies.length;
   const lastCol = Math.max(moeStartCol + 3, getCompanyTableEndColumn(companyCount, firstCompanyCol, companyWidth));
-  const dataStartRow = 19;
+  const headerGroupRow = 20;
+  const headerRow = 21;
+  const dataStartRow = 22;
   const lastDataRow = dataStartRow + Math.max(items.length, 1) - 1;
   const totalRowNumber = lastDataRow + 2;
   ws.views = [{ state: 'frozen', xSplit: firstCompanyCol - 1, ySplit: 0, topLeftCell: `${ws.getColumn(firstCompanyCol).letter}1`, zoomScale: 55 }];
@@ -732,7 +746,14 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   if (ws.columnCount > lastCol) {
     ws.spliceColumns(lastCol + 1, ws.columnCount - lastCol);
   }
-  resetTableArea(ws, { firstRow: 17, lastRow: Math.max(totalRowNumber, ws.rowCount), lastCol });
+  resetTableArea(ws, { firstRow: headerGroupRow, lastRow: Math.max(totalRowNumber, ws.rowCount), lastCol });
+  // Les cellules issues du template peuvent partager le même objet de style :
+  // réinitialiser la zone de légende pour éviter qu'une écriture en écrase une autre.
+  for (let r = 10; r < headerGroupRow; r += 1) {
+    for (let c = 1; c <= lastCol; c += 1) {
+      ws.getCell(r, c).style = {};
+    }
+  }
 
   ws.pageSetup = {
     paperSize: 8,
@@ -742,12 +763,12 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     fitToHeight: 1,
     horizontalCentered: true,
     verticalCentered: true,
-    printTitlesRow: '18:18'
+    printTitlesRow: `${headerRow}:${headerRow}`
   };
   ws.pageSetup.printArea = `A1:${ws.getColumn(lastCol).letter}${totalRowNumber + 3}`;
   const unansweredFill = normalizeHexColor(questionConfig?.unanswered_color, QUESTION_EXPORT_STYLES.unanswered.bg);
 
-  const baseWidths = { 1: 15.6, 2: 4.5, 3: 4.5, 4: 111.4, 5: 10.6, 6: 16.1, 7: 23, 8: 25.5 };
+  const baseWidths = { 1: 15.6, 2: 50.1, 3: 50.1, 4: 50.1, 5: 50.1, 6: 50.1, 7: 10.6, 8: 16.1, 9: 23, 10: 25.5 };
   for (let c = 1; c <= lastCol; c += 1) {
     if (baseWidths[c]) {
       ws.getColumn(c).width = baseWidths[c];
@@ -756,7 +777,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       ws.getColumn(c).width = [6, 16.1, 20, 23, 15.1, 15.1, 22.6, 72, 18.8][pos] || 14;
     }
   }
-  for (let r = 5; r <= 18; r += 1) ws.getRow(r).height = r === 18 ? 79.95 : 26.4;
+  for (let r = 5; r <= headerRow; r += 1) ws.getRow(r).height = r === headerRow ? 79.95 : 26.4;
 
   const titleFont = { name: 'Arial Narrow', size: 18, color: { argb: 'FF000000' } };
   const headerFont = { name: 'Arial Narrow', size: 18, color: { argb: 'FF000000' } };
@@ -779,30 +800,6 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
 
   ws.mergeCells('B11:D11');
   ws.getCell('B11').value = 'Légende analyse';
-  ws.getCell('B11').font = { name: 'Calibri', size: 18 };
-  ws.getCell('B11').alignment = { horizontal: 'center', vertical: 'middle' };
-
-  const legend = [
-    ['QUANTITE', 'PRIX UNITAIRE', 'Poste ajouté par MOE', 'FFBDD7EE'],
-    ['Quantité inférieure à 5 %', 'Prix inférieur à 35 %', 'Poste supprimé par MOE', 'FFE2F0D9'],
-    ['Quantité équivalente', 'Prix équivalent', 'Quantité ou prix unitaire à confirmer', 'FFFFF2CC'],
-    ['Quantité supérieure à 2 %', 'Prix supérieur à 10 %', 'Poste non renseigné par l\'entreprise', 'FFFCE4D6']
-  ];
-  legend.forEach(([a, b, cText, color], idx) => {
-    const r = 12 + idx;
-    [a, b, cText].forEach((value, offset) => {
-      const cell = ws.getCell(r, 2 + offset);
-      cell.value = value;
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
-      cell.font = { name: 'Calibri', size: 18 };
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      applyBorder(cell, { top: { style: 'medium' }, bottom: { style: 'medium' } });
-    });
-  });
-
-  try { ws.unMergeCells('B11:D11'); } catch (_) {}
-  ws.mergeCells('B11:D11');
-  ws.getCell('B11').value = 'Légende analyse';
   ws.getCell('B11').font = { name: 'Calibri', size: 18, bold: true };
   ws.getCell('B11').alignment = { horizontal: 'center', vertical: 'middle' };
   for (let c = 2; c <= 4; c += 1) {
@@ -813,60 +810,92 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       right: c === 4 ? { style: 'medium' } : { style: 'thin' }
     });
   }
-  getQuestionLegendRows(thresholds, questionConfig).forEach((entry, idx) => {
-    const r = 12 + idx;
+
+  ['QUANTITE', 'PRIX UNITAIRE', 'MONTANT'].forEach((label, offset) => {
+    const c = 2 + offset;
+    const cell = ws.getCell(12, c);
+    cell.value = label;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    cell.font = { name: 'Calibri', size: 16, bold: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    applyBorder(cell, {
+      top: { style: 'medium' },
+      bottom: { style: 'thin' },
+      left: c === 2 ? { style: 'medium' } : { style: 'thin' },
+      right: c === 4 ? { style: 'medium' } : { style: 'thin' }
+    });
+  });
+
+  getQuestionLegendRows(thresholds).forEach((entry, idx) => {
+    const r = 13 + idx;
     [entry.qty, entry.price, entry.note].forEach((value, offset) => {
       const c = 2 + offset;
       const cell = ws.getCell(r, c);
       cell.value = value;
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: entry.bg } };
-      cell.font = { name: 'Calibri', size: 16, bold: idx === 0 };
+      cell.font = { name: 'Calibri', size: 16 };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
       applyBorder(cell, {
-        top: { style: idx === 0 ? 'medium' : 'thin' },
-        bottom: { style: idx === 4 ? 'medium' : 'thin' },
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
         left: c === 2 ? { style: 'medium' } : { style: 'thin' },
         right: c === 4 ? { style: 'medium' } : { style: 'thin' }
       });
     });
   });
 
+  getQuestionLegendSpecialRows(unansweredFill).forEach((entry, idx, specials) => {
+    const r = 17 + idx;
+    ws.mergeCells(r, 2, r, 4);
+    for (let c = 2; c <= 4; c += 1) {
+      const cell = ws.getCell(r, c);
+      if (c === 2) cell.value = entry.label;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: entry.bg } };
+      cell.font = { name: 'Calibri', size: 16 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      applyBorder(cell, {
+        top: { style: 'thin' },
+        bottom: { style: idx === specials.length - 1 ? 'medium' : 'thin' },
+        left: c === 2 ? { style: 'medium' } : { style: 'thin' },
+        right: c === 4 ? { style: 'medium' } : { style: 'thin' }
+      });
+    }
+  });
+
   addDmxLogoAboveMoe(workbook, ws, moeStartCol);
 
-  ws.mergeCells(17, moeStartCol, 17, moeStartCol + 3);
-  ws.getCell(17, moeStartCol).value = 'MOE';
-  ws.getCell(17, moeStartCol).fill = headerFill;
-  ws.getCell(17, moeStartCol).font = headerFont;
-  ws.getCell(17, moeStartCol).alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.mergeCells(headerGroupRow, moeStartCol, headerGroupRow, moeStartCol + 3);
+  ws.getCell(headerGroupRow, moeStartCol).value = 'MOE';
+  ws.getCell(headerGroupRow, moeStartCol).fill = headerFill;
+  ws.getCell(headerGroupRow, moeStartCol).font = headerFont;
+  ws.getCell(headerGroupRow, moeStartCol).alignment = { horizontal: 'center', vertical: 'middle' };
+  applyBorder(ws.getCell(headerGroupRow, moeStartCol), { left: { style: 'double' } });
 
   ['Num', 'Désignation', '', '', '', '', 'U', 'Quantité', 'PU', 'Montant '].forEach((label, idx) => {
-    const cell = ws.getCell(18, idx + 1);
-    cell.value = label;
+    const cell = ws.getCell(headerRow, idx + 1);
+    if (label) cell.value = label;
     cell.font = headerFont;
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    applyBorder(cell, { top: { style: idx >= 6 ? 'double' : 'thin' } });
+    applyBorder(cell, {
+      top: { style: idx + 1 >= moeStartCol ? 'double' : 'thin' },
+      left: idx + 1 === moeStartCol ? { style: 'double' } : undefined
+    });
   });
-
-  ['U', 'Quantité', 'PU', 'Montant '].forEach((label, offset) => {
-    const cell = ws.getCell(18, moeStartCol + offset);
-    cell.value = label;
-    cell.font = headerFont;
-    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    applyBorder(cell, { top: { style: 'double' } });
-  });
+  ws.mergeCells(headerRow, 2, headerRow, 6);
 
   companies.forEach((company, index) => {
     const start = firstCompanyCol + index * companyWidth;
     const end = start + companyWidth - 1;
-    ws.mergeCells(17, start, 17, end);
-    const title = ws.getCell(17, start);
+    ws.mergeCells(headerGroupRow, start, headerGroupRow, end);
+    const title = ws.getCell(headerGroupRow, start);
     title.value = company.name || `Entreprise ${index + 1}`;
     title.fill = headerFill;
     title.font = { name: 'Calibri', size: 18 };
     title.alignment = { horizontal: 'center', vertical: 'middle' };
+    applyBorder(title, { left: { style: 'double' } });
 
     ['U', 'Quantité', 'PU', 'Montant ', 'Ecart Qtés (en %)', 'Ecart PU (en %)', 'nb remarque', 'Remarque logiciel', 'Questions'].forEach((label, offset) => {
-      const cell = ws.getCell(18, start + offset);
+      const cell = ws.getCell(headerRow, start + offset);
       cell.value = label;
       cell.font = headerFont;
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
@@ -889,7 +918,8 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     const moePu = toNumberOrNull(moe.unit_price);
 
     row.getCell(1).value = item.num || '';
-    row.getCell(4).value = item.designation || '';
+    row.getCell(2).value = item.designation || '';
+    ws.mergeCells(rowNumber, 2, rowNumber, 6);
     row.getCell(moeStartCol).value = item.unit || '';
     row.getCell(moeStartCol + 1).value = moeQty;
     row.getCell(moeStartCol + 2).value = moePu;
@@ -916,6 +946,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       const questionTexts = generatedQuestions
         .map(q => String(q.question_text || '').trim())
         .filter(Boolean);
+      const amountMismatch = generatedQuestions.some(q => q.question_type === 'offer_amount_mismatch');
       row.getCell(start).value = offer.unit || item.unit || '';
       row.getCell(start + 1).value = qty;
       row.getCell(start + 2).value = pu;
@@ -949,9 +980,13 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
           questionStyleIntents.push({ col: start + 2, styleKey: priceStyle });
           questionStyleIntents.push({ col: start + 5, styleKey: priceStyle });
         }
-        const amountStyle = getMetricQuestionStyleKey(amountDeviation, thresholds, 'amount');
-        if (amountStyle) {
-          questionStyleIntents.push({ col: start + 3, styleKey: amountStyle });
+        if (amountMismatch) {
+          questionStyleIntents.push({ col: start + 3, styleKey: 'amountMismatch' });
+        } else {
+          const amountStyle = getMetricQuestionStyleKey(amountDeviation, thresholds, 'amount');
+          if (amountStyle) {
+            questionStyleIntents.push({ col: start + 3, styleKey: amountStyle });
+          }
         }
       }
     });
@@ -961,10 +996,10 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       cell.font = { name: 'Arial Narrow', size: 12, ...(cell.font || {}) };
       cell.alignment = {
         vertical: 'middle',
-        wrapText: c === 4 || (c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 7)
+        wrapText: c === 2 || (c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 7)
       };
       applyBorder(cell, {
-        left: c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 0 ? { style: 'double' } : { style: 'thin' },
+        left: c === moeStartCol || (c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 0) ? { style: 'double' } : { style: 'thin' },
         right: c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === companyWidth - 1 ? { style: 'double' } : { style: 'thin' },
         bottom: { style: 'hair' }
       });
@@ -979,12 +1014,17 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   });
 
   const totalRow = ws.getRow(totalRowNumber);
-  totalRow.getCell(4).value = 'TOTAL';
+  totalRow.getCell(2).value = 'TOTAL';
   totalRow.font = { name: 'Arial Narrow', size: 18, bold: true };
   for (let c = 1; c <= lastCol; c += 1) {
     const cell = totalRow.getCell(c);
     cell.fill = headerFill;
-    applyBorder(cell, { top: { style: 'double' }, bottom: { style: 'double' } });
+    applyBorder(cell, {
+      top: { style: 'double' },
+      bottom: { style: 'double' },
+      left: c === moeStartCol || (c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === 0) ? { style: 'double' } : undefined,
+      right: c >= firstCompanyCol && (c - firstCompanyCol) % companyWidth === companyWidth - 1 ? { style: 'double' } : undefined
+    });
   }
   [moeStartCol + 3, ...companies.map((_, idx) => firstCompanyCol + idx * companyWidth + 3)].forEach(col => {
     const letter = ws.getColumn(col).letter;
@@ -1007,7 +1047,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
   }
 
   ws.autoFilter = {
-    from: { row: 18, column: 1 },
+    from: { row: headerRow, column: 1 },
     to: { row: lastDataRow, column: lastCol }
   };
 
