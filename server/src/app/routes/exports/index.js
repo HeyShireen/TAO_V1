@@ -46,8 +46,7 @@ const QUESTION_EXPORT_STYLES = {
   veryHigh: { fg: 'FF000000', bg: 'FFF2B8BE', accent: 'FFDC3545', bold: true },
   unanswered: { fg: 'FF000000', bg: 'FFFFF3CD', accent: 'FFFFC107', bold: true },
   unitMismatch: { fg: 'FF000000', bg: 'FFFFE3A8', accent: 'FFF59E0B', bold: true },
-  amountMismatch: { fg: 'FF000000', bg: 'FFE6DAF5', accent: 'FF6F42C1', bold: true },
-  validated: { fg: 'FF000000', bg: 'FFC9EBD3', accent: 'FF28A745', bold: true }
+  amountMismatch: { fg: 'FF000000', bg: 'FFE6DAF5', accent: 'FF6F42C1', bold: true }
 };
 
 function toNumberOrNull(value) {
@@ -209,27 +208,27 @@ function metricLegendLabel(metricLabel, direction, threshold) {
 function getQuestionLegendRows(thresholds) {
   return [
     {
-      qty: `Quantité très basse (< -${fmtThreshold(thresholds.qty_very_low_threshold)} %)`,
-      price: `Prix très bas (< -${fmtThreshold(thresholds.price_very_low_threshold)} %)`,
-      note: `Montant très bas (< -${fmtThreshold(thresholds.amount_very_low_threshold)} %)`,
-      bg: QUESTION_EXPORT_STYLES.veryLow.bg
-    },
-    {
-      qty: `Quantité basse (< -${fmtThreshold(thresholds.qty_low_threshold)} %)`,
-      price: `Prix bas (< -${fmtThreshold(thresholds.price_low_threshold)} %)`,
-      note: `Montant bas (< -${fmtThreshold(thresholds.amount_low_threshold)} %)`,
+      qty: `Quantité basse : ${fmtThreshold(thresholds.qty_low_threshold)} %`,
+      price: `PU bas : ${fmtThreshold(thresholds.price_low_threshold)} %`,
+      note: '',
       bg: QUESTION_EXPORT_STYLES.low.bg
     },
     {
-      qty: `Quantité haute (> ${fmtThreshold(thresholds.qty_high_threshold)} %)`,
-      price: `Prix haut (> ${fmtThreshold(thresholds.price_high_threshold)} %)`,
-      note: `Montant haut (> ${fmtThreshold(thresholds.amount_high_threshold)} %)`,
+      qty: `Quantité haute : ${fmtThreshold(thresholds.qty_high_threshold)} %`,
+      price: `PU haut : ${fmtThreshold(thresholds.price_high_threshold)} %`,
+      note: '',
       bg: QUESTION_EXPORT_STYLES.high.bg
     },
     {
-      qty: `Quantité très haute (> ${fmtThreshold(thresholds.qty_very_high_threshold)} %)`,
-      price: `Prix très haut (> ${fmtThreshold(thresholds.price_very_high_threshold)} %)`,
-      note: `Montant très haut (> ${fmtThreshold(thresholds.amount_very_high_threshold)} %)`,
+      qty: `Quantité anormalement basse : > ${fmtThreshold(thresholds.qty_very_low_threshold)} %`,
+      price: `PU anormalement bas : > ${fmtThreshold(thresholds.price_very_low_threshold)} %`,
+      note: `Montant anormalement bas : > ${fmtThreshold(thresholds.amount_very_low_threshold)} %`,
+      bg: QUESTION_EXPORT_STYLES.veryLow.bg
+    },
+    {
+      qty: `Quantité anormalement haute : > ${fmtThreshold(thresholds.qty_very_high_threshold)} %`,
+      price: `PU anormalement haut : > ${fmtThreshold(thresholds.price_very_high_threshold)} %`,
+      note: `Montant anormalement haut : > ${fmtThreshold(thresholds.amount_very_high_threshold)} %`,
       bg: QUESTION_EXPORT_STYLES.veryHigh.bg
     }
   ];
@@ -238,15 +237,15 @@ function getQuestionLegendRows(thresholds) {
 function getQuestionLegendSpecialRows(unansweredFill) {
   return [
     {
-      label: 'Article incomplet : quantité ou prix unitaire non renseigné par l\'entreprise',
+      label: 'Article incomplet : Quantité ou prix unitaire non renseignés par l\'entreprise',
       bg: unansweredFill || QUESTION_EXPORT_STYLES.unanswered.bg
     },
     {
-      label: 'Incohérence d\'unité : unité de l\'offre différente de l\'unité MOE',
+      label: 'Incohérence d\'unité : Unité de l\'offre différente de l\'unité MOE',
       bg: QUESTION_EXPORT_STYLES.unitMismatch.bg
     },
     {
-      label: 'Montant incohérent : montant importé différent de Quantité × PU',
+      label: 'Montant incohérent : Montant de l\'article différent du produit (Quantité × Prix unitaire)',
       bg: QUESTION_EXPORT_STYLES.amountMismatch.bg
     }
   ];
@@ -687,15 +686,6 @@ async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds =
     if (!questionsByItemCompany.has(key)) questionsByItemCompany.set(key, []);
     questionsByItemCompany.get(key).push(q);
   }
-  const validatedQuestions = new Set(
-    generatedQuestionsRes.rows
-      .filter(q => q.status === 'validated' && (q.item_id || q.option_item_id) && q.company_id)
-      .map(q => {
-        const sourceKey = q.option_item_id ? `option:${Number(q.option_item_id)}` : `item:${Number(q.item_id)}`;
-        return `${sourceKey}:${Number(q.company_id)}`;
-      })
-  );
-
   return {
     lot,
     round,
@@ -705,12 +695,11 @@ async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds =
     offersByItemCompany,
     thresholds,
     questionConfig,
-    validatedQuestions,
     questionsByItemCompany
   };
 }
 
-async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, companies, offersByItemCompany, thresholds, questionConfig, validatedQuestions, questionsByItemCompany }) {
+async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, companies, offersByItemCompany, thresholds, questionConfig, questionsByItemCompany }) {
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.readFile(LOT_COMPARISON_TEMPLATE);
@@ -937,7 +926,6 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       const moeHasTotal = moeQty !== null && moeQty > 0 && moePu !== null && moePu > 0;
       const isUnanswered = moeHasTotal && !hasQty && !hasPu;
       const unitMismatch = hasBlockingUnitMismatch(item.unit, offer.unit, amount);
-      const isValidated = validatedQuestions?.has(`${key}:${Number(company.id)}`);
       const qtyDeviation = moeQty && qty !== null ? ((qty - moeQty) / moeQty) * 100 : null;
       const puDeviation = moePu && pu !== null ? ((pu - moePu) / moePu) * 100 : null;
       const moeAmount = moeQty !== null && moePu !== null ? moeQty * moePu : null;
@@ -957,11 +945,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       row.getCell(start + 7).value = questionTexts.length ? questionTexts.join('\n') : remark;
       row.getCell(start + 8).value = '';
 
-      if (isValidated) {
-        [start, start + 1, start + 2, start + 3, start + 4, start + 5].forEach(col => {
-          questionStyleIntents.push({ col, styleKey: 'validated' });
-        });
-      } else if (isUnanswered) {
+      if (isUnanswered) {
         [start, start + 1, start + 2, start + 3].forEach(col => {
           questionStyleIntents.push({ col, styleKey: 'unanswered', options: { bg: unansweredFill } });
         });

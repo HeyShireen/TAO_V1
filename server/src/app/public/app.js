@@ -5094,12 +5094,13 @@ async function refreshQuestions({ silent = false } = {}){
       const offerValWithBadge = `${offerVal}${offerCommentBadgeHtml(offerComment, companyColor, q.company_name)}`;
 
       const itemLabel = q.num ? `${q.num} - ${q.designation || ''}` : (q.designation || '');
+      const questionCellState = questionCellStateClass([q]);
       html += `
         <tr data-qid="${q.id}">
           <td>${q.company_name}</td>
           <td>${sourceBadge}${itemLabel}</td>
           <td>${typeLabel}</td>
-          <td style="max-width:300px">${q.question_text}</td>
+          <td style="max-width:300px" class="${questionCellState.trim()}">${q.question_text}</td>
           <td>${deviationPct}</td>
           <td>${moeVal}</td>
           <td>${offerValWithBadge}</td>
@@ -5680,9 +5681,10 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const validateTitle = isValidated ? 'Désactiver la validation' : 'Valider';
     const disabled = isVisionneur() || isEntreprise() ? 'disabled' : '';
     const rows = displayQuestions.length > 1 ? 3 : 1;
+    const cellStateClass = questionCellStateClass(displayQuestions);
 
     const widthStyle = companyId ? ` style="--question-company-width:var(--questions-company-${companyId}-width, 320px)"` : '';
-    let cell = `<td class="${extraClass}" data-save-key="${saveKey}" data-company-id="${companyId}"${widthStyle}>`;
+    let cell = `<td class="${extraClass}${cellStateClass}" data-save-key="${saveKey}" data-company-id="${companyId}"${widthStyle}>`;
     if (questionId) {
       cell += '<div class="question-cell-actions">';
       cell += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
@@ -5787,7 +5789,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       }
     } else {
     // Question (figée, après Désignation)
-    html += '<td class="sticky-question questions-group-start">';
+    html += `<td class="sticky-question questions-group-start${questionCellStateClass(displayQuestions)}">`;
     html += `<textarea id="question-${item.id}" name="question-${item.id}" class="question-text-editor" data-save-key="${singleQuestionSaveKey}" data-item-id="${item.id}" data-company-id="${singleQuestionCompanyId}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${displayQuestions.length > 1 ? 3 : 1}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${isVisionneur() || isEntreprise() ? 'disabled' : ''}>${questionText}</textarea>`;
     html += `<div class="save-status" data-save-key="${singleQuestionSaveKey}" data-item-id="${item.id}" data-company-id="${singleQuestionCompanyId}" style="position:absolute;top:4px;right:6px;font-size:14px;display:none">${icon('save','icon-only')}</div>`;
     html += '</td>';
@@ -5990,6 +5992,21 @@ function recalcQuestionsHeaderOffsets() {
   if (window.requestAnimationFrame) requestAnimationFrame(setFromMeasure);
 }
 
+// Classes d'état d'une cellule question : vert = validée, orange = modifiée par l'utilisateur
+function questionCellStateClass(questions) {
+  const list = (questions || []).filter(Boolean);
+  if (list.length === 0) return '';
+  const validated = list.every(q => q.status === 'validated');
+  const modified = list.some(q => q.manual_edited);
+  return `${modified ? ' question-cell-modified' : ''}${validated ? ' question-cell-validated' : ''}`;
+}
+
+function questionEditorCellFromButton(btn) {
+  const td = btn?.closest('td');
+  if (td && (td.classList.contains('question-company-cell') || td.classList.contains('sticky-question'))) return td;
+  return btn?.closest('tr')?.querySelector('td.sticky-question') || null;
+}
+
 async function handleValidateEditorQuestionButton(currentBtn) {
   let questionId = currentBtn.dataset.questionId ? Number(currentBtn.dataset.questionId) : null;
   const isValidated = currentBtn.dataset.isValidated === '1';
@@ -6007,6 +6024,7 @@ async function handleValidateEditorQuestionButton(currentBtn) {
       currentBtn.dataset.isValidated = '0';
       currentBtn.title = 'Valider';
       currentBtn.innerHTML = icon('check-circle','icon-only');
+      questionEditorCellFromButton(currentBtn)?.classList.remove('question-cell-validated');
       refreshQuestionsInBackground();
       return;
     }
@@ -6020,6 +6038,7 @@ async function handleValidateEditorQuestionButton(currentBtn) {
     currentBtn.dataset.isValidated = '1';
     currentBtn.title = 'Desactiver la validation';
     currentBtn.innerHTML = icon('x-circle','icon-only');
+    questionEditorCellFromButton(currentBtn)?.classList.add('question-cell-validated');
     refreshQuestionsInBackground();
   } catch (err) {
     showNotify({ title:'Erreur', message: err.message, type:'error' });
@@ -6248,6 +6267,7 @@ function bindQuestionsEditorEvents() {
           currentBtn.dataset.isValidated = '0';
           currentBtn.title = 'Valider';
           currentBtn.innerHTML = icon('check-circle','icon-only');
+          questionEditorCellFromButton(currentBtn)?.classList.remove('question-cell-validated');
           refreshQuestionsInBackground();
           return;
         }
@@ -6261,6 +6281,7 @@ function bindQuestionsEditorEvents() {
         currentBtn.dataset.isValidated = '1';
         currentBtn.title = 'Désactiver la validation';
         currentBtn.innerHTML = icon('x-circle','icon-only');
+        questionEditorCellFromButton(currentBtn)?.classList.add('question-cell-validated');
         refreshQuestionsInBackground();
       } catch (err) {
         showNotify({ title:'Erreur', message: err.message, type:'error' });
@@ -6674,6 +6695,11 @@ async function saveQuestionWithCompany(itemId, questionId, companyId, questionTe
     row.dataset.questionCompanyId = safeCompanyId;
     textarea.dataset.questionId = result.id;
     ensureQuestionEditorActionButtons(row, safeItemId, result.id, result.status === 'validated', safeCompanyId, effectiveSaveKey);
+    const questionCell = textarea.closest('td');
+    if (questionCell) {
+      questionCell.classList.toggle('question-cell-modified', Boolean(result.manual_edited));
+      questionCell.classList.toggle('question-cell-validated', result.status === 'validated');
+    }
   }
 
   if (refreshList) {
