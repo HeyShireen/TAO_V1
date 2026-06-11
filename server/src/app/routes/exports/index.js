@@ -194,6 +194,19 @@ function getMetricQuestionStyleKey(deviationPct, thresholds, metric) {
   );
 }
 
+function getSevereQuestionStyleKey(questions = []) {
+  let hasVeryLow = false;
+  let hasVeryHigh = false;
+  for (const question of questions || []) {
+    const type = String(question?.question_type || '');
+    if (type.endsWith('_very_high')) hasVeryHigh = true;
+    if (type.endsWith('_very_low')) hasVeryLow = true;
+  }
+  if (hasVeryHigh) return 'veryHigh';
+  if (hasVeryLow) return 'veryLow';
+  return null;
+}
+
 function fmtThreshold(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '';
@@ -220,15 +233,15 @@ function getQuestionLegendRows(thresholds) {
       bg: QUESTION_EXPORT_STYLES.high.bg
     },
     {
-      qty: `Quantité anormalement basse : > ${fmtThreshold(thresholds.qty_very_low_threshold)} %`,
-      price: `PU anormalement bas : > ${fmtThreshold(thresholds.price_very_low_threshold)} %`,
-      note: `Montant anormalement bas : > ${fmtThreshold(thresholds.amount_very_low_threshold)} %`,
+      qty: `Quantité anormalement basse : < -${fmtThreshold(thresholds.qty_very_low_threshold)} %`,
+      price: `PU anormalement bas : < -${fmtThreshold(thresholds.price_very_low_threshold)} %`,
+      note: `Montant anormalement bas : < -${fmtThreshold(thresholds.amount_very_low_threshold)} %`,
       bg: QUESTION_EXPORT_STYLES.veryLow.bg
     },
     {
-      qty: `Quantité anormalement haute : > ${fmtThreshold(thresholds.qty_very_high_threshold)} %`,
-      price: `PU anormalement haut : > ${fmtThreshold(thresholds.price_very_high_threshold)} %`,
-      note: `Montant anormalement haut : > ${fmtThreshold(thresholds.amount_very_high_threshold)} %`,
+      qty: `Quantité anormalement haute : > +${fmtThreshold(thresholds.qty_very_high_threshold)} %`,
+      price: `PU anormalement haut : > +${fmtThreshold(thresholds.price_very_high_threshold)} %`,
+      note: `Montant anormalement haut : > +${fmtThreshold(thresholds.amount_very_high_threshold)} %`,
       bg: QUESTION_EXPORT_STYLES.veryHigh.bg
     }
   ];
@@ -883,7 +896,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     title.alignment = { horizontal: 'center', vertical: 'middle' };
     applyBorder(title, { left: { style: 'double' } });
 
-    ['U', 'Quantité', 'PU', 'Montant ', 'Ecart Qtés (en %)', 'Ecart PU (en %)', 'nb remarque', 'Remarque logiciel', 'Questions'].forEach((label, offset) => {
+    ['U', 'Quantité', 'PU', 'Montant ', 'Ecart Qtés (en %)', 'Ecart PU (en %)', 'nb remarque', 'Question', 'Réponse'].forEach((label, offset) => {
       const cell = ws.getCell(headerRow, start + offset);
       cell.value = label;
       cell.font = headerFont;
@@ -935,6 +948,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
         .map(q => String(q.question_text || '').trim())
         .filter(Boolean);
       const amountMismatch = generatedQuestions.some(q => q.question_type === 'offer_amount_mismatch');
+      const severeQuestionStyle = getSevereQuestionStyleKey(generatedQuestions);
       row.getCell(start).value = offer.unit || item.unit || '';
       row.getCell(start + 1).value = qty;
       row.getCell(start + 2).value = pu;
@@ -944,6 +958,9 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       row.getCell(start + 6).value = questionTexts.length || (remark ? 1 : null);
       row.getCell(start + 7).value = questionTexts.length ? questionTexts.join('\n') : remark;
       row.getCell(start + 8).value = '';
+      if (questionTexts.length && severeQuestionStyle) {
+        questionStyleIntents.push({ col: start + 7, styleKey: severeQuestionStyle });
+      }
 
       if (isUnanswered) {
         [start, start + 1, start + 2, start + 3].forEach(col => {

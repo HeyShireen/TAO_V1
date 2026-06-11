@@ -125,6 +125,46 @@ function questionValueNumberFormat(questionType, unit) {
   return suffix ? `#,##0.00 "${escapeExcelFormatText(suffix)}"` : '#,##0.00';
 }
 
+function questionExportResponse(question) {
+  if (question?.status !== 'answered') return '';
+  return question?.comment || '';
+}
+
+const QUESTION_DEVIATION_EXPORT_STYLES = {
+  very_low: { fg: 'FF0D6EFD', bg: 'FFDBE9FF', bold: true },
+  low: { fg: 'FF0DCAF0', bg: 'FFDBF7FD', bold: true },
+  high: { fg: 'FFFD7E14', bg: 'FFFFECDC', bold: true },
+  very_high: { fg: 'FFDC3545', bg: 'FFFAE1E3', bold: true }
+};
+
+function getQuestionDeviationStyle(questionType) {
+  const type = String(questionType || '');
+  const level = type.match(/_(very_low|low|high|very_high)$/)?.[1];
+  return level ? QUESTION_DEVIATION_EXPORT_STYLES[level] : null;
+}
+
+function applyQuestionDeviationExportStyle(cell, questionType) {
+  const style = getQuestionDeviationStyle(questionType);
+  if (!style) return;
+  cell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: style.bg }
+  };
+  cell.font = {
+    ...(cell.font || {}),
+    color: { argb: style.fg },
+    bold: style.bold
+  };
+  const existingBorder = cell.border || {};
+  cell.border = {
+    top: existingBorder.top || { style: 'thin', color: { argb: 'FFD3D3D3' } },
+    bottom: existingBorder.bottom || { style: 'thin', color: { argb: 'FFD3D3D3' } },
+    right: existingBorder.right || { style: 'thin', color: { argb: 'FFD3D3D3' } },
+    left: { style: 'medium', color: { argb: style.fg } }
+  };
+}
+
 function normalizeUnitLabel(value) {
   if (!value) return '';
   return String(value).trim().toLowerCase()
@@ -189,6 +229,17 @@ function classifyDeviation(deviationPct, thresholds, metric) {
   if (deviationPct > Math.abs(thresholds[`${metric}_very_high_threshold`])) return `${metric}_very_high`;
   if (deviationPct > Math.abs(thresholds[`${metric}_high_threshold`])) return `${metric}_high`;
   return null;
+}
+
+function toFiniteNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
 }
 
 // Autoriser uniquement admin ou responsable pour la configuration et la génération
@@ -491,20 +542,23 @@ router.put('/lot/:lotId/question-config', requireManager, async (req, res) => {
   }
 });
 
-router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
-  try {
-    const { lotId } = req.params;
-    const { round_id } = req.body;
-    
-    if (!round_id) {
-      return res.status(400).json({ error: 'round_id requis' });
-    }
-    const roundId = round_id;
+async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemId = null, companyId = null }) {
+  const safeLotId = toFiniteNumberOrNull(lotId);
+  const safeRoundId = toFiniteNumberOrNull(roundId);
+  const itemFilter = toFiniteNumberOrNull(itemId);
+  const optionItemFilter = toFiniteNumberOrNull(optionItemId);
+  const companyFilter = toFiniteNumberOrNull(companyId);
+
+  if (!safeLotId || !safeRoundId) throw httpError(400, 'lotId et round_id requis');
+  if (itemId != null && !itemFilter) throw httpError(400, 'item_id invalide');
+  if (optionItemId != null && !optionItemFilter) throw httpError(400, 'option_item_id invalide');
+  if (companyId != null && !companyFilter) throw httpError(400, 'company_id invalide');
+  if (itemFilter && optionItemFilter) throw httpError(400, 'Fournir item_id ou option_item_id, pas les deux');
     
     // 1. Récupérer les seuils du lot
     const thresholdsRes = await query(
       'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
-      [lotId]
+      [safeLotId]
     );
     let thresholds = thresholdsRes.rows[0] || {
       qty_very_low_threshold: 25,
@@ -522,13 +576,13 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     };
     
     // 2. Récupérer les questions du projet
-    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+    const lotRes = await query('SELECT project_id FROM lots WHERE id = $1', [safeLotId]);
     if (lotRes.rowCount === 0) {
-      return res.status(404).json({ error: 'Lot introuvable' });
+      throw httpError(404, 'Lot introuvable');
     }
     const projectId = lotRes.rows[0].project_id;
     const projectConfig = await getProjectQuestionConfig(projectId);
-    const lotQuestionRes = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [lotId]);
+    const lotQuestionRes = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [safeLotId]);
     thresholds = effectiveThresholds(projectConfig, thresholds);
     
     const questionsRes = await query(
@@ -560,9 +614,11 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
 
     const itemsRes = await query(
       'SELECT * FROM items WHERE lot_id = $1',
-      [lotId]
+      [safeLotId]
     );
-    const items = itemsRes.rows;
+    const items = optionItemFilter
+      ? []
+      : itemsRes.rows.filter(item => !itemFilter || Number(item.id) === itemFilter);
     const itemsById = new Map(items.map(item => [item.id, item]));
     
     const moeRes = await query(
@@ -573,11 +629,11 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     
     const offersRes = await query(
       'SELECT * FROM offers WHERE item_id = ANY($1::int[]) AND round_id = $2',
-      [items.map(i => i.id), roundId]
+      [items.map(i => i.id), safeRoundId]
     );
     const companiesRes = await query(
       'SELECT company_id FROM lot_companies WHERE lot_id = $1',
-      [lotId]
+      [safeLotId]
     );
     
     // 4. Générer les questions
@@ -623,7 +679,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
                WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
                ELSE EXCLUDED.comment
              END`,
-          [lotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
+          [safeLotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, safeRoundId]
         );
       } else if (optionItemId) {
         await query(
@@ -644,7 +700,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
                WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
                ELSE EXCLUDED.comment
              END`,
-          [lotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, roundId]
+          [safeLotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, safeRoundId]
         );
       }
     };
@@ -666,7 +722,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND company_id = $4
              AND question_type = ANY($5::text[])
              AND COALESCE(manual_edited, false) = false`,
-          [lotId, roundId, itemId, companyId, types]
+          [safeLotId, safeRoundId, itemId, companyId, types]
         );
         return;
       }
@@ -679,7 +735,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND company_id = $4
              AND question_type = ANY($5::text[])
              AND COALESCE(manual_edited, false) = false`,
-          [lotId, roundId, optionItemId, companyId, types]
+          [safeLotId, safeRoundId, optionItemId, companyId, types]
         );
       }
     };
@@ -694,7 +750,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND company_id = $4
              AND question_type = ANY($5::text[])
              AND COALESCE(manual_edited, false) = false`,
-          [lotId, roundId, itemId, companyId, nonUnitQuestionTypes]
+          [safeLotId, safeRoundId, itemId, companyId, nonUnitQuestionTypes]
         );
         return;
       }
@@ -707,7 +763,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
              AND company_id = $4
              AND question_type = ANY($5::text[])
              AND COALESCE(manual_edited, false) = false`,
-          [lotId, roundId, optionItemId, companyId, nonUnitQuestionTypes]
+          [safeLotId, safeRoundId, optionItemId, companyId, nonUnitQuestionTypes]
         );
       }
     };
@@ -741,7 +797,10 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     const offersByItemCompany = new Map(
       offersRes.rows.map(offer => [`${Number(offer.item_id)}_${Number(offer.company_id)}`, offer])
     );
-    const companyIds = companiesRes.rows.map(row => Number(row.company_id)).filter(Number.isFinite);
+    const companyIds = companiesRes.rows
+      .map(row => Number(row.company_id))
+      .filter(Number.isFinite)
+      .filter(id => !companyFilter || id === companyFilter);
 
     for (const item of items) {
       const moe = moeByItem.get(item.id);
@@ -760,6 +819,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     }
 
     for (const offer of offersRes.rows) {
+      if (companyFilter && Number(offer.company_id) !== companyFilter) continue;
       const moe = moeByItem.get(offer.item_id);
       if (!moe) continue;
       const item = itemsById.get(offer.item_id);
@@ -903,13 +963,16 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
     }
 
     // 5. Ajouter les options (items d'option)
-    const optionItemsRes = await query(
-      `SELECT oi.id, oi.unit
-       FROM option_items oi
-       JOIN options o ON o.id = oi.option_id
-       WHERE o.lot_id = $1 AND o.round_id = $2`,
-      [lotId, roundId]
-    );
+    const optionItemsRes = itemFilter
+      ? { rows: [] }
+      : await query(
+        `SELECT oi.id, oi.unit
+         FROM option_items oi
+         JOIN options o ON o.id = oi.option_id
+         WHERE o.lot_id = $1 AND o.round_id = $2
+           AND ($3::int IS NULL OR oi.id = $3)`,
+        [safeLotId, safeRoundId, optionItemFilter]
+      );
     const optionItemIds = optionItemsRes.rows.map(r => r.id);
     const optionUnitsById = new Map(optionItemsRes.rows.map(row => [Number(row.id), row.unit || '']));
 
@@ -922,7 +985,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
 
       const optionOffersRes = await query(
         'SELECT * FROM option_item_offers WHERE option_item_id = ANY($1::int[]) AND round_id = $2',
-        [optionItemIds, roundId]
+        [optionItemIds, safeRoundId]
       );
       const optionOffersByItemCompany = new Map(
         optionOffersRes.rows.map(offer => [`${Number(offer.option_item_id)}_${Number(offer.company_id)}`, offer])
@@ -945,6 +1008,7 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       }
 
       for (const offer of optionOffersRes.rows) {
+        if (companyFilter && Number(offer.company_id) !== companyFilter) continue;
         const moe = moeByOptionItem.get(offer.option_item_id);
         if (!moe) continue;
         const optionUnit = optionUnitsById.get(Number(offer.option_item_id)) || '';
@@ -1088,10 +1152,165 @@ router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
       }
     }
 
-    res.json({ generated: generated.length, questions: generated });
+    return { generated: generated.length, questions: generated };
+}
+
+router.post('/lot/:lotId/generate', requireManager, async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const { round_id } = req.body;
+
+    if (!round_id) {
+      return res.status(400).json({ error: 'round_id requis' });
+    }
+
+    const result = await generateLotQuestions({ lotId, roundId: round_id });
+    res.json(result);
   } catch (err) {
     console.error('Erreur génération fiches questions:', err);
-    res.status(500).json({ error: 'Impossible de générer les fiches questions' });
+    res.status(err.status || 500).json({ error: err.message || 'Impossible de générer les fiches questions' });
+  }
+});
+
+async function validateRegenerateQuestionTarget({ lotId, roundId, itemId, optionItemId, companyId }) {
+  const companyRes = await query(
+    'SELECT 1 FROM lot_companies WHERE lot_id = $1 AND company_id = $2',
+    [lotId, companyId]
+  );
+  if (companyRes.rowCount === 0) throw httpError(404, 'Entreprise introuvable pour ce lot');
+
+  if (itemId) {
+    const itemRes = await query(
+      'SELECT 1 FROM items WHERE id = $1 AND lot_id = $2',
+      [itemId, lotId]
+    );
+    if (itemRes.rowCount === 0) throw httpError(404, 'Article introuvable pour ce lot');
+    return;
+  }
+
+  const optionRes = await query(
+    `SELECT 1
+     FROM option_items oi
+     JOIN options o ON o.id = oi.option_id
+     WHERE oi.id = $1 AND o.lot_id = $2 AND o.round_id = $3`,
+    [optionItemId, lotId, roundId]
+  );
+  if (optionRes.rowCount === 0) throw httpError(404, 'Option introuvable pour ce lot et ce tour');
+}
+
+async function deleteGeneratedQuestionsForCell({ lotId, roundId, itemId, optionItemId, companyId }) {
+  if (itemId) {
+    const result = await query(
+      `DELETE FROM generated_questions
+       WHERE lot_id = $1
+         AND round_id = $2
+         AND item_id = $3
+         AND company_id = $4`,
+      [lotId, roundId, itemId, companyId]
+    );
+    return result.rowCount;
+  }
+
+  const result = await query(
+    `DELETE FROM generated_questions
+     WHERE lot_id = $1
+       AND round_id = $2
+       AND option_item_id = $3
+       AND company_id = $4`,
+    [lotId, roundId, optionItemId, companyId]
+  );
+  return result.rowCount;
+}
+
+router.post('/lot/:lotId/regenerate-question', requireManager, async (req, res) => {
+  try {
+    const lotId = toFiniteNumberOrNull(req.params.lotId);
+    const roundId = toFiniteNumberOrNull(req.body?.round_id);
+    const companyId = toFiniteNumberOrNull(req.body?.company_id);
+    const itemId = req.body?.item_id != null ? toFiniteNumberOrNull(req.body.item_id) : null;
+    const optionItemId = req.body?.option_item_id != null ? toFiniteNumberOrNull(req.body.option_item_id) : null;
+
+    if (!lotId || !roundId || !companyId) {
+      return res.status(400).json({ error: 'lotId, round_id et company_id requis' });
+    }
+    if (req.body?.item_id != null && !itemId) return res.status(400).json({ error: 'item_id invalide' });
+    if (req.body?.option_item_id != null && !optionItemId) return res.status(400).json({ error: 'option_item_id invalide' });
+    if ((itemId && optionItemId) || (!itemId && !optionItemId)) {
+      return res.status(400).json({ error: 'Fournir exactement item_id ou option_item_id' });
+    }
+
+    await validateRegenerateQuestionTarget({ lotId, roundId, itemId, optionItemId, companyId });
+    const deleted = await deleteGeneratedQuestionsForCell({ lotId, roundId, itemId, optionItemId, companyId });
+    const result = await generateLotQuestions({ lotId, roundId, itemId, optionItemId, companyId });
+    res.json({ deleted, ...result });
+  } catch (err) {
+    console.error('Erreur régénération fiche question:', err);
+    res.status(err.status || 500).json({ error: err.message || 'Impossible de régénérer la fiche question' });
+  }
+});
+
+router.delete('/lot/:lotId/question-cell', requireManager, async (req, res) => {
+  try {
+    const lotId = toFiniteNumberOrNull(req.params.lotId);
+    const roundId = toFiniteNumberOrNull(req.query?.round_id || req.body?.round_id);
+    const companyId = toFiniteNumberOrNull(req.query?.company_id || req.body?.company_id);
+    const itemId = (req.query?.item_id ?? req.body?.item_id) != null
+      ? toFiniteNumberOrNull(req.query?.item_id ?? req.body?.item_id)
+      : null;
+    const optionItemId = (req.query?.option_item_id ?? req.body?.option_item_id) != null
+      ? toFiniteNumberOrNull(req.query?.option_item_id ?? req.body?.option_item_id)
+      : null;
+
+    if (!lotId || !roundId || !companyId) {
+      return res.status(400).json({ error: 'lotId, round_id et company_id requis' });
+    }
+    if ((req.query?.item_id ?? req.body?.item_id) != null && !itemId) {
+      return res.status(400).json({ error: 'item_id invalide' });
+    }
+    if ((req.query?.option_item_id ?? req.body?.option_item_id) != null && !optionItemId) {
+      return res.status(400).json({ error: 'option_item_id invalide' });
+    }
+    if ((itemId && optionItemId) || (!itemId && !optionItemId)) {
+      return res.status(400).json({ error: 'Fournir exactement item_id ou option_item_id' });
+    }
+
+    await validateRegenerateQuestionTarget({ lotId, roundId, itemId, optionItemId, companyId });
+
+    let result;
+    if (itemId) {
+      result = await query(
+        `UPDATE generated_questions
+         SET status = 'dismissed',
+             manual_edited = true
+         WHERE lot_id = $1
+           AND round_id = $2
+           AND item_id = $3
+           AND option_item_id IS NULL
+           AND company_id = $4
+           AND status <> 'dismissed'
+         RETURNING id`,
+        [lotId, roundId, itemId, companyId]
+      );
+    } else {
+      result = await query(
+        `UPDATE generated_questions
+         SET status = 'dismissed',
+             manual_edited = true
+         WHERE lot_id = $1
+           AND round_id = $2
+           AND option_item_id = $3
+           AND item_id IS NULL
+           AND company_id = $4
+           AND status <> 'dismissed'
+         RETURNING id`,
+        [lotId, roundId, optionItemId, companyId]
+      );
+    }
+
+    res.json({ ok: true, updated: result.rowCount });
+  } catch (err) {
+    console.error('Erreur suppression cellule question:', err);
+    res.status(err.status || 500).json({ error: err.message || 'Impossible de supprimer les questions de la cellule' });
   }
 });
 
@@ -1592,7 +1811,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         { header: 'Écart (%)', key: 'deviation', width: 12 },
         { header: 'Valeur MOE', key: 'moe_value', width: 16 },
         { header: 'Valeur Offre', key: 'offer_value', width: 16 },
-        { header: 'Réponse', key: 'comment', width: 45 }
+        { header: 'Réponse', key: 'response', width: 45 }
       ];
       
       // Styliser l'en-tête
@@ -1624,7 +1843,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           deviation: excelNumber(q.deviation_pct),
           moe_value: excelNumber(q.moe_value),
           offer_value: excelNumber(q.offer_value),
-          comment: q.comment || ''
+          response: questionExportResponse(q)
         });
         
         // Appliquer les styles de base
@@ -1642,14 +1861,7 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         if (deviationValue !== null) {
           deviationCell.numFmt = '0.00"%"';
           deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
-          const ecartAbs = Math.abs(deviationValue);
-          if (ecartAbs > 20) {
-            deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
-            deviationCell.font = { color: { argb: 'FFCC0000' }, bold: true };
-          } else if (ecartAbs > 10) {
-            deviationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE5CC' } };
-            deviationCell.font = { color: { argb: 'FFCC6600' } };
-          }
+          applyQuestionDeviationExportStyle(deviationCell, q.question_type);
         }
         
         // Colonnes Valeur MOE et Valeur Offre - Format numérique

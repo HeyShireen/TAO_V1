@@ -62,6 +62,7 @@ const MACRO_LOT_COLORS_STORAGE_KEY = 'macroLotColorsByProject';
 const QUESTION_COLUMN_WIDTH_STORAGE_KEY = 'questionsEditorQuestionColumnWidth';
 const QUESTION_COMPANY_WIDTHS_STORAGE_KEY = 'questionsEditorQuestionColumnWidths';
 const QUESTION_COMPANY_COLLAPSED_STORAGE_KEY = 'questionsEditorQuestionColumnsCollapsed';
+const QUESTION_SINGLE_COLLAPSED_STORAGE_KEY = 'questionsEditorSingleQuestionColumnCollapsed';
 const LOT_THRESHOLD_FIELDS = [
   'qty_very_low_threshold', 'qty_low_threshold', 'qty_high_threshold', 'qty_very_high_threshold',
   'price_very_low_threshold', 'price_low_threshold', 'price_high_threshold', 'price_very_high_threshold',
@@ -5245,6 +5246,7 @@ async function refreshQuestions({ silent = false } = {}){
 /* ================= Éditeur de Questions ================= */
 let questionsDesigCollapsed = false;
 let questionsColumnsCollapsed = localStorage.getItem(QUESTION_COMPANY_COLLAPSED_STORAGE_KEY) === '1';
+let questionColumnCollapsed = localStorage.getItem(QUESTION_SINGLE_COLLAPSED_STORAGE_KEY) === '1';
 let hasUnsavedQuestionChanges = false;
 let isQuestionSaving = false;
 let activeQuestionSavePromise = null;
@@ -5571,7 +5573,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
       }
     }
   } else {
-    headerTop += '<th rowspan="2" class="sticky-question questions-group-start question-text-col">Question<span id="questions-question-resize" class="question-column-resize-handle" title="Redimensionner la colonne Question"></span></th>';
+    headerTop += '<th rowspan="2" class="sticky-question questions-group-start question-text-col"><button class="question-toggle-btn" id="question-column-toggle" title="Reduire / afficher la question"></button><span class="question-toggle-label">Question</span><span id="questions-question-resize" class="question-column-resize-handle" title="Redimensionner la colonne Question"></span></th>';
   }
   headerTop += '<th rowspan="2" class="question-unit-col">Unité</th>';
 
@@ -5641,6 +5643,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   const questionsTable = qs('#questions-editor-table');
   questionsTable?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
   questionsTable?.classList.toggle('questions-columns-collapsed', isQuestionsMode && questionsColumnsCollapsed);
+  questionsTable?.classList.toggle('question-column-collapsed', !isQuestionsMode && questionColumnCollapsed);
   qs('#questions-desig-toggle')?.addEventListener('click', () => {
     questionsDesigCollapsed = !questionsDesigCollapsed;
     qs('#questions-editor-table')?.classList.toggle('desig-collapsed', questionsDesigCollapsed);
@@ -5650,6 +5653,12 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     questionsColumnsCollapsed = !questionsColumnsCollapsed;
     localStorage.setItem(QUESTION_COMPANY_COLLAPSED_STORAGE_KEY, questionsColumnsCollapsed ? '1' : '0');
     qs('#questions-editor-table')?.classList.toggle('questions-columns-collapsed', questionsColumnsCollapsed);
+    recalcQuestionsHeaderOffsets();
+  });
+  qs('#question-column-toggle')?.addEventListener('click', () => {
+    questionColumnCollapsed = !questionColumnCollapsed;
+    localStorage.setItem(QUESTION_SINGLE_COLLAPSED_STORAGE_KEY, questionColumnCollapsed ? '1' : '0');
+    qs('#questions-editor-table')?.classList.toggle('question-column-collapsed', questionColumnCollapsed);
     recalcQuestionsHeaderOffsets();
   });
 
@@ -5685,10 +5694,15 @@ function renderQuestionsEditorTable(lotData, questionsData) {
 
     const widthStyle = companyId ? ` style="--question-company-width:var(--questions-company-${companyId}-width, 320px)"` : '';
     let cell = `<td class="${extraClass}${cellStateClass}" data-save-key="${saveKey}" data-company-id="${companyId}"${widthStyle}>`;
-    if (questionId) {
+    if (!isVisionneur() && !isEntreprise()) {
       cell += '<div class="question-cell-actions">';
-      cell += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
-      cell += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      if (questionId) {
+        cell += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+      }
+      cell += regenerateQuestionButtonHtml({ itemId: item.id, companyId, saveKey });
+      if (questionId) {
+        cell += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      }
       cell += '</div>';
     }
     cell += `<textarea id="question-${item.id}-${companyId || 'target'}" name="question-${item.id}-${companyId || 'target'}" class="question-text-editor" data-save-key="${saveKey}" data-item-id="${item.id}" data-company-id="${companyId}" data-question-id="${questionId}" data-question-ids="${questionIdsData}" data-question-lines="${questionLinesData}" rows="${rows}" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" placeholder="Saisir une question..." ${disabled}>${escapeHtml(questionText)}</textarea>`;
@@ -5770,11 +5784,21 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
     // Actions (déplacées à gauche)
     html += '<td class="sticky-actions">';
-    if (!isQuestionsMode && questionId) {
+    if (!isQuestionsMode && !isVisionneur() && !isEntreprise()) {
       const actionCompanyId = questionCompanyId || targetCompany || '';
       const actionSaveKey = questionSaveKey(item.id, actionCompanyId);
-      html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
-      html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      if (questionId) {
+        html += `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>`;
+      }
+      html += regenerateQuestionButtonHtml({
+        itemId: item.id,
+        companyId: actionCompanyId,
+        saveKey: actionSaveKey,
+        disabled: !actionCompanyId
+      });
+      if (questionId) {
+        html += `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${item.id}" data-company-id="${actionCompanyId}" data-save-key="${actionSaveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
+      }
     }
     html += '</td>';
     html += `<td class="sticky-col2 question-hierarchy ${hierarchyClass}"><span class="desig-text">${sourceCompanyBadge}${item.designation || ''}${desigPills}</span></td>`;
@@ -6001,10 +6025,99 @@ function questionCellStateClass(questions) {
   return `${modified ? ' question-cell-modified' : ''}${validated ? ' question-cell-validated' : ''}`;
 }
 
+function regenerateQuestionButtonHtml({ itemId, companyId, saveKey, disabled = false } = {}) {
+  const title = disabled
+    ? 'Selectionnez une entreprise ciblee pour regenerer cette question'
+    : 'Regenerer la question';
+  const disabledAttr = disabled ? ' disabled aria-disabled="true"' : '';
+  return `<button class="btn-regenerate-editor-question" data-item-id="${itemId || ''}" data-company-id="${companyId || ''}" data-save-key="${saveKey || ''}" title="${title}"${disabledAttr}>${icon('repeat','icon-only')}</button>`;
+}
+
+function bindQuestionEditorActionButtons(container) {
+  container?.querySelector('.btn-validate-editor-question')
+    ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
+  container?.querySelector('.btn-regenerate-editor-question')
+    ?.addEventListener('click', (e) => handleRegenerateEditorQuestionButton(e.currentTarget));
+  container?.querySelector('.btn-delete-editor-question')
+    ?.addEventListener('click', (e) => handleDeleteEditorQuestionButton(e.currentTarget));
+}
+
+function resetQuestionEditorActionsForCell({ row, textarea, itemId, companyId = '', saveKey = '' } = {}) {
+  const mode = qs('#questions-analysis-mode')?.value || qs('#questions-analysis-mode')?.dataset?.value || 'company';
+  const effectiveCompanyId = String(companyId || textarea?.dataset.companyId || row?.dataset.questionCompanyId || qs('#questions-target-company')?.value || '');
+  const effectiveItemId = itemId || textarea?.dataset.itemId || row?.dataset.itemId || '';
+  const effectiveSaveKey = saveKey || questionSaveKey(effectiveItemId, effectiveCompanyId);
+  const html = regenerateQuestionButtonHtml({
+    itemId: effectiveItemId,
+    companyId: effectiveCompanyId,
+    saveKey: effectiveSaveKey,
+    disabled: mode !== 'questions' && !effectiveCompanyId
+  });
+
+  const cellActions = textarea?.closest('td')?.querySelector('.question-cell-actions');
+  if (cellActions) {
+    cellActions.innerHTML = html;
+    bindQuestionEditorActionButtons(cellActions);
+  }
+
+  const actionsCell = row?.querySelector('.sticky-actions');
+  if (actionsCell) {
+    if (mode === 'questions') {
+      actionsCell.innerHTML = '';
+    } else {
+      actionsCell.innerHTML = html;
+      bindQuestionEditorActionButtons(actionsCell);
+    }
+  }
+}
+
 function questionEditorCellFromButton(btn) {
   const td = btn?.closest('td');
   if (td && (td.classList.contains('question-company-cell') || td.classList.contains('sticky-question'))) return td;
   return btn?.closest('tr')?.querySelector('td.sticky-question') || null;
+}
+
+function questionCellTargetParams(itemId, companyId) {
+  const safeItemId = Number(itemId);
+  const safeCompanyId = Number(companyId);
+  if (!currentLot?.id || !currentRound?.id || !Number.isFinite(safeItemId) || !safeItemId || !Number.isFinite(safeCompanyId) || !safeCompanyId) {
+    throw new Error('Selectionnez un lot, un tour et une entreprise cible.');
+  }
+
+  const params = new URLSearchParams({
+    round_id: String(currentRound.id),
+    company_id: String(safeCompanyId)
+  });
+  if (safeItemId < 0) {
+    params.set('option_item_id', String(Math.abs(safeItemId)));
+  } else {
+    params.set('item_id', String(safeItemId));
+  }
+  return params;
+}
+
+async function deleteQuestionEditorCell(itemId, companyId) {
+  const params = questionCellTargetParams(itemId, companyId);
+  return api(`/question-config/lot/${currentLot.id}/question-cell?${params.toString()}`, {
+    method: 'DELETE',
+    showLoader: false
+  });
+}
+
+function clearQuestionEditorCellState({ row, textarea, itemId, companyId = '', saveKey = '' } = {}) {
+  if (row) {
+    row.dataset.questionId = '';
+    row.dataset.questionCompanyId = '';
+  }
+  if (textarea) {
+    textarea.value = '';
+    textarea.dataset.questionId = '';
+    textarea.dataset.questionIds = encodeURIComponent(JSON.stringify([]));
+    textarea.dataset.questionLines = encodeURIComponent(JSON.stringify([]));
+    const cell = textarea.closest('td');
+    cell?.classList.remove('question-cell-modified', 'question-cell-validated');
+  }
+  resetQuestionEditorActionsForCell({ row, textarea, itemId, companyId, saveKey });
 }
 
 async function handleValidateEditorQuestionButton(currentBtn) {
@@ -6046,15 +6159,14 @@ async function handleValidateEditorQuestionButton(currentBtn) {
 }
 
 async function handleDeleteEditorQuestionButton(currentBtn) {
-  const questionId = currentBtn.dataset.questionId;
   const itemId = currentBtn.dataset.itemId;
   const companyId = currentBtn.dataset.companyId || '';
   const saveKey = currentBtn.dataset.saveKey || questionSaveKey(itemId, companyId);
 
   showDeleteConfirmation({
-    title: 'Supprimer une fiche question',
-    message: 'Confirmer la suppression de cette fiche question ?',
-    extra: '<strong>Attention:</strong> Les reponses des entreprises seront perdues. Cette action ne peut pas etre annulee.',
+    title: 'Supprimer les questions de la cellule',
+    message: 'Confirmer la suppression de toutes les questions de cette cellule ?',
+    extra: '<strong>Attention:</strong> toutes les questions et reponses de cette cellule seront ignorees. Cette action ne peut pas etre annulee.',
     onConfirm: async () => {
       try {
         if (itemId) {
@@ -6063,29 +6175,78 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
           hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
         }
         await waitForQuestionSaveIdle();
-        await api(`/question-config/question/${questionId}`, {
-          method: 'DELETE',
-          showLoader: false
-        });
+        const result = await deleteQuestionEditorCell(itemId, companyId);
 
         const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
         const textarea = findQuestionTextarea(saveKey) || (itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null);
-        if (row) {
-          row.dataset.questionId = '';
-          row.dataset.questionCompanyId = '';
-          const actionsCell = row.querySelector('.sticky-actions');
-          if (actionsCell) actionsCell.innerHTML = '';
-        }
-        if (textarea) {
-          textarea.value = '';
-          textarea.dataset.questionId = '';
-          textarea.closest('td')?.querySelector('.question-cell-actions')?.remove();
-        }
+        clearQuestionEditorCellState({ row, textarea, itemId, companyId, saveKey });
 
-        showNotify({ title:'Succes', message:'Question supprimee', type:'success' });
+        showNotify({ title:'Succes', message:`${Number(result?.updated || 0)} question(s) supprimee(s)`, type:'success' });
+        await loadQuestionsEditor({ force: true, silent: true });
         refreshQuestionsInBackground();
       } catch (err) {
         showNotify({ title:'Erreur', message: err.message, type:'error' });
+      }
+    }
+  });
+}
+
+async function handleRegenerateEditorQuestionButton(currentBtn) {
+  if (currentBtn.disabled) {
+    showNotify({ title:'Validation', message:'Sélectionnez une entreprise cible pour régénérer cette question.', type:'info' });
+    return;
+  }
+
+  const itemId = Number(currentBtn.dataset.itemId);
+  const companyId = Number(currentBtn.dataset.companyId);
+  if (!currentLot?.id || !currentRound?.id || !Number.isFinite(itemId) || !itemId || !Number.isFinite(companyId) || !companyId) {
+    showNotify({ title:'Validation', message:'Sélectionnez un lot, un tour et une entreprise cible.', type:'info' });
+    return;
+  }
+
+  const saveKey = currentBtn.dataset.saveKey || questionSaveKey(itemId, companyId);
+  const questionRef = itemId < 0
+    ? { option_item_id: Math.abs(itemId) }
+    : { item_id: itemId };
+
+  showDeleteConfirmation({
+    title: 'Régénérer la question',
+    message: 'Confirmer la régénération de cette cellule question ?',
+    extra: '<strong>Attention:</strong> toutes les questions et réponses de cette cellule seront supprimées, puis recalculées depuis les données actuelles.',
+    confirmLabel: 'Régénérer',
+    confirmType: 'danger',
+    onConfirm: async () => {
+      const previousDisabled = currentBtn.disabled;
+      try {
+        suppressedQuestionSaveItemIds.add(saveKey);
+        pendingQuestionSaves.delete(saveKey);
+        hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
+        await waitForQuestionSaveIdle();
+
+        currentBtn.disabled = true;
+        const result = await api(`/question-config/lot/${currentLot.id}/regenerate-question`, {
+          method: 'POST',
+          body: {
+            round_id: currentRound.id,
+            company_id: companyId,
+            ...questionRef
+          },
+          showLoader: false
+        });
+
+        const deleted = Number(result?.deleted || 0);
+        const generated = Number(result?.generated || 0);
+        showNotify({
+          title:'Succès',
+          message:`${deleted} fiche(s) supprimée(s), ${generated} régénérée(s)`,
+          type:'success'
+        });
+        await loadQuestionsEditor({ force: true, silent: true });
+        refreshQuestionsInBackground();
+      } catch (err) {
+        showNotify({ title:'Erreur', message: err.message, type:'error' });
+      } finally {
+        currentBtn.disabled = previousDisabled;
       }
     }
   });
@@ -6096,14 +6257,17 @@ function ensureQuestionEditorActionButtons(row, itemId, questionId, isValidated 
   const cell = saveKey ? findQuestionTextarea(saveKey)?.closest('td') : null;
   if (cell?.classList?.contains('question-company-cell') && !cell.querySelector('.btn-validate-editor-question')) {
     const validateTitle = isValidated ? 'Desactiver la validation' : 'Valider';
-    const actions = document.createElement('div');
+    const actions = cell.querySelector('.question-cell-actions') || document.createElement('div');
     actions.className = 'question-cell-actions';
     actions.innerHTML =
       `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
+      regenerateQuestionButtonHtml({ itemId, companyId, saveKey }) +
       `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
-    cell.insertBefore(actions, cell.firstChild);
+    if (!actions.parentNode) cell.insertBefore(actions, cell.firstChild);
     actions.querySelector('.btn-validate-editor-question')
       ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
+    actions.querySelector('.btn-regenerate-editor-question')
+      ?.addEventListener('click', (e) => handleRegenerateEditorQuestionButton(e.currentTarget));
     actions.querySelector('.btn-delete-editor-question')
       ?.addEventListener('click', (e) => handleDeleteEditorQuestionButton(e.currentTarget));
     return;
@@ -6114,10 +6278,13 @@ function ensureQuestionEditorActionButtons(row, itemId, questionId, isValidated 
   const validateTitle = isValidated ? 'Desactiver la validation' : 'Valider';
   actionsCell.innerHTML =
     `<button class="btn-validate-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" data-is-validated="${isValidated ? '1' : '0'}" title="${validateTitle}">${isValidated ? icon('x-circle','icon-only') : icon('check-circle','icon-only')}</button>` +
+    regenerateQuestionButtonHtml({ itemId, companyId, saveKey, disabled: !companyId }) +
     `<button class="btn-delete-editor-question" data-question-id="${questionId}" data-item-id="${itemId}" data-company-id="${companyId}" data-save-key="${saveKey}" title="Supprimer">${icon('trash','icon-only')}</button>`;
 
   actionsCell.querySelector('.btn-validate-editor-question')
     ?.addEventListener('click', (e) => handleValidateEditorQuestionButton(e.currentTarget));
+  actionsCell.querySelector('.btn-regenerate-editor-question')
+    ?.addEventListener('click', (e) => handleRegenerateEditorQuestionButton(e.currentTarget));
   actionsCell.querySelector('.btn-delete-editor-question')
     ?.addEventListener('click', (e) => handleDeleteEditorQuestionButton(e.currentTarget));
 }
@@ -6292,6 +6459,8 @@ function bindQuestionsEditorEvents() {
   // Supprimer une question
   qsa('.btn-delete-editor-question').forEach(btn => {
     btn.addEventListener('click', async (e) => {
+      handleDeleteEditorQuestionButton(e.currentTarget);
+      return;
       const currentBtn = e.currentTarget;
       const questionId = currentBtn.dataset.questionId;
       const itemId = currentBtn.dataset.itemId;
@@ -6310,24 +6479,12 @@ function bindQuestionsEditorEvents() {
               hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
             }
             await waitForQuestionSaveIdle();
-            await api(`/question-config/question/${questionId}`, {
-              method: 'DELETE',
-              showLoader: false
-            });
+            const result = await deleteQuestionEditorCell(itemId, companyId);
 
             const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
             const textarea = findQuestionTextarea(saveKey) || (itemId ? qs(`.question-text-editor[data-item-id="${itemId}"]`) : null);
-            if (row) {
-              row.dataset.questionId = '';
-              row.dataset.questionCompanyId = '';
-              const actionsCell = row.querySelector('.sticky-actions');
-              if (actionsCell) actionsCell.innerHTML = '';
-            }
-            if (textarea) {
-              textarea.value = '';
-              textarea.dataset.questionId = '';
-              textarea.closest('td')?.querySelector('.question-cell-actions')?.remove();
-            }
+            clearQuestionEditorCellState({ row, textarea, itemId, companyId, saveKey });
+            await loadQuestionsEditor({ force: true, silent: true });
             
             showNotify({ title:'Succès', message:'Question supprimée', type:'success' });
             refreshQuestionsInBackground();
@@ -6338,6 +6495,11 @@ function bindQuestionsEditorEvents() {
         }
       });
     });
+  });
+
+  // Régénérer les fiches questions d'une cellule
+  qsa('.btn-regenerate-editor-question').forEach(btn => {
+    btn.addEventListener('click', (e) => handleRegenerateEditorQuestionButton(e.currentTarget));
   });
 }
 
@@ -6449,8 +6611,6 @@ async function runQuestionsAutoSaveBatch() {
           if (newPrimaryId) {
             if (cellValidateBtn) cellValidateBtn.dataset.questionId = String(newPrimaryId);
             if (cellDeleteBtn) cellDeleteBtn.dataset.questionId = String(newPrimaryId);
-          } else if (cell?.classList?.contains('question-company-cell')) {
-            cell.querySelector('.question-cell-actions')?.remove();
           }
           const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
           if (row) {
@@ -6460,10 +6620,16 @@ async function runQuestionsAutoSaveBatch() {
             if (newPrimaryId) {
               if (validateBtn) validateBtn.dataset.questionId = String(newPrimaryId);
               if (deleteBtn) deleteBtn.dataset.questionId = String(newPrimaryId);
-            } else {
-              const actionsCell = row.querySelector('.sticky-actions');
-              if (actionsCell) actionsCell.innerHTML = '';
             }
+          }
+          if (!newPrimaryId) {
+            resetQuestionEditorActionsForCell({
+              row,
+              textarea,
+              itemId: change.itemId,
+              companyId: change.companyId || textarea.dataset.companyId || '',
+              saveKey: key
+            });
           }
 
           statusIndicator.style.display = 'block';
@@ -6483,33 +6649,28 @@ async function runQuestionsAutoSaveBatch() {
       }
 
       if (change.deleteQuestion) {
-        const deleteQuestionId = Number(change.questionId || questionId);
-        if (!deleteQuestionId) {
+        const deleteCompanyId = change.companyId || textarea.dataset.companyId || qs('#questions-target-company')?.value || '';
+        if (!deleteCompanyId) {
           if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
-          statusIndicator.style.display = 'none';
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+          statusIndicator.style.color = 'var(--copper)';
           return false;
         }
 
         try {
           suppressedQuestionSaveItemIds.add(key);
-          await api(`/question-config/question/${deleteQuestionId}`, {
-            method: 'DELETE',
-            showLoader: false
-          });
+          await deleteQuestionEditorCell(change.itemId, deleteCompanyId);
 
           if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
-          textarea.dataset.questionId = '';
-          const cell = textarea.closest('td');
-          if (cell?.classList?.contains('question-company-cell')) {
-            cell.querySelector('.question-cell-actions')?.remove();
-          }
           const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
-          if (row) {
-            row.dataset.questionId = '';
-            row.dataset.questionCompanyId = '';
-            const actionsCell = row.querySelector('.sticky-actions');
-            if (actionsCell) actionsCell.innerHTML = '';
-          }
+          clearQuestionEditorCellState({
+            row,
+            textarea,
+            itemId: change.itemId,
+            companyId: deleteCompanyId,
+            saveKey: key
+          });
           statusIndicator.style.display = 'block';
           statusIndicator.innerHTML = icon('check', 'icon-only');
           statusIndicator.style.color = 'var(--success)';
