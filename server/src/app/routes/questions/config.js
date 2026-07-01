@@ -97,6 +97,24 @@ function effectiveQuestions(projectConfig, lotConfig = {}) {
   return out;
 }
 
+// Helper: résoudre le project_id d'un lot
+async function getProjectIdForLot(lotId) {
+  const result = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+  return result.rows[0]?.project_id || null;
+}
+
+// Helper: résoudre le project_id + company_id d'une fiche question (via son lot)
+async function getContextForGeneratedQuestion(questionId) {
+  const result = await query(
+    `SELECT gq.company_id, l.project_id
+     FROM generated_questions gq
+     JOIN lots l ON l.id = gq.lot_id
+     WHERE gq.id = $1`,
+    [questionId]
+  );
+  return result.rows[0] || null;
+}
+
 function excelNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
@@ -1345,7 +1363,13 @@ router.get('/lot/:lotId', async (req, res) => {
     const { lotId } = req.params;
     const { status, company_id, round_id } = req.query;
     const isEntreprise = req.user?.role === 'entreprise';
-    
+
+    // SÉCURITÉ: Vérifier accès au projet du lot
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user?.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
     let sql = `
       SELECT gq.*, 
         CASE WHEN gq.option_item_id IS NOT NULL THEN
@@ -1493,24 +1517,23 @@ router.put('/question/:id', async (req, res) => {
       return res.status(400).json({ error: 'ID invalide' });
     }
     const questionId = Number(id);
-    
-    // Si entreprise, vérifier que la question lui appartient
-    if (isEntreprise && req.user?.company_id) {
-      const checkResult = await query(
-        'SELECT company_id FROM generated_questions WHERE id = $1',
-        [questionId]
-      );
-      if (checkResult.rowCount === 0) {
-        return res.status(404).json({ error: 'Fiche question introuvable' });
-      }
-      if (checkResult.rows[0].company_id !== req.user.company_id) {
+
+    // SÉCURITÉ: Vérifier les droits sur cette fiche (appartenance / accès au projet)
+    const context = await getContextForGeneratedQuestion(questionId);
+    if (!context) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+    if (isEntreprise) {
+      if (!req.user?.company_id || context.company_id !== req.user.company_id) {
         return res.status(403).json({ error: 'Accès refusé - Cette question ne vous appartient pas' });
       }
-
       // Une entreprise peut répondre, mais ne peut pas réassigner/éditer le texte de la fiche.
       if (question_text !== undefined || company_id !== undefined) {
         return res.status(403).json({ error: 'Accès refusé - Modification non autorisée' });
       }
+    } else {
+      const canEdit = await canEditProject(req.user.id, context.project_id, req.user.role);
+      if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
     }
 
     const updates = [];
@@ -1679,21 +1702,21 @@ router.delete('/question/:id', async (req, res) => {
       return res.status(400).json({ error: 'ID invalide' });
     }
     const questionId = Number(id);
-    
-    // Si entreprise, vérifier que la question lui appartient
-    if (isEntreprise && req.user?.company_id) {
-      const checkResult = await query(
-        'SELECT company_id FROM generated_questions WHERE id = $1',
-        [questionId]
-      );
-      if (checkResult.rowCount === 0) {
-        return res.status(404).json({ error: 'Fiche question introuvable' });
-      }
-      if (checkResult.rows[0].company_id !== req.user.company_id) {
+
+    // SÉCURITÉ: Vérifier les droits sur cette fiche (appartenance / accès au projet)
+    const context = await getContextForGeneratedQuestion(questionId);
+    if (!context) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+    if (isEntreprise) {
+      if (!req.user?.company_id || context.company_id !== req.user.company_id) {
         return res.status(403).json({ error: 'Accès refusé - Cette question ne vous appartient pas' });
       }
+    } else {
+      const canEdit = await canEditProject(req.user.id, context.project_id, req.user.role);
+      if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
     }
-    
+
     const result = await query(
       `UPDATE generated_questions
        SET status = 'dismissed',
@@ -1720,7 +1743,13 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
     const { lotId } = req.params;
     const { status, company_id, round_id } = req.query;
     const isEntreprise = req.user?.role === 'entreprise';
-    
+
+    // SÉCURITÉ: Vérifier accès au projet du lot
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user?.company_id || null);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
     // Import dynamique de exceljs pour une meilleure mise en forme
     const ExcelJS = (await import('exceljs')).default;
     

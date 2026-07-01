@@ -52,6 +52,8 @@ router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
     const roundId = req.query.round_id;
+    const isEntreprise = req.user?.role === 'entreprise';
+    const userCompanyId = req.user?.company_id || null;
 
     // SÉCURITÉ: Vérifier accès au projet
     const projectId = await getProjectIdForLot(lotId);
@@ -96,17 +98,21 @@ router.get('/lot/:lotId', async (req, res) => {
             ? await query(
               `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
                FROM option_item_offers oio
-               WHERE oio.option_item_id = $1 AND oio.round_id = $2`,
-              [item.id, Number(roundId)]
+               WHERE oio.option_item_id = $1 AND oio.round_id = $2
+                 ${isEntreprise && userCompanyId ? 'AND oio.company_id = $3' : ''}`,
+              isEntreprise && userCompanyId ? [item.id, Number(roundId), userCompanyId] : [item.id, Number(roundId)]
             )
             : await query(
               `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
                FROM option_item_offers oio
-               WHERE oio.option_item_id = $1`,
-              [item.id]
+               WHERE oio.option_item_id = $1
+                 ${isEntreprise && userCompanyId ? 'AND oio.company_id = $2' : ''}`,
+              isEntreprise && userCompanyId ? [item.id, userCompanyId] : [item.id]
             );
           itemsWithOffers.push({
             ...item,
+            moe_qty: isEntreprise ? null : item.moe_qty,
+            moe_unit_price: isEntreprise ? null : item.moe_unit_price,
             offers: offersRes.rows
           });
         }

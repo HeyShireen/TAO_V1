@@ -48,12 +48,12 @@ const SUBTITLE_PATTERNS = [
   /^\s*tranche\s/i,
 ];
 
-function isSubtotalOrTitleRow(designation, num, hasQty, hasPu) {
+function isSubtotalOrTitleRow(designation) {
   if (!designation) return false;
   const d = String(designation).trim();
-  // Ligne avec désignation mais sans quantité ni prix → probable titre
-  if (d && !hasQty && !hasPu && !num) return true;
-  // Patterns explicites
+  // Une désignation sans quantité/prix n'est pas forcément un titre : l'entreprise
+  // peut renseigner ces valeurs plus tard lors de l'import de son offre. On ne
+  // filtre donc que les motifs explicites de sous-total / titre de chapitre.
   return SUBTITLE_PATTERNS.some(p => p.test(d));
 }
 
@@ -462,7 +462,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         if (!designation && !num) continue; // Skip lignes vides
 
         // Détecter les lignes de sous-total / titre de chapitre
-        if (isSubtotalOrTitleRow(designation, num, qty != null, pu != null)) continue;
+        if (isSubtotalOrTitleRow(designation)) continue;
 
         const pos = i + 1;
         const insRes = await client.query(

@@ -3,11 +3,24 @@ import express from 'express';
 import { query } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
+import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { validateRequired, ValidationError } from '../../utils/validation.js';
 
 const router = express.Router();
 
 router.use(requireAuth);
+
+// Helper: résoudre le project_id d'un tour
+async function getProjectIdForRound(roundId) {
+  const result = await query('SELECT project_id FROM rounds WHERE id = $1', [roundId]);
+  return result.rows[0]?.project_id || null;
+}
+
+// Helper: résoudre le project_id d'un lot
+async function getProjectIdForLot(lotId) {
+  const result = await query('SELECT project_id FROM lots WHERE id = $1', [lotId]);
+  return result.rows[0]?.project_id || null;
+}
 
 // Liste des fiches questions pour un tour
 router.get('/round/:roundId', async (req, res) => {
@@ -16,7 +29,13 @@ router.get('/round/:roundId', async (req, res) => {
     const { status } = req.query; // Filtrer par statut optionnel
     const isEntreprise = req.user?.role === 'entreprise';
     const companyId = req.user?.company_id || null;
-    
+
+    // SÉCURITÉ: Vérifier accès au projet du tour
+    const projectId = await getProjectIdForRound(roundId);
+    if (!projectId) return res.status(404).json({ error: 'Tour introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, companyId);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
     let sql = `
       SELECT qs.*, 
         i.num, i.designation, i.unit,
@@ -64,8 +83,14 @@ router.get('/lot/:lotId', async (req, res) => {
     const { lotId } = req.params;
     const isEntreprise = req.user?.role === 'entreprise';
     const companyId = req.user?.company_id || null;
-    
-    let sql = `SELECT qs.*, 
+
+    // SÉCURITÉ: Vérifier accès au projet du lot
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, companyId);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
+    let sql = `SELECT qs.*,
         i.num, i.designation, i.unit,
         COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         r.name as round_name, r.round_number
@@ -124,7 +149,27 @@ router.put('/:id', async (req, res) => {
     const { response, status, response_date } = req.body;
     const isEntreprise = req.user?.role === 'entreprise';
     const companyId = req.user?.company_id || null;
-    
+
+    // SÉCURITÉ: Vérifier que l'utilisateur a le droit d'éditer cette fiche
+    const sheetRes = await query(
+      `SELECT qs.company_id, r.project_id FROM question_sheets qs
+       JOIN rounds r ON r.id = qs.round_id
+       WHERE qs.id = $1`,
+      [id]
+    );
+    if (sheetRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Fiche question introuvable' });
+    }
+    const sheet = sheetRes.rows[0];
+    if (isEntreprise) {
+      if (!companyId || sheet.company_id !== companyId) {
+        return res.status(403).json({ error: 'Accès refusé - Cette fiche ne vous appartient pas' });
+      }
+    } else {
+      const canEdit = await canEditProject(req.user.id, sheet.project_id, req.user.role);
+      if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    }
+
     const updates = [];
     const values = [];
     let paramIndex = 1;
@@ -203,8 +248,14 @@ router.get('/round/:roundId/export', async (req, res) => {
     const { format = 'json' } = req.query;
     const isEntreprise = req.user?.role === 'entreprise';
     const companyId = req.user?.company_id || null;
-    
-    let sql = `SELECT qs.*, 
+
+    // SÉCURITÉ: Vérifier accès au projet du tour
+    const projectId = await getProjectIdForRound(roundId);
+    if (!projectId) return res.status(404).json({ error: 'Tour introuvable' });
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, companyId);
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
+    let sql = `SELECT qs.*,
         i.num, i.designation, i.unit,
         COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         r.name as round_name

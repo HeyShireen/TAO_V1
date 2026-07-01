@@ -597,6 +597,7 @@ async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds =
      FROM items i
      LEFT JOIN items p ON p.id = i.parent_item_id
      WHERE i.lot_id = $1
+       ${isEntreprise && userCompanyId ? `AND (i.source_company_id IS NULL OR i.source_company_id = ${Number(userCompanyId)})` : ''}
      ORDER BY i.position NULLS LAST, i.id`,
     [lotId]
   );

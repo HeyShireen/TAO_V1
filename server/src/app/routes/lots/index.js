@@ -349,7 +349,7 @@ router.get('/:id', async (req, res) => {
           'comment', o.comment
         )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
       FROM lots l
-      LEFT JOIN items i ON i.lot_id = l.id
+      LEFT JOIN items i ON i.lot_id = l.id ${isEntreprise && userCompanyId ? `AND (i.source_company_id IS NULL OR i.source_company_id = ${Number(userCompanyId)})` : ''}
       LEFT JOIN items parent_i ON parent_i.id = i.parent_item_id
       ${isEntreprise ? '' : 'LEFT JOIN moe_items m ON m.item_id = i.id'}
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
@@ -490,6 +490,7 @@ router.get('/:id/table', async (req, res) => {
     FROM items i
     LEFT JOIN items p ON p.id = i.parent_item_id
     WHERE i.lot_id=$1
+      ${isEntreprise && userCompanyId ? `AND (i.source_company_id IS NULL OR i.source_company_id = ${Number(userCompanyId)})` : ''}
     ORDER BY i.position NULLS LAST, i.id
   `, [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
