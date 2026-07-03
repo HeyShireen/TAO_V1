@@ -32,7 +32,6 @@ let globalLotThresholds = [];
 
 let lotCompanies = [];      // [{id,name}]
 let sheetRows = [];         // [{ item_id, num, designation, unit, moe:{qty,pu}, offers:{[cid]:{u,qty,pu}} }]
-let lotOptions = [];        // [{ id, designation, unit, offers:[{company_id,qty,unit_price}], checked:bool }]
 let unansweredConfig = { comment: 'Article sans réponse', color: '#fff3cd' }; // config for unanswered cells
 const unexpectedAnswerMarker = {
   label: 'Réponse non attendue',
@@ -3485,176 +3484,6 @@ async function openLot(id, lotMeta){
     await loadProjectQuestionConfig();
   }
   populateCompanyFilter();
-}
-
-/* ================= Options (Additifs cochables) ================= */
-async function loadLotOptions(){
-  if (!currentLot || !currentRound) return;
-  try {
-    const selectedOptionId = qs('#options-add-select')?.value || '';
-    const options = await api(`/options/lot/${currentLot.id}?round_id=${currentRound.id}`);
-    lotOptions = options.map(opt => ({ ...opt }));
-    const optSheet = qs('#options-sheet-view');
-    if (optSheet && !optSheet.classList.contains('hidden')) {
-      setupOptionsSheetControls();
-      const sel = qs('#options-add-select');
-      if (sel && selectedOptionId && sel.querySelector(`option[value="${selectedOptionId}"]`)) {
-        sel.value = selectedOptionId;
-      }
-      renderOptionsSheetTable();
-    }
-  } catch (err) {
-    console.error('Erreur chargement options:', err);
-  }
-}
-
-function setupOptionsSheetControls(){
-  const sel = qs('#options-add-select');
-  const btn = qs('#options-add-btn');
-  const createBtn = qs('#options-create-btn');
-  const renameBtn = qs('#options-rename-btn');
-  const deleteBtn = qs('#options-delete-btn');
-  if (!sel || !btn) return;
-  const previousValue = sel.value;
-  sel.innerHTML = '';
-  for (const opt of lotOptions){
-    const o = document.createElement('option');
-    o.value = String(opt.id); o.textContent = opt.designation;
-    sel.appendChild(o);
-  }
-  if (previousValue && sel.querySelector(`option[value="${previousValue}"]`)) {
-    sel.value = previousValue;
-  }
-  const hasOptions = lotOptions.length > 0;
-  btn.disabled = !hasOptions || isVisionneur();
-  if (renameBtn) renameBtn.disabled = !hasOptions || isVisionneur();
-  if (deleteBtn) deleteBtn.disabled = !hasOptions || isVisionneur();
-  if (createBtn) {
-    createBtn.onclick = async () => {
-      if (isVisionneur()) return;
-      if (!currentRound?.id) {
-        showNotify({ title: 'Erreur', message: 'Sélectionnez un tour avant de créer une option.', type: 'error' });
-        return;
-      }
-      const design = prompt('Désignation de l\'option:');
-      if (!design) return;
-      try {
-        const created = await api(`/options/lot/${currentLot.id}`, {
-          method: 'POST', body: { round_id: currentRound.id, designation: design }
-        });
-        await loadLotOptions();
-        setupOptionsSheetControls();
-        if (created?.id && sel.querySelector(`option[value="${created.id}"]`)) {
-          sel.value = String(created.id);
-        }
-        renderOptionsSheetTable();
-        await refreshCompare();
-      } catch (err) {
-        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-      }
-    };
-  }
-  if (renameBtn) {
-    renameBtn.onclick = async () => {
-      if (isVisionneur()) return;
-      const optionId = Number(sel.value);
-      if (!optionId) return;
-      const opt = lotOptions.find(o => Number(o.id) === optionId);
-      const nextName = prompt('Nouveau nom de l\'option:', opt?.designation || '');
-      if (!nextName || !nextName.trim()) return;
-      try {
-        const updated = await api(`/options/${optionId}`, {
-          method: 'PUT',
-          body: { designation: nextName.trim() }
-        });
-        if (opt) opt.designation = updated?.designation || nextName.trim();
-        await loadLotOptions();
-        setupOptionsSheetControls();
-        if (sel.querySelector(`option[value="${optionId}"]`)) sel.value = String(optionId);
-        renderOptionsSheetTable();
-        await refreshCompare({ silent: true });
-      } catch (err) {
-        showNotify({ title: 'Erreur', message: err.message, type: 'error' });
-      }
-    };
-  }
-  if (deleteBtn) {
-    deleteBtn.onclick = async () => {
-      if (isVisionneur()) return;
-      const optionId = Number(sel.value);
-      if (!optionId) return;
-      const opt = lotOptions.find(o => Number(o.id) === optionId);
-      showDeleteConfirmation({
-        title: 'Supprimer une option',
-        message: `Confirmer la suppression de l'option "${opt?.designation || 'selectionnee'}" ?`,
-        extra: '<strong>Attention:</strong> tous les articles, montants MOE, offres et questions rattaches a cette option seront supprimes.',
-        onConfirm: async () => {
-          try {
-            await api(`/options/${optionId}`, { method: 'DELETE', showLoader: false });
-            selectedRoundOptions.delete(optionId);
-            lotOptions = lotOptions.filter(o => Number(o.id) !== optionId);
-            setupOptionsSheetControls();
-            renderOptionsSheetTable();
-            await refreshCompare({ silent: true });
-            showNotify({ title:'Option', message:'Option supprimee', type:'success' });
-          } catch (err) {
-            showNotify({ title:'Erreur', message: err.message, type:'error' });
-          }
-        }
-      });
-    };
-  }
-  sel.onchange = async () => {
-    if (hasUnsavedOptionsChanges) {
-      await autoSaveOptionsGrid();
-    }
-    renderOptionsSheetTable();
-  };
-  if (isVisionneur()) {
-    btn.disabled = true;
-    if (createBtn) createBtn.style.display = 'none';
-    if (renameBtn) renameBtn.style.display = 'none';
-    if (deleteBtn) deleteBtn.style.display = 'none';
-  }
-  const addOptionItem = async () => {
-    if (isVisionneur()) return;
-    const optionId = Number(sel.value);
-    if (!optionId) return;
-    try {
-      const res = await api(`/options/${optionId}/items`, { method:'POST', body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null } });
-      const opt = lotOptions.find(o => Number(o.id) === optionId);
-      if (opt) opt.items = [...(opt.items||[]), { id: res.id, num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null, offers:[] }];
-      // Add to model and DOM directly
-      const newRow = { item_id: res.id, option_id: optionId, option_designation: opt?.designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
-      for (const c of lotCompanies) newRow.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
-      optionsSheetRows.push(newRow);
-      // Remove "aucune option" placeholder if present
-      const body = qs('#options-sheet-body');
-      if (body && optionsSheetRows.length === 1) { renderOptionsSheetTable(); }
-      else { appendOptionsRowDOM(optionsSheetRows.length - 1, newRow); }
-      showNotify({ title:'Option', message:'Article ajouté', type:'success' });
-    } catch (err) {
-      showNotify({ title:'Erreur', message: err.message, type:'error' });
-    }
-  };
-  btn.onclick = addOptionItem;
-  sel.onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addOptionItem();
-    }
-  };
-}
-
-function formatOptionNum(num) {
-  const s = String(num ?? '').trim();
-  return s ? `O${s}` : '';
-}
-
-function parseOptionNum(raw) {
-  const s = String(raw ?? '').trim();
-  if (!s) return '';
-  return s.replace(/^O\s*/i, '').trim();
 }
 
 /* ================= Autosave avec debounce ================= */
@@ -7113,564 +6942,6 @@ window.addEventListener('load', () => {
 });
 
 /* ================= Tableur (édition) ================= */
-/** Rendu du comparatif des options sous le tableau principal */
-function renderOptionsCompareTable(companies, entrepriseMode){
-  const head = qs('#options-compare-head');
-  const body = qs('#options-compare-body');
-  if (!head || !body) return;
-  head.innerHTML = '';
-  body.innerHTML = '';
-
-  // Construire une liste d'items pour toutes les options
-  const items = [];
-  for (const opt of lotOptions){
-    for (const item of (opt.items || [])){
-      items.push({ option: opt, item });
-    }
-  }
-  if (items.length === 0){
-    head.innerHTML = '';
-    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Aucune option</td></tr>';
-    return;
-  }
-
-  // En-tête ligne 1
-  let h1 = `<tr class="head-row-1"><th rowspan="2" class="sticky-col">Num</th><th rowspan="2" class="sticky-col2">Désignation</th><th rowspan="2">Unité</th>`;
-  if (!entrepriseMode) h1 += `<th colspan="3" class="moe-col">MOE</th>`;
-  for (const c of companies) h1 += `<th colspan="${entrepriseMode ? '4' : '6'}" class="company-col">${c.name}</th>`;
-  h1 += '</tr>';
-  
-  // En-tête ligne 2
-  let h2 = `<tr class="head-row-2">`;
-  if (!entrepriseMode) h2 += `<th class="moe-border">Qté</th><th>PU</th><th>Mt</th>`;
-  for (let i=0;i<companies.length;i++){
-    if (entrepriseMode) {
-      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>PU</th><th>Mt</th>';
-    } else {
-      h2 += '<th class="company-border">Unité</th><th>Qté</th><th>ΔQté</th><th>PU</th><th>Mt</th><th>ΔPU</th>';
-    }
-  }
-  h2 += '</tr>';
-  head.innerHTML = h1 + h2;
-
-  // Totaux options
-  let totalMoe = 0;
-  const totalsByCompany = {}; companies.forEach(c => totalsByCompany[c.id] = 0);
-
-  for (const { option: opt, item } of items){
-    const numLabel = formatOptionNum(item.num);
-    let tr = `<tr><td class="sticky-col">${numLabel}</td><td class="sticky-col2"><span class="muted">${opt.designation}</span> — ${item.designation||''}</td><td>${item.unit||''}</td>`;
-    if (!entrepriseMode){
-      const moeQty = parseNum(item.moe_qty); const moePu = parseNum(item.moe_unit_price);
-      const moeMt = (moeQty !== null && moePu !== null) ? moeQty * moePu : null;
-      tr += `<td class="moe-border">${fmtNum(moeQty)}</td><td>${fmtEuro(moePu)}</td><td>${fmtEuro(moeMt)}</td>`;
-      if (moeMt != null) totalMoe += moeMt;
-    }
-    for (const c of companies){
-      const off = (item.offers||[]).find(o => Number(o.company_id) === Number(c.id));
-      const qty = off?.qty || 0; const pu = off?.unit_price || 0; const mt = (parseNum(qty)||0) * (parseNum(pu)||0);
-      const offUnit = off?.unit || '';
-      if (entrepriseMode){
-        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td>`;
-      } else {
-        const moeQty = parseNum(item.moe_qty);
-        const moePu = parseNum(item.moe_unit_price);
-        const deltaQty = (Number.isFinite(moeQty) && Number.isFinite(parseNum(qty))) ? (moeQty - parseNum(qty)) : null;
-        const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
-        const deltaPuPct = (Number.isFinite(moePu) && moePu !== 0 && Number.isFinite(parseNum(pu)))
-          ? ((parseNum(pu) - moePu) / moePu) * 100
-          : null;
-        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td><td>${fmtPct(deltaPuPct)}</td>`;
-      }
-      if (mt) totalsByCompany[c.id] = (totalsByCompany[c.id] || 0) + mt;
-    }
-    tr += '</tr>';
-    body.insertAdjacentHTML('beforeend', tr);
-  }
-
-  // Ligne totaux options
-  let totalRow = `<tr class="total-row"><td class="sticky-col"><strong>TOTAL OPTIONS</strong></td><td class="sticky-col2"></td><td></td>`;
-  if (!entrepriseMode) totalRow += `<td class="moe-border"></td><td></td><td><strong>${fmtEuro(totalMoe)}</strong></td>`;
-  for (const c of companies){
-    const t = totalsByCompany[c.id] || 0;
-    if (entrepriseMode) totalRow += `<td class="company-border"></td><td></td><td></td><td><strong>${fmtEuro(t)}</strong></td>`;
-    else totalRow += `<td class="company-border"></td><td></td><td></td><td></td><td><strong>${fmtEuro(t)}</strong></td><td></td>`;
-  }
-  totalRow += '</tr>';
-  body.insertAdjacentHTML('beforeend', totalRow);
-}
-
-  /** ======= Options Sheet — Model-based (like main table) ======= */
-  let optionsColModel = [];
-  let optionsSheetRows = [];
-  let optionsSheetDelegatesAttached = false;
-  let hasUnsavedOptionsChanges = false;
-  let isSavingOptions = false;
-  let _optionsChangeGen = 0;
-
-  function buildOptionsColModel(){
-    const entrepriseMode = isEntreprise();
-    optionsColModel = [
-      { key:'num',        editable:true },
-      { key:'designation',editable:true, wide:true },
-      { key:'unit',       editable:true }
-    ];
-    if (!entrepriseMode){
-      optionsColModel.push(
-        { key:'moe.qty', editable:true,  cls:'moe-col' },
-        { key:'moe.pu',  editable:true,  cls:'moe-col' },
-        { key:'moe.mt',  editable:false, cls:'moe-col' }
-      );
-    }
-    for (const c of lotCompanies){
-      optionsColModel.push({ key:`c.${c.id}.u`,   editable:true  });
-      optionsColModel.push({ key:`c.${c.id}.qty`, editable:true  });
-      optionsColModel.push({ key:`c.${c.id}.pu`,  editable:true  });
-      optionsColModel.push({ key:`c.${c.id}.mt`,  editable:false });
-    }
-  }
-
-  function buildOptionsSheetModel(){
-    optionsSheetRows = [];
-    const selectedOptionId = Number(qs('#options-add-select')?.value || lotOptions[0]?.id || 0);
-    for (const opt of lotOptions){
-      if (selectedOptionId && Number(opt.id) !== selectedOptionId) continue;
-      for (const item of (opt.items || [])){
-        const row = {
-          item_id: Number(item.id),
-          option_id: Number(opt.id),
-          option_designation: opt.designation || '',
-          num: item.num || '',
-          designation: item.designation || '',
-          unit: item.unit || '',
-          moe: {
-            qty: item.moe_qty != null ? String(item.moe_qty) : '',
-            pu: item.moe_unit_price != null ? String(item.moe_unit_price) : ''
-          },
-          offers: {}
-        };
-        for (const c of lotCompanies){
-          const off = (item.offers || []).find(o => Number(o.company_id) === Number(c.id)) || {};
-          row.offers[c.id] = {
-            u: off.unit != null ? String(off.unit) : '',
-            qty: off.qty != null ? String(off.qty) : '',
-            pu: off.unit_price != null ? String(off.unit_price) : ''
-          };
-        }
-        optionsSheetRows.push(row);
-      }
-    }
-  }
-
-  function optionsValueForCell(row, key){
-    if (!row) return '';
-    if (key === 'num') return formatOptionNum(row.num);
-    if (key === 'designation') return `${row.option_designation} — ${row.designation}`;
-    if (key === 'unit') return row.unit ?? '';
-    if (key === 'moe.qty') return row.moe?.qty ?? '';
-    if (key === 'moe.pu')  return row.moe?.pu  ?? '';
-    if (key === 'moe.mt')  return amountOf(row.moe?.qty, row.moe?.pu);
-    if (key.startsWith('c.')){
-      const [, cid, sub] = key.split('.');
-      const o = row.offers?.[cid] || {};
-      if (sub === 'mt') return amountOf(o.qty, o.pu);
-      return o[sub] ?? '';
-    }
-    return '';
-  }
-
-  function getOptionsCell(r, c){
-    const rowEl = qsa('#options-sheet-body tr')[r];
-    if (!rowEl) return null;
-    return rowEl.querySelector(`td[data-c="${c}"]`) || rowEl.children[c] || null;
-  }
-
-  function setOptionsCell(r, c, text, updateDOM = true){
-    const td = getOptionsCell(r, c); if (!td) return;
-    if (updateDOM) td.textContent = text ?? '';
-    const key = optionsColModel[c]?.key;
-    const row = optionsSheetRows[r]; if (!row) return;
-    if (key === 'num') row.num = parseOptionNum(text);
-    else if (key === 'designation'){
-      let d = text || '';
-      const sep = '—';
-      if (d.includes(sep)) d = d.split(sep).slice(1).join(sep).trim();
-      row.designation = d;
-    }
-    else if (key === 'unit') row.unit = text;
-    else if (key === 'moe.qty') row.moe.qty = text;
-    else if (key === 'moe.pu')  row.moe.pu  = text;
-    else if (key.startsWith('c.')){
-      const [, cid, sub] = key.split('.');
-      row.offers[cid] = row.offers[cid] || { u:'', qty:'', pu:'' };
-      if (sub !== 'mt') row.offers[cid][sub] = text;
-    }
-  }
-
-  function recalcOptionsAmountsRow(r){
-    const cQty = optionsColModel.findIndex(c => c.key === 'moe.qty');
-    const cPu  = optionsColModel.findIndex(c => c.key === 'moe.pu');
-    const cMt  = optionsColModel.findIndex(c => c.key === 'moe.mt');
-    if (cQty>=0 && cPu>=0 && cMt>=0){
-      const mt = getOptionsCell(r, cMt);
-      if (mt) mt.textContent = amountOf(getOptionsCell(r,cQty)?.textContent.trim(), getOptionsCell(r,cPu)?.textContent.trim());
-    }
-    for (const c of lotCompanies){
-      const base = `c.${c.id}.`;
-      const ciQty = optionsColModel.findIndex(x => x.key === base+'qty');
-      const ciPu  = optionsColModel.findIndex(x => x.key === base+'pu');
-      const ciMt  = optionsColModel.findIndex(x => x.key === base+'mt');
-      if (ciQty>=0 && ciPu>=0 && ciMt>=0){
-        const mt = getOptionsCell(r, ciMt);
-        if (mt) mt.textContent = amountOf(getOptionsCell(r,ciQty)?.textContent.trim(), getOptionsCell(r,ciPu)?.textContent.trim());
-      }
-    }
-  }
-
-  function appendOptionsRowDOM(rIndex, data){
-    const tr = document.createElement('tr');
-    const tdActions = document.createElement('td');
-    tdActions.className = 'cell-readonly options-row-actions';
-    tdActions.style.cssText = 'text-align:center;padding:4px 8px;width:44px';
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className = 'btn ghost btn-delete-option-row';
-    deleteBtn.dataset.r = String(rIndex);
-    deleteBtn.title = 'Supprimer cette ligne option';
-    deleteBtn.innerHTML = icon('trash', 'icon-only');
-    if (isVisionneur()) deleteBtn.disabled = true;
-    tdActions.appendChild(deleteBtn);
-    tr.appendChild(tdActions);
-    for (let c=0; c<optionsColModel.length; c++){
-      const col = optionsColModel[c];
-      const td = document.createElement('td');
-      td.dataset.r = String(rIndex);
-      td.dataset.c = String(c);
-      if (col.editable) td.contentEditable = 'true'; else td.classList.add('cell-readonly');
-      if (col.wide) td.style.minWidth = '320px';
-      if (col.key.startsWith('c.') && col.key.endsWith('.u')) {
-        const [, cid] = col.key.split('.');
-        applyCompanyColumnStyle(td, cid);
-      }
-      td.textContent = optionsValueForCell(data, col.key);
-      tr.appendChild(td);
-    }
-    qs('#options-sheet-body').appendChild(tr);
-  }
-
-  async function deleteOptionsRow(rIndex){
-    const row = optionsSheetRows[rIndex];
-    if (!row) return;
-    const itemId = row.item_id ? Number(row.item_id) : null;
-    const removeLocalRow = () => {
-      optionsSheetRows.splice(rIndex, 1);
-      const opt = lotOptions.find(o => Number(o.id) === Number(row.option_id));
-      if (opt) {
-        opt.items = (opt.items || []).filter(item => Number(item.id) !== Number(itemId));
-      }
-      renderOptionsSheetTable();
-      setupOptionsSheetControls();
-    };
-
-    showDeleteConfirmation({
-      title: 'Supprimer une ligne option',
-      message: 'Confirmer la suppression de cette ligne option ?',
-      onConfirm: async () => {
-        try {
-          if (itemId) {
-            await api(`/options/items/${itemId}`, { method: 'DELETE', showLoader: false });
-          }
-          removeLocalRow();
-          await refreshCompare({ silent: true });
-          showNotify({ title:'Option', message:'Ligne supprimee', type:'success' });
-        } catch (err) {
-          showNotify({ title:'Erreur', message: err.message, type:'error' });
-        }
-      }
-    });
-  }
-
-  function ensureOptionsRows(n){
-    while (qsa('#options-sheet-body tr').length < n){
-      const lastRow = optionsSheetRows[optionsSheetRows.length - 1];
-      const selectedOptionId = Number(qs('#options-add-select')?.value || 0);
-      const optionId = selectedOptionId || lastRow?.option_id || lotOptions[0]?.id;
-      if (!optionId) break;
-      const blank = { item_id:null, option_id:optionId, option_designation: lotOptions.find(o=>o.id===optionId)?.designation||'', num:'', designation:'', unit:'', moe:{qty:'', pu:''}, offers:{} };
-      for (const c of lotCompanies) blank.offers[c.id] = { u:'', qty:'', pu:'', mt:'' };
-      optionsSheetRows.push(blank);
-      const rIndex = optionsSheetRows.length - 1;
-      appendOptionsRowDOM(rIndex, blank);
-    }
-  }
-
-  function focusOptionsCell(r, c){
-    if (r < 0) r = 0;
-    if (c < 0) c = 0;
-    ensureOptionsRows(r+1);
-    if (c >= optionsColModel.length) c = optionsColModel.length - 1;
-    let guard = 0;
-    while (!optionsColModel[c]?.editable && guard++ < 100) c++;
-    if (c >= optionsColModel.length) c = optionsColModel.findIndex(x => x.editable);
-    const td = getOptionsCell(r, c);
-    if (td){
-      td.focus();
-      const range = document.createRange(); range.selectNodeContents(td); range.collapse(false);
-      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-    }
-  }
-
-  function markOptionsChanged(){
-    hasUnsavedOptionsChanges = true;
-    _optionsChangeGen++;
-    debounceAutoSave('options-grid', autoSaveOptionsGrid, 800);
-  }
-
-  async function autoSaveOptionsGrid(){
-    if (!currentLot || isSavingOptions || !hasUnsavedOptionsChanges) return;
-    isSavingOptions = true;
-    let genAtSaveStart = _optionsChangeGen;
-    try {
-      const rows = [];
-      for (let r=0; r<optionsSheetRows.length; r++){
-        const data = optionsSheetRows[r];
-        // Read current DOM values to ensure freshness
-        const getByKey = (key) => {
-          const c = optionsColModel.findIndex(x => x.key === key);
-          return c >= 0 ? (getOptionsCell(r, c)?.textContent.trim() ?? '') : '';
-        };
-        const num = parseOptionNum(getByKey('num'));
-        let designation = getByKey('designation');
-        const sep = '—';
-        if (designation.includes(sep)) designation = designation.split(sep).slice(1).join(sep).trim();
-        const unit = getByKey('unit');
-
-        const row = {
-          item_id: data.item_id || null,
-          option_id: data.option_id,
-          num, designation, unit,
-          moe: { qty: getByKey('moe.qty'), pu: getByKey('moe.pu') },
-          offers: {}
-        };
-        for (const c of lotCompanies){
-          const base = `c.${c.id}.`;
-          row.offers[c.id] = {
-            u:   getByKey(base+'u'),
-            qty: getByKey(base+'qty'),
-            pu:  getByKey(base+'pu')
-          };
-        }
-        rows.push(row);
-      }
-
-      const result = await api(`/options/lot/${currentLot.id}/save-grid`, {
-        method:'POST',
-        body:{ rows, round_id: currentRound?.id },
-        showLoader: false
-      });
-
-      // Sync item IDs for newly created rows
-      if (result?.items) {
-        for (let i=0; i<Math.min(result.items.length, optionsSheetRows.length); i++){
-          if (result.items[i]?.id) optionsSheetRows[i].item_id = result.items[i].id;
-        }
-      }
-
-      if (_optionsChangeGen === genAtSaveStart) {
-        hasUnsavedOptionsChanges = false;
-      }
-      await refreshCompare({ silent: true });
-      console.log('Autosave options réussi');
-    } catch (err) {
-      console.error('Erreur autosave options:', err);
-    } finally {
-      isSavingOptions = false;
-      if (_optionsChangeGen !== genAtSaveStart) {
-        debounceAutoSave('options-grid', autoSaveOptionsGrid, 100);
-      }
-    }
-  }
-
-  function attachOptionsSheetDelegates(){
-    if (optionsSheetDelegatesAttached) return;
-    const body = qs('#options-sheet-body');
-    if (!body) return;
-
-    body.addEventListener('focusin', (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      td.dataset.prev = td.textContent;
-    });
-
-    body.addEventListener('click', (e) => {
-      const btn = e.target.closest('.btn-delete-option-row');
-      if (!btn) return;
-      e.preventDefault();
-      const r = Number(btn.dataset.r);
-      if (Number.isInteger(r)) deleteOptionsRow(r);
-    });
-
-    body.addEventListener('input', (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      const r = Number(td.dataset.r), c = Number(td.dataset.c);
-      setOptionsCell(r, c, td.textContent.trim(), false);
-      recalcOptionsAmountsRow(r);
-      markOptionsChanged();
-    });
-
-    body.addEventListener('blur', (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      const prev = td.dataset.prev ?? '';
-      const now = td.textContent;
-      if (prev !== now) markOptionsChanged();
-    }, true);
-
-    body.addEventListener('keydown', async (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      const r = Number(td.dataset.r), c = Number(td.dataset.c);
-
-      const navKeys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Tab'];
-      if (!navKeys.includes(e.key)) return;
-
-      let nr = r, nc = c;
-      if (e.key === 'ArrowLeft')  nc = Math.max(0, c - 1);
-      if (e.key === 'ArrowRight') nc = c + 1;
-      if (e.key === 'ArrowUp')    nr = Math.max(0, r - 1);
-      if (e.key === 'ArrowDown')  nr = r + 1;
-      if (e.key === 'Tab')        nc = c + (e.shiftKey ? -1 : 1);
-
-      if (e.key === 'Enter'){
-        e.preventDefault();
-        nr = r + 1;
-        // If last row, create a new option item
-        if (nr >= optionsSheetRows.length){
-          if (isVisionneur()) return;
-          const optionId = optionsSheetRows[r]?.option_id;
-          if (!optionId) return;
-          try {
-            const res = await api(`/options/${optionId}/items`, {
-              method:'POST',
-              body:{ num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null }
-            });
-            const newItem = { item_id: res.id, option_id: optionId, option_designation: optionsSheetRows[r]?.option_designation||'', num:'', designation:'', unit:'', moe:{qty:'',pu:''}, offers:{} };
-            for (const co of lotCompanies) newItem.offers[co.id] = { u:'', qty:'', pu:'', mt:'' };
-            optionsSheetRows.push(newItem);
-            appendOptionsRowDOM(optionsSheetRows.length - 1, newItem);
-            // Update lotOptions model
-            const opt = lotOptions.find(o => Number(o.id) === Number(optionId));
-            if (opt) opt.items = [...(opt.items||[]), { id: res.id, num:'', designation:'', unit:'', moe_qty:null, moe_unit_price:null, offers:[] }];
-            setupOptionsSheetControls();
-          } catch (err) {
-            showNotify({ title:'Erreur', message: err.message, type:'error' });
-            return;
-          }
-        }
-        focusOptionsCell(nr, c);
-        return;
-      }
-
-      if (navKeys.includes(e.key)){
-        e.preventDefault();
-        focusOptionsCell(nr, nc);
-      }
-    }, true);
-
-    // Paste support
-    body.addEventListener('paste', (e) => {
-      const td = e.target.closest('td'); if (!td) return;
-      e.preventDefault();
-      const startR = Number(td.dataset.r), startC = Number(td.dataset.c);
-      const text = e.clipboardData.getData('text/plain') || '';
-      const delim = detectDelimiter(text);
-      const lines = text.replace(/\r/g,'').split('\n');
-      const grid = lines.map(l => l.split(delim));
-      ensureOptionsRows(startR + grid.length);
-      for (let i=0; i<grid.length; i++){
-        let col = startC;
-        for (let j=0; j<grid[i].length; j++){
-          let guard = 0;
-          while (col < optionsColModel.length && !optionsColModel[col].editable && guard++ < 100) col++;
-          if (col >= optionsColModel.length) break;
-          let val = String(grid[i][j]).trim();
-          const colKey = optionsColModel[col]?.key || '';
-          const isNum = colKey.includes('qty') || colKey.includes('pu');
-          if (isNum && val !== ''){ const p = parseNum(val); if (Number.isFinite(p)) val = String(p); }
-          setOptionsCell(startR+i, col, val, true);
-          col++;
-        }
-        recalcOptionsAmountsRow(startR + i);
-      }
-      markOptionsChanged();
-    }, true);
-
-    optionsSheetDelegatesAttached = true;
-  }
-
-  function renderOptionsSheetTable(){
-    const head = qs('#options-sheet-head');
-    const body = qs('#options-sheet-body');
-    if (!head || !body) return;
-
-    buildOptionsColModel();
-    buildOptionsSheetModel();
-
-    head.innerHTML = '';
-    body.innerHTML = '';
-
-    if (optionsSheetRows.length === 0){
-      body.innerHTML = `<tr><td colspan="${optionsColModel.length + 1}" style="text-align:center;padding:16px;color:var(--muted)">Aucun article dans cette option</td></tr>`;
-      return;
-    }
-
-    // Header row 1: base cols (rowSpan=2) + company groups
-    const tr1 = document.createElement('tr');
-    const thActions = document.createElement('th');
-    thActions.textContent = '';
-    thActions.rowSpan = 2;
-    thActions.style.cssText = 'text-align:center;width:44px';
-    tr1.appendChild(thActions);
-    const baseCount = optionsColModel.findIndex(col => col.key.startsWith('c.'));
-    const actualBaseCount = baseCount === -1 ? optionsColModel.length : baseCount;
-    for (let i=0; i<actualBaseCount; i++){
-      const col = optionsColModel[i];
-      const th = document.createElement('th');
-      th.textContent = headerLabelFor(col.key);
-      th.rowSpan = 2;
-      if (col.cls) th.classList.add(col.cls);
-      tr1.appendChild(th);
-    }
-    for (let i=actualBaseCount; i<optionsColModel.length; i+=4){
-      const [, cid] = optionsColModel[i].key.split('.');
-      const th = document.createElement('th');
-      th.textContent = companyNameFor(cid);
-      th.colSpan = 4;
-      th.classList.add('company-col');
-      applyCompanyColumnStyle(th, cid, true);
-      tr1.appendChild(th);
-    }
-    head.appendChild(tr1);
-
-    // Header row 2: sub-columns per company
-    const tr2 = document.createElement('tr');
-    for (let i=actualBaseCount; i<optionsColModel.length; i++){
-      const th = document.createElement('th');
-      th.textContent = headerLabelFor(optionsColModel[i].key);
-      if ((i - actualBaseCount) % 4 === 0) {
-        th.classList.add('company-border');
-        const [, cid] = optionsColModel[i].key.split('.');
-        applyCompanyColumnStyle(th, cid);
-      }
-      tr2.appendChild(th);
-    }
-    head.appendChild(tr2);
-
-    // Body rows
-    for (let r=0; r<optionsSheetRows.length; r++){
-      appendOptionsRowDOM(r, optionsSheetRows[r]);
-    }
-
-    attachOptionsSheetDelegates();
-    for (let r=0; r<optionsSheetRows.length; r++) recalcOptionsAmountsRow(r);
-  }
 /** 1) Construire le modèle (données + colonnes) puis rendu initial */
 function buildSheetModel(raw){
   const moeByItem = new Map(raw.moe.map(m => [Number(m.item_id), m]));
@@ -9022,9 +8293,7 @@ function renderSheetBindings(){
     if (isSaving) {
       await waitForGridSaveCompletion();
     }
-    if (typeof hasUnsavedOptionsChanges !== 'undefined' && hasUnsavedOptionsChanges) {
-      await autoSaveOptionsGrid();
-    }
+    await flushOptionsAutosave();
     await loadLotOptions();
     await refreshCompare({ silent: true });
     clearSheetSelection();
@@ -10036,6 +9305,11 @@ function bindSmartImport() {
     doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: !canUseDpgfMultiSheets(), switchToStep2: false });
   });
 
+  // Détection automatique des options : re-rendre l'aperçu (badges) au changement
+  qs('#import-detect-options')?.addEventListener('change', () => {
+    if (importState.preview) renderPreviewTable();
+  });
+
   // Header row manual override
   let headerRowDebounce = null;
   headerRowInput?.addEventListener('change', () => {
@@ -10284,11 +9558,17 @@ function bindSmartImport() {
     head.appendChild(trSel);
 
     // === Lignes de données ===
+    // Lignes détectées comme options (badge informatif si la détection est active)
+    const detectOptionsEnabled = qs('#import-detect-options')?.checked !== false;
+    const optionRowsSet = new Set(detectOptionsEnabled ? (data.detectedOptionRows || []) : []);
+    const firstDesigCol = Array.isArray(mapping.designation) ? mapping.designation[0] : mapping.designation;
     for (const row of data.previewRows) {
       const rn = row._rowNum != null ? row._rowNum : ('idx_' + data.previewRows.indexOf(row));
       const isExcl = excluded.has(rn);
+      const isOptionRow = !isExcl && optionRowsSet.has(rn);
       const tr = document.createElement('tr');
       if (isExcl) tr.style.cssText = 'opacity:0.3;text-decoration:line-through';
+      else if (isOptionRow) tr.style.background = 'rgba(139,92,246,0.08)';
       const tdA = document.createElement('td');
       tdA.style.cssText = 'text-align:center;padding:2px;position:sticky;left:0;background:var(--card);z-index:1';
       tdA.appendChild(isExcl ? makeRestoreBtn(rn) : makeDeleteBtn(rn));
@@ -10300,6 +9580,13 @@ function bindSmartImport() {
         if (field) {
           const c = colors[field];
           td.style.cssText = `background:${c}08;border-left:2px solid ${c}44`;
+        }
+        if (isOptionRow && h.index === firstDesigCol) {
+          const pill = document.createElement('span');
+          pill.textContent = 'Option';
+          pill.title = 'Cette ligne sera importée comme option cochable';
+          pill.style.cssText = 'display:inline-block;margin-right:6px;padding:1px 6px;border-radius:10px;background:#8b5cf6;color:#fff;font-size:0.75em;font-weight:700;vertical-align:middle';
+          td.prepend(pill);
         }
         tr.appendChild(td);
       }
@@ -10409,6 +9696,7 @@ function bindSmartImport() {
       companyName: importState.mode === 'offer' ? (qs('#import-company-new')?.value?.trim() || null) : null,
       fileId: importState.fileId || null,
       importOperation: 'replace',
+      detectOptions: qs('#import-detect-options')?.checked !== false,
     };
 
     try {
@@ -10417,7 +9705,7 @@ function bindSmartImport() {
 
       if (importState.mode === 'dpgf' && canUseDpgfMultiSheets()) {
         // Import DPGF multi-onglets : un lot créé par onglet
-        const agg = { mode: 'dpgf-multi', lotsCreated: 0, itemsImported: 0, itemsUpdated: 0 };
+        const agg = { mode: 'dpgf-multi', lotsCreated: 0, itemsImported: 0, itemsUpdated: 0, optionsCreated: 0, optionsUpdated: 0, optionItemsImported: 0, warnings: [] };
         const file = selectedFiles[0];
         const selectedSheets = [...importState.selectedSheetsDpgf];
         for (let i = 0; i < selectedSheets.length; i++) {
@@ -10431,6 +9719,7 @@ function bindSmartImport() {
             sheetName,
             headerRow: importState.preview.headerRow,
             excludedRows: Array.isArray(sheetCfg.excludedRows) ? sheetCfg.excludedRows.filter(v => typeof v === 'number') : [],
+            detectOptions: params.detectOptions,
           };
           const formData = new FormData();
           formData.append('file', file);
@@ -10446,6 +9735,12 @@ function bindSmartImport() {
           agg.lotsCreated += 1;
           agg.itemsImported += Number(result.itemsImported || 0);
           agg.itemsUpdated += Number(result.itemsUpdated || 0);
+          agg.optionsCreated += Number(result.optionsCreated || 0);
+          agg.optionsUpdated += Number(result.optionsUpdated || 0);
+          agg.optionItemsImported += Number(result.optionItemsImported || 0);
+          if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+            agg.warnings.push(...result.warnings.map((w) => `${sheetName}: ${w}`));
+          }
         }
         finalResult = agg;
       } else if (importState.mode === 'offer' && selectedFiles.length > 1) {
@@ -10457,6 +9752,7 @@ function bindSmartImport() {
           addedPostsCount: 0,
           skipped: 0,
           totalItems: 0,
+          optionOffersImported: 0,
           warnings: [],
         };
 
@@ -10497,6 +9793,7 @@ function bindSmartImport() {
           aggregated.matched += Number(result.matched || 0);
           aggregated.addedPostsCount += Number(result.addedPostsCount || 0);
           aggregated.skipped += Number(result.skipped || 0);
+          aggregated.optionOffersImported += Number(result.optionOffersImported || 0);
           aggregated.totalItems = Math.max(aggregated.totalItems, Number(result.totalItems || 0));
           if (result.companyCreated) aggregated.companiesCreated += 1;
           if (Array.isArray(result.warnings) && result.warnings.length > 0) {
@@ -10541,6 +9838,22 @@ function bindSmartImport() {
     const div = qs('#import-result');
     if (!div) return;
 
+    const statTile = (value, label) => `
+          <div style="padding:16px;background:var(--input-bg);border-radius:8px;min-width:120px">
+            <div style="font-size:2em;font-weight:700">${value}</div>
+            <div class="muted" style="font-size:0.85em">${label}</div>
+          </div>`;
+    const optionsImportedCount = Number(result.optionsCreated || 0) + Number(result.optionsUpdated || 0);
+    const optionsTilesHtml = optionsImportedCount > 0
+      ? statTile(optionsImportedCount, 'options importées') + statTile(result.optionItemsImported || 0, 'articles d\'option')
+      : '';
+    const warningsHtml = (result.warnings || []).length ? `
+          <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em;color:var(--warning-fg, #3f2a00)">
+            <strong style="color:var(--warning-strong, #7a4a00)">⚠ Attention :</strong>
+            <ul style="margin:4px 0 0 16px;padding:0;max-height:180px;overflow:auto;color:var(--warning-fg, #3f2a00)">${(result.warnings || []).slice(0, 30).map(w => `<li>${w}</li>`).join('')}</ul>
+          </div>
+        ` : '';
+
     if (result.mode === 'dpgf-multi') {
       div.innerHTML = `
         <div style="font-size:3em;margin-bottom:12px">${icon('check-circle')}</div>
@@ -10558,7 +9871,9 @@ function bindSmartImport() {
             <div style="font-size:2em;font-weight:700">${result.itemsUpdated || 0}</div>
             <div class="muted" style="font-size:0.85em">articles mis à jour</div>
           </div>
+          ${optionsTilesHtml}
         </div>
+        ${warningsHtml}
       `;
     } else if (result.mode === 'dpgf') {
       div.innerHTML = `
@@ -10573,7 +9888,9 @@ function bindSmartImport() {
             <div style="font-size:2em;font-weight:700">${result.itemsUpdated || 0}</div>
             <div class="muted" style="font-size:0.85em">articles mis à jour</div>
           </div>
+          ${optionsTilesHtml}
         </div>
+        ${warningsHtml}
       `;
     } else if (result.mode === 'offer-batch') {
       div.innerHTML = `
@@ -10596,6 +9913,7 @@ function bindSmartImport() {
             <div style="font-size:2em;font-weight:700">${result.companiesCreated || 0}</div>
             <div class="muted" style="font-size:0.85em">entreprises créées</div>
           </div>
+          ${result.optionOffersImported > 0 ? statTile(result.optionOffersImported, 'offres sur options') : ''}
         </div>
         ${(result.warnings || []).length ? `
           <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em;color:var(--warning-fg, #3f2a00)">
@@ -10625,6 +9943,7 @@ function bindSmartImport() {
             <div style="font-size:2em;font-weight:700">${result.totalItems || 0}</div>
             <div class="muted" style="font-size:0.85em">articles DPGF</div>
           </div>
+          ${result.optionOffersImported > 0 ? statTile(result.optionOffersImported, 'offres sur options') : ''}
         </div>
         ${(result.warnings || []).length ? `
           <div style="margin-top:16px;padding:12px;background:var(--warning-bg, #fef3c7);border:1px solid var(--warning, #f59e0b);border-radius:8px;text-align:left;font-size:0.85em;color:var(--warning-fg, #3f2a00)">

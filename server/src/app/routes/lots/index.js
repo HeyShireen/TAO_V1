@@ -1065,7 +1065,7 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
     if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
 
-    const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId, importOperation } = JSON.parse(req.body.params || '{}');
+    const { mode, sheetName, headerRow, mapping, excludedRows, roundId, companyId, companyName, fileId, importOperation, detectOptions } = JSON.parse(req.body.params || '{}');
     if (!mode) return res.status(400).json({ error: 'Mode requis (dpgf ou offer)' });
     if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
 
@@ -1106,6 +1106,7 @@ router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.s
       mapping,
       excludedRows: excludedRows || [],
       importOperation,
+      detectOptions: detectOptions !== false,
     });
 
     if (String(mode) === 'offer') {

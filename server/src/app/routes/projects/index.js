@@ -372,7 +372,7 @@ router.post('/:id/import-dpgf', isResponsableOrAdmin, uploadDpgf.single('file'),
     if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
     if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
 
-    const { lotName, lotCode, mapping, headerRow, sheetName, excludedRows } = JSON.parse(req.body.params || '{}');
+    const { lotName, lotCode, mapping, headerRow, sheetName, excludedRows, detectOptions } = JSON.parse(req.body.params || '{}');
     if (!lotName || !String(lotName).trim()) return res.status(400).json({ error: 'Nom du lot requis' });
     if (!mapping) return res.status(400).json({ error: 'Mapping requis' });
 
@@ -401,9 +401,18 @@ router.post('/:id/import-dpgf', isResponsableOrAdmin, uploadDpgf.single('file'),
       headerRow: isPdf ? 1 : (Number(headerRow) || 1),
       mapping,
       excludedRows: excludedRows || [],
+      detectOptions: detectOptions !== false,
     });
 
-    res.json({ lot, itemsImported: result.itemsImported || 0, itemsUpdated: result.itemsUpdated || 0 });
+    res.json({
+      lot,
+      itemsImported: result.itemsImported || 0,
+      itemsUpdated: result.itemsUpdated || 0,
+      optionsCreated: result.optionsCreated || 0,
+      optionsUpdated: result.optionsUpdated || 0,
+      optionItemsImported: result.optionItemsImported || 0,
+      warnings: result.warnings || [],
+    });
   } catch (e) {
     console.error('Import DPGF create lot error:', e);
     res.status(400).json({ error: e.message });

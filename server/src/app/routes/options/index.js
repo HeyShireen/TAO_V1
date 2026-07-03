@@ -1,9 +1,10 @@
-// server/src/routes/options.js
+// Routes options : mini-lots cochables (options, option_items, option_item_moe, option_item_offers)
 import express from 'express';
 import { query, pool } from '../../db.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
+import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
+import { parseNumber } from '../../importers/import-utils.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -29,22 +30,19 @@ async function getLotIdForOptionItem(itemId) {
   return result.rows[0]?.lot_id || null;
 }
 
-function parseGridNumber(value) {
-  if (value == null || value === '') return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  let s = String(value).trim();
-  if (!s) return null;
-  s = s.replace(/[â‚¬$Â£Â¥â‚¹]/g, '').replace(/[\u00A0\u202F\u2009\s]/g, '');
-  const lastComma = s.lastIndexOf(',');
-  const lastDot = s.lastIndexOf('.');
-  if (lastComma > -1 || lastDot > -1) {
-    const last = Math.max(lastComma, lastDot);
-    const decSep = s[last];
-    s = s.replace(/[.,]/g, (m, idx) => (idx === last ? m : '')).replace(decSep, '.');
+// Helper: Vérifier l'accès en écriture au lot ; renvoie le project_id ou null
+async function assertCanEditLot(req, res, lotId) {
+  const projectId = await getProjectIdForLot(lotId);
+  if (!projectId) {
+    res.status(404).json({ error: 'Lot introuvable' });
+    return null;
   }
-  s = s.replace(/[^0-9.\-]/g, '');
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+  const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
+  if (!canEdit) {
+    res.status(403).json({ error: 'Accès refusé' });
+    return null;
+  }
+  return projectId;
 }
 
 // Récupérer les options d'un lot avec leurs items et offres
@@ -76,55 +74,50 @@ router.get('/lot/:lotId', async (req, res) => {
     }
 
     const options = optionsRes.rows;
-    
+
     // Pour chaque option, récupérer ses items et offres
     const enriched = [];
     for (const opt of options) {
-      try {
-        const itemsRes = await query(
-          `SELECT oi.id, oi.num, oi.designation, oi.unit,
-                  oim.qty as moe_qty, oim.unit_price as moe_unit_price
-           FROM option_items oi
-           LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
-           WHERE oi.option_id = $1
-           ORDER BY oi.num ASC, oi.id ASC`,
-          [opt.id]
-        );
+      const itemsRes = await query(
+        `SELECT oi.id, oi.num, oi.designation, oi.unit,
+                oim.qty as moe_qty, oim.unit_price as moe_unit_price
+         FROM option_items oi
+         LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
+         WHERE oi.option_id = $1
+         ORDER BY oi.num ASC, oi.id ASC`,
+        [opt.id]
+      );
 
-        // Pour chaque item, récupérer ses offres
-        const itemsWithOffers = [];
-        for (const item of itemsRes.rows) {
-          const offersRes = roundId
-            ? await query(
-              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
-               FROM option_item_offers oio
-               WHERE oio.option_item_id = $1 AND oio.round_id = $2
-                 ${isEntreprise && userCompanyId ? 'AND oio.company_id = $3' : ''}`,
-              isEntreprise && userCompanyId ? [item.id, Number(roundId), userCompanyId] : [item.id, Number(roundId)]
-            )
-            : await query(
-              `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
-               FROM option_item_offers oio
-               WHERE oio.option_item_id = $1
-                 ${isEntreprise && userCompanyId ? 'AND oio.company_id = $2' : ''}`,
-              isEntreprise && userCompanyId ? [item.id, userCompanyId] : [item.id]
-            );
-          itemsWithOffers.push({
-            ...item,
-            moe_qty: isEntreprise ? null : item.moe_qty,
-            moe_unit_price: isEntreprise ? null : item.moe_unit_price,
-            offers: offersRes.rows
-          });
-        }
-
-        enriched.push({
-          ...opt,
-          items: itemsWithOffers
+      // Pour chaque item, récupérer ses offres
+      const itemsWithOffers = [];
+      for (const item of itemsRes.rows) {
+        const offersRes = roundId
+          ? await query(
+            `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
+             FROM option_item_offers oio
+             WHERE oio.option_item_id = $1 AND oio.round_id = $2
+               ${isEntreprise && userCompanyId ? 'AND oio.company_id = $3' : ''}`,
+            isEntreprise && userCompanyId ? [item.id, Number(roundId), userCompanyId] : [item.id, Number(roundId)]
+          )
+          : await query(
+            `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
+             FROM option_item_offers oio
+             WHERE oio.option_item_id = $1
+               ${isEntreprise && userCompanyId ? 'AND oio.company_id = $2' : ''}`,
+            isEntreprise && userCompanyId ? [item.id, userCompanyId] : [item.id]
+          );
+        itemsWithOffers.push({
+          ...item,
+          moe_qty: isEntreprise ? null : item.moe_qty,
+          moe_unit_price: isEntreprise ? null : item.moe_unit_price,
+          offers: offersRes.rows
         });
-      } catch (err) {
-        console.error(`Erreur en chargeant l'option ${opt.id}:`, err.message);
-        throw err;
       }
+
+      enriched.push({
+        ...opt,
+        items: itemsWithOffers
+      });
     }
 
     res.json(enriched);
@@ -140,11 +133,7 @@ router.post('/lot/:lotId', isResponsableOrAdmin, async (req, res) => {
     const { lotId } = req.params;
     const { round_id, designation } = req.body;
 
-    // SÉCURITÉ: Vérifier accès en écriture
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!(await assertCanEditLot(req, res, lotId))) return;
 
     const cleanDesignation = designation ? String(designation).trim() : '';
 
@@ -180,23 +169,19 @@ router.post('/lot/:lotId', isResponsableOrAdmin, async (req, res) => {
   }
 });
 
-// Mettre à jour une option
+// Renommer une option
 router.put('/:optionId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { optionId } = req.params;
     const { designation } = req.body;
 
-    // SÉCURITÉ: Vérifier accès en écriture
     const lotId = await getLotIdForOption(optionId);
     if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!(await assertCanEditLot(req, res, lotId))) return;
 
     const cleanDesignation = designation ? String(designation).trim() : '';
     if (!cleanDesignation) {
-      return res.status(400).json({ error: 'DÃ©signation requise' });
+      return res.status(400).json({ error: 'Désignation requise' });
     }
 
     const result = await query(
@@ -218,18 +203,14 @@ router.put('/:optionId', isResponsableOrAdmin, async (req, res) => {
   }
 });
 
-// Supprimer une option
+// Supprimer une option (et ses items/MOE/offres en cascade)
 router.delete('/:optionId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { optionId } = req.params;
 
-    // SÉCURITÉ: Vérifier accès en écriture
     const lotId = await getLotIdForOption(optionId);
     if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!(await assertCanEditLot(req, res, lotId))) return;
 
     await query('DELETE FROM options WHERE id = $1', [optionId]);
     res.json({ ok: true });
@@ -239,111 +220,14 @@ router.delete('/:optionId', isResponsableOrAdmin, async (req, res) => {
   }
 });
 
-// ===== Items dans une option =====
-
-// Créer un item dans une option
-router.post('/:optionId/items', isResponsableOrAdmin, async (req, res) => {
-  try {
-    const { optionId } = req.params;
-    const { num, designation, unit, moe_qty, moe_unit_price } = req.body;
-
-    // SÉCURITÉ: Vérifier accès en écriture
-    const lotId = await getLotIdForOption(optionId);
-    if (!lotId) return res.status(404).json({ error: 'Option introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
-
-    const itemRes = await query(
-      `INSERT INTO option_items (option_id, num, designation, unit)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [optionId, num, designation, unit]
-    );
-
-    const itemId = itemRes.rows[0].id;
-
-    // Ajouter la MOE si fournie
-    if (moe_qty != null && moe_unit_price != null) {
-      await query(
-        `INSERT INTO option_item_moe (option_item_id, qty, unit_price)
-         VALUES ($1, $2, $3)`,
-        [itemId, moe_qty, moe_unit_price]
-      );
-    }
-
-    res.json({ ...itemRes.rows[0], moe_qty, moe_unit_price, offers: [] });
-  } catch (err) {
-    console.error('Erreur création item option:', err);
-    res.status(500).json({ error: 'Impossible de créer l\'item' });
-  }
-});
-
-// Mettre à jour un item d'option
-router.put('/items/:itemId', isResponsableOrAdmin, async (req, res) => {
-  try {
-    const { itemId } = req.params;
-    const { num, designation, unit, moe_qty, moe_unit_price } = req.body;
-
-    // SÉCURITÉ: Vérifier accès en écriture
-    const lotId = await getLotIdForOptionItem(itemId);
-    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
-
-    const itemRes = await query(
-      `UPDATE option_items
-       SET num = $1, designation = $2, unit = $3
-       WHERE id = $4
-       RETURNING *`,
-      [num, designation, unit, itemId]
-    );
-
-    if (itemRes.rowCount === 0) {
-      return res.status(404).json({ error: 'Item introuvable' });
-    }
-
-    // Mettre à jour ou créer la MOE
-    if (moe_qty != null && moe_unit_price != null) {
-      const moeRes = await query(
-        'SELECT id FROM option_item_moe WHERE option_item_id = $1',
-        [itemId]
-      );
-      if (moeRes.rowCount > 0) {
-        await query(
-          `UPDATE option_item_moe SET qty = $1, unit_price = $2 WHERE option_item_id = $3`,
-          [moe_qty, moe_unit_price, itemId]
-        );
-      } else {
-        await query(
-          `INSERT INTO option_item_moe (option_item_id, qty, unit_price) VALUES ($1, $2, $3)`,
-          [itemId, moe_qty, moe_unit_price]
-        );
-      }
-    }
-
-    res.json({ ...itemRes.rows[0], moe_qty, moe_unit_price });
-  } catch (err) {
-    console.error('Erreur mise à jour item option:', err);
-    res.status(500).json({ error: 'Impossible de mettre à jour l\'item' });
-  }
-});
-
-// Supprimer un item d'option
+// Supprimer un item d'option (seule voie de suppression d'une ligne du tableur)
 router.delete('/items/:itemId', isResponsableOrAdmin, async (req, res) => {
   try {
     const { itemId } = req.params;
 
-    // SÉCURITÉ: Vérifier accès en écriture
     const lotId = await getLotIdForOptionItem(itemId);
     if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+    if (!(await assertCanEditLot(req, res, lotId))) return;
 
     await query('DELETE FROM option_items WHERE id = $1', [itemId]);
     res.json({ ok: true });
@@ -353,92 +237,19 @@ router.delete('/items/:itemId', isResponsableOrAdmin, async (req, res) => {
   }
 });
 
-// ===== Offres pour items d'option =====
-
-// Créer/mettre à jour une offre pour un item d'option
-router.post('/items/:itemId/offers', isResponsableOrAdmin, async (req, res) => {
-  try {
-    const { itemId } = req.params;
-    const { company_id, qty, unit_price, round_id } = req.body;
-
-    if (!company_id || !round_id) {
-      return res.status(400).json({ error: 'company_id et round_id requis' });
-    }
-
-    // SÉCURITÉ: Vérifier accès en écriture
-    const lotId = await getLotIdForOptionItem(itemId);
-    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
-
-    // Vérifier si l'offre existe
-    const existingRes = await query(
-      'SELECT id FROM option_item_offers WHERE option_item_id = $1 AND company_id = $2 AND round_id = $3',
-      [itemId, company_id, round_id]
-    );
-
-    let result;
-    if (existingRes.rowCount > 0) {
-      result = await query(
-        `UPDATE option_item_offers
-         SET qty = $1, unit_price = $2
-         WHERE option_item_id = $3 AND company_id = $4 AND round_id = $5
-         RETURNING *`,
-        [qty, unit_price, itemId, company_id, round_id]
-      );
-    } else {
-      result = await query(
-        `INSERT INTO option_item_offers (option_item_id, company_id, qty, unit_price, round_id)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [itemId, company_id, qty, unit_price, round_id]
-      );
-    }
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Erreur création/maj offre item option:', err);
-    res.status(500).json({ error: 'Impossible de sauvegarder l\'offre' });
-  }
-});
-
-// Supprimer une offre d'item option
-router.delete('/items/:itemId/offers/:company_id', isResponsableOrAdmin, async (req, res) => {
-  try {
-    const { itemId, company_id } = req.params;
-
-    // SÉCURITÉ: Vérifier accès en écriture
-    const lotId = await getLotIdForOptionItem(itemId);
-    if (!lotId) return res.status(404).json({ error: 'Item introuvable' });
-    const projectId = await getProjectIdForLot(lotId);
-    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-    if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
-
-    await query(
-      'DELETE FROM option_item_offers WHERE option_item_id = $1 AND company_id = $2',
-      [itemId, company_id]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Erreur suppression offre item option:', err);
-    res.status(500).json({ error: 'Impossible de supprimer l\'offre' });
-  }
-});
-
-// ===== Sauvegarde groupée (bulk) des options =====
+// ===== Sauvegarde groupée (bulk) du tableur options =====
+// Upsert uniquement : la suppression de lignes passe exclusivement par
+// DELETE /options/items/:id. (L'ancienne purge des items absents du payload
+// supprimait des articles au moindre désalignement client/serveur.)
+// Chaque ligne porte un `index` client, renvoyé tel quel pour synchroniser
+// les ids des lignes nouvellement créées sans risque de décalage.
 router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
   const lotId = Number(req.params.lotId);
   const { rows, round_id } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] requis' });
   if (!round_id) return res.status(400).json({ error: 'round_id requis' });
 
-  const projectId = await getProjectIdForLot(lotId);
-  if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-  const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
-  if (!canEdit) return res.status(403).json({ error: 'Accès refusé' });
+  if (!(await assertCanEditLot(req, res, lotId))) return;
 
   const roundId = Number(round_id);
   const client = await pool.connect();
@@ -446,100 +257,79 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
     await client.query('BEGIN');
 
     const resultItems = [];
-    const affectedOptionIds = new Set();
 
     for (const r of rows) {
+      const clientIndex = Number.isFinite(Number(r.index)) ? Number(r.index) : null;
       const optionId = r.option_id ? Number(r.option_id) : null;
       let itemId = r.item_id ? Number(r.item_id) : null;
-      const num = r.num ?? '';
-      const designation = (r.designation ?? '').trim();
-      const unit = r.unit ?? '';
-      if (optionId) affectedOptionIds.add(optionId);
+      if (!optionId) continue;
 
-      // Update or insert item
+      const num = String(r.num ?? '').trim();
+      const designation = String(r.designation ?? '').trim();
+      const unit = String(r.unit ?? '').trim();
+      const moeQty = parseNumber(r.moe?.qty);
+      const moePu = parseNumber(r.moe?.pu);
+      const offerEntries = Object.entries(r.offers && typeof r.offers === 'object' ? r.offers : {});
+      const hasOfferData = offerEntries.some(([, v]) =>
+        parseNumber(v?.qty) != null || parseNumber(v?.pu) != null || String(v?.u ?? '').trim() !== ''
+      );
+
+      // Ne jamais créer d'article pour une ligne neuve entièrement vide
+      const isEmpty = !num && !designation && !unit && moeQty == null && moePu == null && !hasOfferData;
+      if (!itemId && isEmpty) continue;
+
       if (itemId) {
-        await client.query(
+        const upd = await client.query(
           `UPDATE option_items oi
-           SET num=$1, designation=$2, unit=$3
+           SET num = $1, designation = $2, unit = $3
            FROM options o
-           WHERE oi.id=$4
-             AND oi.option_id=$5
-             AND o.id=oi.option_id
-             AND o.lot_id=$6
-             AND o.round_id=$7`,
+           WHERE oi.id = $4
+             AND o.id = oi.option_id
+             AND oi.option_id = $5
+             AND o.lot_id = $6
+             AND o.round_id = $7
+           RETURNING oi.id`,
           [num, designation, unit, itemId, optionId, lotId, roundId]
         );
-      } else if (optionId) {
+        if (upd.rowCount === 0) continue; // item n'appartenant pas à ce lot/tour → ignoré
+      } else {
+        const optCheck = await client.query(
+          'SELECT id FROM options WHERE id = $1 AND lot_id = $2 AND round_id = $3',
+          [optionId, lotId, roundId]
+        );
+        if (optCheck.rowCount === 0) continue;
         const ins = await client.query(
-          'INSERT INTO option_items (option_id, num, designation, unit) VALUES ($1,$2,$3,$4) RETURNING id',
+          'INSERT INTO option_items (option_id, num, designation, unit) VALUES ($1, $2, $3, $4) RETURNING id',
           [optionId, num, designation, unit]
         );
         itemId = ins.rows[0].id;
-      } else {
-        continue;
       }
 
-      // MOE
-      let moeQty = null, moePu = null;
-      moeQty = parseGridNumber(r.moe?.qty);
-      moePu = parseGridNumber(r.moe?.pu);
-
-      const moeExists = await client.query('SELECT id FROM option_item_moe WHERE option_item_id = $1', [itemId]);
-      if (moeExists.rowCount > 0) {
-        await client.query(
-          'UPDATE option_item_moe SET qty=$1, unit_price=$2 WHERE option_item_id=$3',
-          [moeQty, moePu, itemId]
-        );
-      } else if (moeQty != null || moePu != null) {
-        await client.query(
-          'INSERT INTO option_item_moe (option_item_id, qty, unit_price) VALUES ($1,$2,$3)',
-          [itemId, moeQty, moePu]
-        );
-      }
-
-      // Offers
-      if (r.offers && typeof r.offers === 'object') {
-        for (const [cid, val] of Object.entries(r.offers)) {
-          const companyId = Number(cid);
-          let oq = null, op = null;
-          oq = parseGridNumber(val?.qty);
-          op = parseGridNumber(val?.pu);
-          const ou = val?.u != null ? String(val.u) : null;
-
-          const exists = await client.query(
-            'SELECT id FROM option_item_offers WHERE option_item_id=$1 AND company_id=$2 AND round_id=$3',
-            [itemId, companyId, roundId]
-          );
-          if (exists.rowCount > 0) {
-            await client.query(
-              'UPDATE option_item_offers SET qty=$1, unit_price=$2, unit=$3 WHERE option_item_id=$4 AND company_id=$5 AND round_id=$6',
-              [oq, op, ou, itemId, companyId, roundId]
-            );
-          } else {
-            await client.query(
-              'INSERT INTO option_item_offers (option_item_id, company_id, qty, unit_price, unit, round_id) VALUES ($1,$2,$3,$4,$5,$6)',
-              [itemId, companyId, oq, op, ou, roundId]
-            );
-          }
-        }
-      }
-
-      resultItems.push({ id: itemId, option_id: optionId });
-    }
-
-    const keptItemIds = resultItems.map((item) => item.id).filter(Boolean);
-    const affectedOptionIdsArray = Array.from(affectedOptionIds).filter(Number.isFinite);
-    if (affectedOptionIdsArray.length > 0) {
+      // MOE (une ligne par item : UNIQUE(option_item_id))
       await client.query(
-        `DELETE FROM option_items oi
-         USING options o
-         WHERE o.id = oi.option_id
-           AND o.lot_id = $1
-           AND o.round_id = $2
-           AND o.id = ANY($3::int[])
-           AND NOT (oi.id = ANY($4::bigint[]))`,
-        [lotId, roundId, affectedOptionIdsArray, keptItemIds]
+        `INSERT INTO option_item_moe (option_item_id, qty, unit_price)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (option_item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price`,
+        [itemId, moeQty, moePu]
       );
+
+      // Offres entreprises
+      for (const [cid, val] of offerEntries) {
+        const companyId = Number(cid);
+        if (!Number.isFinite(companyId)) continue;
+        const offerQty = parseNumber(val?.qty);
+        const offerPu = parseNumber(val?.pu);
+        const offerUnit = String(val?.u ?? '').trim() || null;
+        await client.query(
+          `INSERT INTO option_item_offers (option_item_id, company_id, round_id, qty, unit_price, unit)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (option_item_id, company_id, round_id) DO UPDATE
+           SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, unit = EXCLUDED.unit`,
+          [itemId, companyId, roundId, offerQty, offerPu, offerUnit]
+        );
+      }
+
+      resultItems.push({ index: clientIndex, id: itemId, option_id: optionId });
     }
 
     await client.query('COMMIT');
@@ -554,4 +344,3 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
 });
 
 export default router;
-

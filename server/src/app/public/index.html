@@ -1473,6 +1473,10 @@
             <h4 style="margin:0">Aperçu & correspondance des colonnes</h4>
             <span class="muted" style="font-size:0.82em">(<span id="import-total-rows">0</span> lignes)</span>
             <div class="spacer"></div>
+            <label for="import-detect-options" title="Les lignes des sections OPTIONS / Variantes / PSE seront importées comme options cochables au lieu d'articles" style="display:flex;align-items:center;gap:6px;font-size:0.85em;cursor:pointer;white-space:nowrap">
+              <input id="import-detect-options" type="checkbox" checked style="width:auto;margin:0" />
+              Détecter les options
+            </label>
             <button id="import-toggle-controls" type="button" class="btn ghost" title="Réduire / afficher les options" aria-expanded="false" style="padding:6px 10px;line-height:1">▾ Options</button>
             <div class="field" style="margin:0">
               <label for="import-header-row" style="font-size:0.85em">Ligne en-tête :</label>
@@ -1592,6 +1596,7 @@
     </div>
   </div>
 
+  <script src="./options-sheet.js" defer></script>
   <script src="./app.js" defer></script>
   <!-- Overlay Aide Contextuelle -->
   <div id="help-overlay" class="hidden"></div>

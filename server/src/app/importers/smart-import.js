@@ -9,10 +9,28 @@ import path from 'path';
 import { Readable } from 'stream';
 import { promisify } from 'util';
 import { query, pool } from '../db.js';
+import {
+  parseNumber,
+  extractComment,
+  isSubtotalOrTitleRow,
+  buildArticleFields,
+  splitArticleNumAndDesignation,
+  looksLikeArticleNum,
+  normalizeArticleNum,
+  normalizeDesignationForMatch,
+  compactDesignationForMatch,
+  scoreDesignationMatch,
+} from './import-utils.js';
+import {
+  splitOptionRows,
+  importOptionSectionsDpgf,
+  importOptionSectionsOffer,
+  resolveRoundIdForLot,
+} from './options-import.js';
 
 /**
  * Smart Importer — Gère l'import de fichiers Excel avec formats variés.
- * 
+ *
  * Workflow en 2 étapes :
  *   1. preview()  → Lit le fichier, détecte les colonnes, retourne un aperçu + mapping suggéré
  *   2. apply()    → Applique le mapping validé par l'utilisateur pour importer les données
@@ -20,6 +38,10 @@ import { query, pool } from '../db.js';
  * Modes :
  *   - "dpgf"     → Import de la DPGF MOE (crée les items + données MOE dans un lot)
  *   - "offer"    → Import d'une offre entreprise (matche par Num/position sur items existants)
+ *
+ * Les sections d'options (« OPTIONS », « Variantes », « PSE »…) sont détectées
+ * automatiquement (voir options-import.js) et importées dans les tables options
+ * au lieu du flux principal, sauf si detectOptions === false.
  */
 
 const normalize = (s) => (s ?? '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
@@ -36,26 +58,6 @@ const COLUMN_PATTERNS = {
 
 // Patterns courts qui ne doivent matcher qu'en mot entier (exact ou bordé par espaces)
 const WORD_BOUNDARY_PATTERNS = new Set(['pu', 'mt', 'q', 'qt', 'nb', 'no']);
-
-// Patterns pour détecter les lignes sous-total / titre de chapitre à ignorer
-const SUBTITLE_PATTERNS = [
-  /^\s*sous[\s-]*total/i,
-  /^\s*total\s/i,
-  /^\s*total$/i,
-  /^\s*s\.?\s*t\.?\s*$/i,
-  /^\s*chapitre\s/i,
-  /^\s*lot\s+\d/i,
-  /^\s*tranche\s/i,
-];
-
-function isSubtotalOrTitleRow(designation) {
-  if (!designation) return false;
-  const d = String(designation).trim();
-  // Une désignation sans quantité/prix n'est pas forcément un titre : l'entreprise
-  // peut renseigner ces valeurs plus tard lors de l'import de son offre. On ne
-  // filtre donc que les motifs explicites de sous-total / titre de chapitre.
-  return SUBTITLE_PATTERNS.some(p => p.test(d));
-}
 
 /**
  * Lit un fichier Excel et retourne un aperçu des données + suggestions de mapping.
@@ -151,7 +153,18 @@ export async function previewExcel({ buffer, sheetName, headerRow: headerRowOver
     suggestedMapping,
     previewRows,
     totalRows,
+    detectedOptionRows: detectOptionRowsForPreview(previewRows, suggestedMapping),
   };
+}
+
+/** Détection best-effort des lignes d'options pour l'aperçu (badge visuel). */
+function detectOptionRowsForPreview(previewRows, mapping) {
+  try {
+    if (!mapping || mapping.designation == null) return [];
+    return splitOptionRows({ dataRows: previewRows, mapping }).optionRowNums;
+  } catch (e) {
+    return [];
+  }
 }
 
 /**
@@ -180,6 +193,7 @@ export async function previewPdf({ buffer, headerRow }) {
     suggestedMapping,
     previewRows,
     totalRows: rows.length,
+    detectedOptionRows: detectOptionRowsForPreview(previewRows, suggestedMapping),
   };
 }
 
@@ -219,7 +233,7 @@ export async function convertPdfToExcelBuffer({ buffer, headerRow }) {
  * @param {number}  params.headerRow  - Numéro de ligne d'en-tête
  * @param {Object}  params.mapping    - { num: colIndex|colIndex[], designation: colIndex|colIndex[], unit: colIndex, qty: colIndex, unit_price: colIndex, amount: colIndex }
  */
-export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows, importOperation = 'replace' }) {
+export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows, importOperation = 'replace', detectOptions = true }) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const ws = wb.worksheets.find(s => s.name === sheetName) || wb.worksheets[0];
@@ -269,13 +283,13 @@ export async function applyImport({ buffer, mode, lotId, roundId, companyId, com
     if (hasAny) dataRows.push(obj);
   }
 
-  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation });
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation, detectOptions });
 }
 
 /**
  * Applique l'import depuis un fichier PDF.
  */
-export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows, importOperation = 'replace' }) {
+export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows, importOperation = 'replace', detectOptions = true }) {
   const { headers, rows } = await parsePdfTable({ buffer, headerRow });
 
   const excluded = new Set((excludedRows || []).map(Number));
@@ -304,32 +318,41 @@ export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, 
     if (hasAny) dataRows.push(obj);
   }
 
-  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation });
+  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation, detectOptions });
 }
 
 function normalizeImportOperation(value) {
   return value === 'update' ? 'update' : 'replace';
 }
 
-function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace' }) {
+function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
   const normalizedMapping = normalizeImportMapping(mapping);
   const operation = normalizeImportOperation(importOperation);
 
   if (dataRows.length === 0) throw new Error('Aucune donnée à importer');
 
   if (mode === 'dpgf') {
-    return importDPGF({ lotId, dataRows, mapping: normalizedMapping, importOperation: operation });
+    return importDPGF({ lotId, roundId, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions });
   }
   if (mode === 'offer') {
     if (!companyId && !companyName) throw new Error('Entreprise requise');
     if (!roundId) throw new Error('Round ID requis');
-    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping, importOperation: operation });
+    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions });
   }
   throw new Error(`Mode inconnu: ${mode}`);
 }
 
 /* =============== Import DPGF (crée items + MOE) =============== */
-async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace' }) {
+async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
+  // Extraire les sections d'options avant le flux principal
+  let itemRows = dataRows;
+  let optionSections = [];
+  if (detectOptions) {
+    const split = splitOptionRows({ dataRows, mapping });
+    itemRows = split.mainRows;
+    optionSections = split.sections;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -346,7 +369,10 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
     let itemsSkipped = 0;
     const touchedItemIds = [];
 
-    if (hasExisting) {
+    if (itemRows.length === 0) {
+      // Fichier ne contenant que des options : ne pas toucher aux items existants
+      // (le mode UPDATE supprimerait tous les items non re-importés).
+    } else if (hasExisting) {
       // UPDATE mode : matcher par Num ou position
       // IMPORTANT: ne chercher que parmi les items DPGF (source_company_id IS NULL).
       // Inclure les postes ajoutés (source_company_id IS NOT NULL) provoquerait leur
@@ -357,14 +383,14 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         [lotId]
       );
 
-      for (let i = 0; i < dataRows.length; i++) {
-        const row = dataRows[i];
+      for (let i = 0; i < itemRows.length; i++) {
+        const row = itemRows[i];
         const { num, designation } = buildArticleFields(row, mapping);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
         const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
         const mt = mapping.amount ? parseNumber(row[mapping.amount]) : null;
-        
+
         // Capturer les commentaires pour MOE (texte saisi dans les cellules de quantité, PU ou montant)
         const moeComments = [];
         if (mapping.qty && extractComment(row[mapping.qty])) moeComments.push(extractComment(row[mapping.qty]));
@@ -373,7 +399,7 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
         const moeComment = moeComments.length > 0 ? moeComments.join(' | ') : null;
 
         if (!designation && !num) continue;
-        if (isSubtotalOrTitleRow(designation, num, qty != null, pu != null)) continue;
+        if (isSubtotalOrTitleRow(designation)) continue;
 
         // Matcher par Num d'abord, puis designation. La position est seulement un
         // dernier recours pour eviter de masquer une insertion au milieu.
@@ -444,8 +470,8 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
       );
     } else {
       // INSERT mode : créer tous les items
-      for (let i = 0; i < dataRows.length; i++) {
-        const row = dataRows[i];
+      for (let i = 0; i < itemRows.length; i++) {
+        const row = itemRows[i];
         const { num, designation } = buildArticleFields(row, mapping);
         const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
         const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
@@ -479,8 +505,36 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
       await reconcileAddedItemsWithDpgf(client, lotId, touchedItemIds);
     }
 
+    // --- Import des sections d'options détectées ---
+    const warnings = [];
+    let optionsResult = { optionsCreated: 0, optionsUpdated: 0, optionItemsImported: 0 };
+    if (optionSections.length > 0) {
+      const effectiveRoundId = roundId ? Number(roundId) : await resolveRoundIdForLot(client, lotId);
+      if (effectiveRoundId) {
+        optionsResult = await importOptionSectionsDpgf(client, {
+          lotId,
+          roundId: effectiveRoundId,
+          sections: optionSections,
+        });
+      } else {
+        warnings.push(`${optionSections.length} option(s) détectée(s) mais ignorée(s) : aucun tour n'existe pour ce projet.`);
+      }
+    }
+
     await client.query('COMMIT');
-    return { ok: true, mode: 'dpgf', importOperation, itemsImported, itemsUpdated, itemsSkipped };
+    return {
+      ok: true,
+      mode: 'dpgf',
+      importOperation,
+      itemsImported,
+      itemsUpdated,
+      itemsSkipped,
+      optionsDetected: optionSections.length,
+      optionsCreated: optionsResult.optionsCreated,
+      optionsUpdated: optionsResult.optionsUpdated,
+      optionItemsImported: optionsResult.optionItemsImported,
+      warnings,
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -500,7 +554,17 @@ async function importDPGF({ lotId, dataRows, mapping, importOperation = 'replace
  *    On ne l'importe pas dans la DPGF, on le met dans un tableau à part avec du contexte.
  *    Le curseur DPGF ne bouge PAS (l'entreprise a juste inséré une ligne en plus).
  */
-async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace' }) {
+async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
+  // Extraire les sections d'options avant le matching séquentiel : sans cela,
+  // les lignes d'options finissaient en « postes ajoutés » parasites.
+  let offerRows = dataRows;
+  let optionSections = [];
+  if (detectOptions) {
+    const split = splitOptionRows({ dataRows, mapping });
+    offerRows = split.mainRows;
+    optionSections = split.sections;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -553,7 +617,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       dpgfItemsByNum.get(norm).push({ item, index });
     });
 
-    if (dpgfItems.length === 0) {
+    if (dpgfItems.length === 0 && offerRows.length > 0) {
       throw new Error('Le lot ne contient aucun article. Importez d\'abord la DPGF.');
     }
 
@@ -747,8 +811,8 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         .replace(/\{\{\s*ecart\s*\}\}/gi, formatAmountForComment(deltaAmount));
     }
 
-    for (let i = 0; i < dataRows.length; i++) {
-      const row = dataRows[i];
+    for (let i = 0; i < offerRows.length; i++) {
+      const row = offerRows[i];
       let { num, designation: importedDesignation } = buildArticleFields(row, mapping);
       const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
       const designationNum = splitArticleNumAndDesignation(importedDesignation);
@@ -1036,10 +1100,24 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       position: it.position,
     }));
 
+    // --- Import des offres sur les sections d'options détectées ---
+    let optionsResult = { optionOffersImported: 0, optionsCreated: 0, optionItemsCreated: 0 };
+    if (optionSections.length > 0 && roundId) {
+      optionsResult = await importOptionSectionsOffer(client, {
+        lotId,
+        roundId: Number(roundId),
+        companyId: resolvedCompanyId,
+        sections: optionSections,
+      });
+    }
+
     await client.query('COMMIT');
     const warnings = [];
     if (unmatchedDpgf.length > 0) {
       warnings.push(`${unmatchedDpgf.length} article(s) DPGF n'ont pas été couverts par l'offre entreprise.`);
+    }
+    if (optionsResult.optionsCreated > 0) {
+      warnings.push(`${optionsResult.optionsCreated} option(s) présente(s) dans l'offre mais absente(s) de la DPGF : créée(s) automatiquement.`);
     }
     if (amountMismatchCount > 0) {
       warnings.push(`${amountMismatchCount} ligne(s) avec incohérence montant / montant calculé : commentaire automatique ajouté.`);
@@ -1069,6 +1147,10 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       unmatchedDpgf,
       unmatchedDpgfCount: unmatchedDpgf.length,
       matchDetails: matchDetails.slice(0, 30),
+      optionsDetected: optionSections.length,
+      optionOffersImported: optionsResult.optionOffersImported,
+      optionsCreated: optionsResult.optionsCreated,
+      optionItemsCreated: optionsResult.optionItemsCreated,
       warnings,
     };
   } catch (err) {
@@ -1079,153 +1161,6 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
   }
 }
 
-/* =============== Fusion désignation multi-colonnes =============== */
-/**
- * Fusionne plusieurs colonnes de désignation avec indentation hiérarchique.
- * Chaque colonne supplémentaire ajoute 1 espace (non-sécable) d'indentation.
- * @param {Object} row - La ligne de données
- * @param {number|number[]} designationCols - Index de colonne(s)
- * @returns {string} Désignation fusionnée avec indentation
- */
-function buildDesignation(row, designationCols) {
-  if (!designationCols) return '';
-  if (!Array.isArray(designationCols)) designationCols = [designationCols];
-  if (designationCols.length === 0) return '';
-  const sorted = [...designationCols].sort((a, b) => a - b);
-  // Chercher la dernière colonne non vide (niveau le plus profond)
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const val = String(row[sorted[i]] ?? '').trim();
-    if (val) {
-      return '\u00A0'.repeat(i) + val;
-    }
-  }
-  return '';
-}
-
-function buildNum(row, numCols) {
-  if (!numCols) return null;
-  const cols = Array.isArray(numCols) ? numCols : [numCols];
-  if (cols.length === 0) return null;
-
-  const sorted = [...cols].sort((a, b) => a - b);
-  const parts = [];
-  for (const c of sorted) {
-    const v = String(row[c] ?? '').trim();
-    if (v) parts.push(v);
-  }
-  if (parts.length === 0) return null;
-  // Fusion stricte des colonnes N° article pour reconstruire une reference unique.
-  return parts.join('');
-}
-
-function buildArticleFields(row, mapping) {
-  let num = buildNum(row, mapping?.num);
-  let designation = buildDesignation(row, mapping?.designation);
-  const split = splitMixedNumDesignationColumns(row, mapping?.num);
-  if (split) {
-    num = split.num;
-    if (!designation && split.designation) designation = split.designation;
-  }
-  return { num, designation };
-}
-
-function splitMixedNumDesignationColumns(row, numCols) {
-  if (!numCols) return null;
-  const cols = (Array.isArray(numCols) ? numCols : [numCols])
-    .map(Number)
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  if (cols.length === 0) return null;
-
-  const numericParts = [];
-  const designationParts = [];
-  let hasNonNumericInNumCols = false;
-
-  cols.forEach((col, index) => {
-    const val = String(row[col] ?? '').trim();
-    if (!val) return;
-    if (looksLikeArticleNum(val)) {
-      numericParts.push(val);
-    } else {
-      hasNonNumericInNumCols = true;
-      designationParts.push({ index, val });
-    }
-  });
-
-  if (!hasNonNumericInNumCols) return null;
-  const deepestDesignation = designationParts[designationParts.length - 1];
-  return {
-    num: numericParts.length ? numericParts.join('') : null,
-    designation: deepestDesignation ? `${'\u00A0'.repeat(deepestDesignation.index)}${deepestDesignation.val}` : '',
-  };
-}
-
-function splitArticleNumAndDesignation(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-  const normalizedSpaces = raw.replace(/[\u00A0\u202F\u2009]+/g, ' ');
-  const match = normalizedSpaces.match(/^(\d+(?:[._\-\/]\d+)*(?:[._\-\/]?[a-z])?)(?:\s+(.+))?$/i);
-  if (!match) return null;
-  return {
-    num: match[1],
-    designation: (match[2] || '').trim(),
-  };
-}
-
-function looksLikeArticleNum(value) {
-  return !!splitArticleNumAndDesignation(value)?.num;
-}
-
-function normalizeArticleNum(value) {
-  if (!value) return '';
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[\s\u00A0\u202F]/g, '')
-    .replace(/[._\-/]+/g, '')
-    .replace(/^0+(?=\d)/, '')
-    .replace(/\.0+$/, '');
-}
-
-function normalizeDesignationForMatch(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/[''`]/g, "'")
-    .replace(/[-–—]/g, '-')
-    .trim();
-}
-
-function compactDesignationForMatch(value) {
-  return normalizeDesignationForMatch(value).replace(/[^a-z0-9]/g, '');
-}
-
-/**
- * Score de similarité (0-100) entre deux désignations, utilisé pour la réconciliation
- * des postes ajoutés avec les items DPGF. Même logique que designationMatch() (interne
- * à importOffer) mais disponible au niveau module.
- */
-function scoreDesignationMatchForReconcile(a, b) {
-  const na = normalizeDesignationForMatch(a);
-  const nb = normalizeDesignationForMatch(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 100;
-  // L'un est le préfixe de l'autre (entreprise a tronqué ou ajouté du texte après)
-  if (nb.startsWith(na) && na.length > nb.length * 0.6) return 90;
-  if (na.startsWith(nb) && nb.length > na.length * 0.6) return 85;
-  // Similarité Jaccard sur les mots de longueur > 2
-  const wordsA = new Set(na.split(/\s+/).filter(w => w.length > 2));
-  const wordsB = new Set(nb.split(/\s+/).filter(w => w.length > 2));
-  if (wordsA.size === 0 || wordsB.size === 0) return 0;
-  let common = 0;
-  for (const w of wordsA) if (wordsB.has(w)) common++;
-  const union = new Set([...wordsA, ...wordsB]).size;
-  return Math.round(common / union * 80);
-}
-
 function addedItemMatchesDpgf(added, dpgf) {
   // Priorité : numéro d'article si les deux en ont un
   const addedNum = normalizeArticleNum(added.num);
@@ -1233,7 +1168,7 @@ function addedItemMatchesDpgf(added, dpgf) {
   if (addedNum && dpgfNum) return addedNum === dpgfNum;
 
   // Sinon : score ≥ 70 — tolère les désignations tronquées ou avec texte supplémentaire
-  return scoreDesignationMatchForReconcile(added.designation, dpgf.designation) >= 70;
+  return scoreDesignationMatch(added.designation, dpgf.designation) >= 70;
 }
 
 async function moveAddedItemOffersToDpgf(client, { addedItemId, dpgfItemId }) {
@@ -1350,54 +1285,6 @@ function cellToValue(cell) {
     return text != null ? text : null;
   }
   return v;
-}
-
-function parseNumber(val) {
-  if (val == null || val === '') return null;
-  if (typeof val === 'number') return isFinite(val) ? val : null;
-  // Gestion des formats français : "1 234,56" → 1234.56
-  let s = String(val).trim();
-  if (s === '') return null;
-  // Style (123) => -123
-  if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
-  // Supprimer symboles courants et espaces (séparateur milliers)
-  s = s.replace(/[€$£¥₹%]/g, '');
-  s = s.replace(/[\u00A0\u202F\u2009\s]/g, '');
-  // Retirer tout ce qui n'est pas chiffre, séparateur décimal ou signe
-  s = s.replace(/[^0-9,\.\-]/g, '');
-  // Si après nettoyage il ne reste rien (ou juste un signe), pas de nombre
-  if (s === '' || s === '-' || s === '.' || s === ',') return null;
-  // Garder un seul signe moins en tête
-  if (s.indexOf('-') > 0) s = s.replace(/(?!^)-/g, '');
-  // Si virgule et pas de point → format français
-  if (s.includes(',') && !s.includes('.')) {
-    s = s.replace(',', '.');
-  }
-  // Si point et virgule → format "1.234,56"
-  else if (s.includes('.') && s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.');
-  }
-  let n = Number(s);
-  if (isFinite(n)) return n;
-
-  // Fallback: extraire le premier nombre lisible (ex: "61.1.0" -> 61.1)
-  const m = s.match(/-?\d+(?:[\.,]\d+)?/);
-  if (!m) return null;
-  const token = m[0].replace(',', '.');
-  n = Number(token);
-  return isFinite(n) ? n : null;
-}
-
-/** Extrait le commentaire d'une valeur (texte qui n'est pas un nombre) */
-function extractComment(val) {
-  if (val == null || val === '') return null;
-  const str = String(val).trim();
-  if (str === '') return null;
-  // Si c'est un nombre valide, pas de commentaire
-  const n = parseNumber(val);
-  if (n !== null) return null;
-  // Sinon, retourner le texte comme commentaire
-  return str;
 }
 
 function autoDetectMapping(headers) {
