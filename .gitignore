@@ -13,3 +13,6 @@
 /docs/**/*.odt
 ~$*.doc
 ~$*.docx
+
+# Documents de formation (captures d'ecran, GIF, manifeste...)
+/docs/formation_aolink/
