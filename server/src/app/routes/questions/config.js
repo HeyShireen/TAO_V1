@@ -161,15 +161,19 @@ function escapeExcelFormatText(value) {
   return String(value || '').replace(/"/g, '""');
 }
 
-function questionValueNumberFormat(questionType, unit) {
+function questionQuantityNumberFormat(unit) {
   const normalizedUnit = normalizeExportUnit(unit);
-  const suffix = (() => {
-    if (String(questionType || '').startsWith('qty_')) return normalizedUnit;
-    if (String(questionType || '').startsWith('price_')) return normalizedUnit ? `€/${normalizedUnit}` : '€';
-    if (String(questionType || '').startsWith('amount_') || questionType === 'unit_mismatch') return '€';
-    return normalizedUnit;
-  })();
-  return suffix ? `#,##0.00 "${escapeExcelFormatText(suffix)}"` : '#,##0.00';
+  return normalizedUnit ? `#,##0.00 "${escapeExcelFormatText(normalizedUnit)}"` : '#,##0.00';
+}
+
+function questionUnitPriceNumberFormat(unit) {
+  const normalizedUnit = normalizeExportUnit(unit);
+  const suffix = normalizedUnit ? `\u20ac/${normalizedUnit}` : '\u20ac';
+  return `#,##0.00 "${escapeExcelFormatText(suffix)}"`;
+}
+
+function questionAmountNumberFormat() {
+  return '#,##0.00 "\u20ac"';
 }
 
 function questionExportResponse(question) {
@@ -181,7 +185,10 @@ const QUESTION_DEVIATION_EXPORT_STYLES = {
   very_low: { fg: 'FF0D6EFD', bg: 'FFDBE9FF', bold: true },
   low: { fg: 'FF0DCAF0', bg: 'FFDBF7FD', bold: true },
   high: { fg: 'FFFD7E14', bg: 'FFFFECDC', bold: true },
-  very_high: { fg: 'FFDC3545', bg: 'FFFAE1E3', bold: true }
+  very_high: { fg: 'FFDC3545', bg: 'FFFAE1E3', bold: true },
+  unanswered: { fg: 'FF000000', bg: 'FFFFF3CD', bold: true },
+  unit_mismatch: { fg: 'FF000000', bg: 'FFFFE3A8', bold: true },
+  amount_mismatch: { fg: 'FF000000', bg: 'FFE6DAF5', bold: true }
 };
 
 function getQuestionDeviationStyle(questionType) {
@@ -190,8 +197,7 @@ function getQuestionDeviationStyle(questionType) {
   return level ? QUESTION_DEVIATION_EXPORT_STYLES[level] : null;
 }
 
-function applyQuestionDeviationExportStyle(cell, questionType) {
-  const style = getQuestionDeviationStyle(questionType);
+function applyQuestionExportStyle(cell, style) {
   if (!style) return;
   cell.fill = {
     type: 'pattern',
@@ -210,6 +216,14 @@ function applyQuestionDeviationExportStyle(cell, questionType) {
     right: existingBorder.right || { style: 'thin', color: { argb: 'FFD3D3D3' } },
     left: { style: 'medium', color: { argb: style.fg } }
   };
+}
+
+function applyQuestionDeviationExportStyle(cell, questionType) {
+  applyQuestionExportStyle(cell, getQuestionDeviationStyle(questionType));
+}
+
+function applyQuestionSpecialExportStyle(cell, styleKey) {
+  applyQuestionExportStyle(cell, QUESTION_DEVIATION_EXPORT_STYLES[styleKey]);
 }
 
 function normalizeUnitLabel(value) {
@@ -1883,6 +1897,19 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           THEN COALESCE(o.designation || ' — ' || oi.designation, oi.designation)
           ELSE i.designation END AS designation,
         COALESCE(i.unit, oi.unit) AS unit,
+        COALESCE(NULLIF(ofr.unit, ''), NULLIF(oio.unit, ''), i.unit, oi.unit) AS offer_unit,
+        COALESCE(ofr.qty, oio.qty, CASE WHEN gq.question_type LIKE 'qty_%' THEN gq.offer_value END) AS offer_qty,
+        COALESCE(ofr.unit_price, oio.unit_price, CASE WHEN gq.question_type LIKE 'price_%' THEN gq.offer_value END) AS offer_unit_price,
+        COALESCE(
+          ofr.amount,
+          CASE WHEN oio.qty IS NOT NULL AND oio.unit_price IS NOT NULL THEN oio.qty * oio.unit_price END,
+          CASE WHEN ofr.qty IS NOT NULL AND ofr.unit_price IS NOT NULL THEN ofr.qty * ofr.unit_price END,
+          CASE
+            WHEN gq.question_type LIKE 'amount_%'
+              OR gq.question_type IN ('unit_mismatch', 'offer_amount_mismatch')
+            THEN gq.offer_value
+          END
+        ) AS offer_amount,
         (gq.option_item_id IS NOT NULL) AS is_option,
         COALESCE(NULLIF(pi.num, ''), ctx.num) AS parent_num,
         CASE WHEN NULLIF(pi.num, '') IS NOT NULL THEN pi.designation
@@ -1904,6 +1931,12 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       ) ctx ON NULLIF(i.num, '') IS NULL
       LEFT JOIN option_items oi ON oi.id = gq.option_item_id
       LEFT JOIN options o ON o.id = oi.option_id
+      LEFT JOIN offers ofr ON ofr.item_id = gq.item_id
+        AND ofr.company_id = gq.company_id
+        AND ofr.round_id = gq.round_id
+      LEFT JOIN option_item_offers oio ON oio.option_item_id = gq.option_item_id
+        AND oio.company_id = gq.company_id
+        AND oio.round_id = gq.round_id
       JOIN companies c ON c.id = gq.company_id
       LEFT JOIN lot_companies lc ON lc.lot_id = gq.lot_id AND lc.company_id = gq.company_id
       JOIN lots l ON l.id = gq.lot_id
@@ -1972,9 +2005,9 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
         { header: 'Entreprise', key: 'company', width: 20 },
         { header: 'Désignation', key: 'article', width: 45 },
         { header: 'Question', key: 'question', width: 60 },
-        { header: 'Écart (%)', key: 'deviation', width: 12 },
-        { header: 'Valeur MOE', key: 'moe_value', width: 16 },
-        { header: 'Valeur Offre', key: 'offer_value', width: 16 },
+        { header: 'Quantité', key: 'offer_qty', width: 14 },
+        { header: 'Prix unitaire', key: 'offer_unit_price', width: 16 },
+        { header: 'Montant', key: 'offer_amount', width: 16 },
         { header: 'Réponse', key: 'response', width: 45 }
       ];
       
@@ -2014,9 +2047,9 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           company: q.company_name,
           article: articleLabel,
           question: q.question_text,
-          deviation: excelNumber(q.deviation_pct),
-          moe_value: excelNumber(q.moe_value),
-          offer_value: excelNumber(q.offer_value),
+          offer_qty: excelNumber(q.offer_qty),
+          offer_unit_price: excelNumber(q.offer_unit_price),
+          offer_amount: excelNumber(q.offer_amount),
           response: questionExportResponse(q)
         });
         
@@ -2029,26 +2062,38 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
         };
         
-        // Colonne Écart (%) - Format et coloration selon la valeur
-        const deviationCell = row.getCell(4);
-        const deviationValue = excelNumber(q.deviation_pct);
-        if (deviationValue !== null) {
-          deviationCell.numFmt = '0.00"%"';
-          deviationCell.alignment = { horizontal: 'right', vertical: 'top' };
-          applyQuestionDeviationExportStyle(deviationCell, q.question_type);
+        // Colonnes offre - format numérique
+        const offerUnit = q.offer_unit || q.unit;
+        const qtyCell = row.getCell(4);
+        const unitPriceCell = row.getCell(5);
+        const amountCell = row.getCell(6);
+        if (excelNumber(q.offer_qty) !== null) {
+          qtyCell.numFmt = questionQuantityNumberFormat(offerUnit);
+          qtyCell.alignment = { horizontal: 'right', vertical: 'top' };
         }
-        
-        // Colonnes Valeur MOE et Valeur Offre - Format numérique
-        const moeCell = row.getCell(5);
-        const offerCell = row.getCell(6);
-        const valueNumFmt = questionValueNumberFormat(q.question_type, q.unit);
-        if (excelNumber(q.moe_value) !== null) {
-          moeCell.numFmt = valueNumFmt;
-          moeCell.alignment = { horizontal: 'right', vertical: 'top' };
+        if (excelNumber(q.offer_unit_price) !== null) {
+          unitPriceCell.numFmt = questionUnitPriceNumberFormat(offerUnit);
+          unitPriceCell.alignment = { horizontal: 'right', vertical: 'top' };
         }
-        if (excelNumber(q.offer_value) !== null) {
-          offerCell.numFmt = valueNumFmt;
-          offerCell.alignment = { horizontal: 'right', vertical: 'top' };
+        if (excelNumber(q.offer_amount) !== null) {
+          amountCell.numFmt = questionAmountNumberFormat();
+          amountCell.alignment = { horizontal: 'right', vertical: 'top' };
+        }
+
+        const questionType = String(q.question_type || '');
+        if (questionType.startsWith('qty_')) {
+          applyQuestionDeviationExportStyle(qtyCell, q.question_type);
+        } else if (questionType.startsWith('price_')) {
+          applyQuestionDeviationExportStyle(unitPriceCell, q.question_type);
+        } else if (questionType.startsWith('amount_')) {
+          applyQuestionDeviationExportStyle(amountCell, q.question_type);
+        } else if (questionType === 'offer_amount_mismatch') {
+          applyQuestionSpecialExportStyle(amountCell, 'amount_mismatch');
+        } else if (questionType === 'unit_mismatch') {
+          applyQuestionSpecialExportStyle(qtyCell, 'unit_mismatch');
+          applyQuestionSpecialExportStyle(unitPriceCell, 'unit_mismatch');
+        } else if (questionType === 'unanswered') {
+          [qtyCell, unitPriceCell, amountCell].forEach(cell => applyQuestionSpecialExportStyle(cell, 'unanswered'));
         }
       });
       
