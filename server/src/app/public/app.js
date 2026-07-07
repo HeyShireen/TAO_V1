@@ -6215,27 +6215,117 @@ function parseQuestionTextareaMetadata(textarea) {
   }
 }
 
-function detectDismissedQuestionIds(originalQuestions, currentText) {
-  if (originalQuestions.length <= 1) return [];
-  const currentLines = parseQuestionTextareaLines(currentText);
-  if (currentLines.length === 0 || currentLines.length >= originalQuestions.length) return [];
+// Synchronise une cellule multi-questions ligne à ligne avec le serveur :
+// - ligne identique à une question existante → rien
+// - ligne modifiée → PUT sur la question appariée (dans l'ordre)
+// - question sans ligne correspondante → DELETE (dismissed)
+// - ligne sans question correspondante → POST question manuelle
+// Sans cela, tout le contenu du textarea serait écrit dans la première
+// question et les questions retirées réapparaîtraient au rechargement.
+async function syncQuestionCellLines({ textarea, change }) {
+  const originals = parseQuestionTextareaMetadata(textarea);
+  const currentLines = parseQuestionTextareaLines(textarea.value);
+  const companyIdRaw = change.companyId || textarea.dataset.companyId || qs('#questions-target-company')?.value || '';
+  const companyId = Number(companyIdRaw) || null;
 
+  // 1) Lignes inchangées : correspondance exacte (insensible casse/espaces)
   const usedLineIndexes = new Set();
-  const dismissedIds = [];
-
-  for (const original of originalQuestions) {
-    const originalText = normalizeQuestionLine(original.text);
+  const idByLineIndex = new Map();
+  const unmatchedOriginals = [];
+  for (const original of originals) {
+    const normalized = normalizeQuestionLine(original.text);
     const matchIndex = currentLines.findIndex((line, index) =>
-      !usedLineIndexes.has(index) && normalizeQuestionLine(line) === originalText
+      !usedLineIndexes.has(index) && normalizeQuestionLine(line) === normalized
     );
     if (matchIndex >= 0) {
       usedLineIndexes.add(matchIndex);
+      idByLineIndex.set(matchIndex, original.id);
     } else {
-      dismissedIds.push(original.id);
+      unmatchedOriginals.push(original);
     }
   }
 
-  return dismissedIds;
+  // 2) Lignes éditées : appariement dans l'ordre entre questions et lignes restantes
+  const freeLineIndexes = currentLines.map((_, index) => index).filter(index => !usedLineIndexes.has(index));
+  const updates = [];
+  while (unmatchedOriginals.length > 0 && freeLineIndexes.length > 0) {
+    const original = unmatchedOriginals.shift();
+    const lineIndex = freeLineIndexes.shift();
+    updates.push({ id: original.id, text: currentLines[lineIndex] });
+    idByLineIndex.set(lineIndex, original.id);
+  }
+
+  // 3) Questions restantes = lignes supprimées ; lignes restantes = ajouts
+  const dismissIds = unmatchedOriginals.map(original => original.id);
+  if (freeLineIndexes.length > 0 && !companyId) {
+    // Impossible de créer une nouvelle ligne sans entreprise ciblée
+    return { ok: false };
+  }
+
+  await Promise.all([
+    ...updates.map(update => api(`/question-config/question/${update.id}`, {
+      method: 'PUT',
+      body: { question_text: update.text },
+      showLoader: false
+    })),
+    ...dismissIds.map(id => api(`/question-config/question/${id}`, {
+      method: 'DELETE',
+      showLoader: false
+    }))
+  ]);
+
+  const safeItemId = Number(change.itemId);
+  const itemRef = safeItemId < 0 ? { option_item_id: Math.abs(safeItemId) } : { item_id: safeItemId };
+  for (const lineIndex of freeLineIndexes) {
+    const created = await api('/question-config/question', {
+      method: 'POST',
+      body: {
+        lot_id: currentLot.id,
+        round_id: currentRound.id,
+        ...itemRef,
+        company_id: companyId,
+        question_text: currentLines[lineIndex],
+        question_type: 'manual',
+        status: 'pending'
+      },
+      showLoader: false
+    });
+    if (created?.id) idByLineIndex.set(lineIndex, Number(created.id));
+  }
+
+  const questions = currentLines
+    .map((text, index) => ({ id: idByLineIndex.get(index) || null, text }))
+    .filter(question => question.id);
+  return { ok: true, questions };
+}
+
+// Met à jour les datasets/boutons d'une cellule après synchronisation des questions
+function applyQuestionCellQuestionsMetadata({ textarea, itemId, companyId = '', saveKey = '', questions }) {
+  textarea.dataset.questionIds = encodeURIComponent(JSON.stringify(questions.map(q => q.id)));
+  textarea.dataset.questionLines = encodeURIComponent(JSON.stringify(questions.map(q => q.text)));
+
+  const newPrimaryId = questions[0]?.id || '';
+  textarea.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
+  const cell = textarea.closest('td');
+  const cellValidateBtn = cell?.querySelector('.btn-validate-editor-question');
+  const cellDeleteBtn = cell?.querySelector('.btn-delete-editor-question');
+  if (newPrimaryId) {
+    if (cellValidateBtn) cellValidateBtn.dataset.questionId = String(newPrimaryId);
+    if (cellDeleteBtn) cellDeleteBtn.dataset.questionId = String(newPrimaryId);
+  }
+  const row = qs(`#questions-editor-body tr[data-item-id="${itemId}"]`);
+  if (row) {
+    row.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
+    const validateBtn = row.querySelector('.btn-validate-editor-question');
+    const deleteBtn = row.querySelector('.btn-delete-editor-question');
+    if (newPrimaryId) {
+      if (validateBtn) validateBtn.dataset.questionId = String(newPrimaryId);
+      if (deleteBtn) deleteBtn.dataset.questionId = String(newPrimaryId);
+    }
+  }
+  if (!newPrimaryId) {
+    resetQuestionEditorActionsForCell({ row, textarea, itemId, companyId, saveKey });
+  }
 }
 
 function bindQuestionsEditorEvents() {
@@ -6276,24 +6366,10 @@ function bindQuestionsEditorEvents() {
       }
 
       const originalQuestions = parseQuestionTextareaMetadata(textarea);
-      const dismissQuestionIds = detectDismissedQuestionIds(originalQuestions, questionText);
-      if (dismissQuestionIds.length > 0) {
-        statusIndicator.style.display = 'block';
-        statusIndicator.innerHTML = icon('clock', 'icon-only');
-        statusIndicator.style.color = 'var(--muted)';
-        markQuestionAsChanged({
-          itemId: String(itemId),
-          companyId: companyIdFromCell ? Number(companyIdFromCell) : null,
-          saveKey,
-          questionId: questionId ? Number(questionId) : null,
-          dismissQuestionIds,
-          questionText,
-        });
-        return;
-      }
-
       const companyId = companyIdFromCell || qs('#questions-target-company')?.value;
-      if (!companyId) {
+      // Une cellule multi-questions se synchronise ligne à ligne à la sauvegarde :
+      // l'entreprise n'est requise que pour créer une nouvelle ligne.
+      if (!companyId && originalQuestions.length <= 1) {
         showCompanySelectModal(itemId, questionId, questionText);
         statusIndicator.style.display = 'block';
         statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
@@ -6309,7 +6385,7 @@ function bindQuestionsEditorEvents() {
         itemId: String(itemId),
         saveKey,
         questionId: questionId ? Number(questionId) : null,
-        companyId: Number(companyId),
+        companyId: companyId ? Number(companyId) : null,
         questionText,
       });
     });
@@ -6503,67 +6579,6 @@ async function runQuestionsAutoSaveBatch() {
       }
 
       const questionId = textarea.dataset.questionId ? Number(textarea.dataset.questionId) : null;
-      const dismissQuestionIds = Array.isArray(change.dismissQuestionIds)
-        ? change.dismissQuestionIds.map(Number).filter(Number.isFinite)
-        : [];
-      if (dismissQuestionIds.length > 0) {
-        try {
-          await Promise.all(dismissQuestionIds.map(id => api(`/question-config/question/${id}`, {
-            method: 'DELETE',
-            showLoader: false
-          })));
-
-          if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
-
-          const remainingQuestions = parseQuestionTextareaMetadata(textarea)
-            .filter(question => !dismissQuestionIds.includes(Number(question.id)));
-          textarea.dataset.questionIds = encodeURIComponent(JSON.stringify(remainingQuestions.map(q => q.id)));
-          textarea.dataset.questionLines = encodeURIComponent(JSON.stringify(remainingQuestions.map(q => q.text)));
-
-          const newPrimaryId = remainingQuestions[0]?.id || '';
-          textarea.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
-          const cell = textarea.closest('td');
-          const cellValidateBtn = cell?.querySelector('.btn-validate-editor-question');
-          const cellDeleteBtn = cell?.querySelector('.btn-delete-editor-question');
-          if (newPrimaryId) {
-            if (cellValidateBtn) cellValidateBtn.dataset.questionId = String(newPrimaryId);
-            if (cellDeleteBtn) cellDeleteBtn.dataset.questionId = String(newPrimaryId);
-          }
-          const row = qs(`#questions-editor-body tr[data-item-id="${change.itemId}"]`);
-          if (row) {
-            row.dataset.questionId = newPrimaryId ? String(newPrimaryId) : '';
-            const validateBtn = row.querySelector('.btn-validate-editor-question');
-            const deleteBtn = row.querySelector('.btn-delete-editor-question');
-            if (newPrimaryId) {
-              if (validateBtn) validateBtn.dataset.questionId = String(newPrimaryId);
-              if (deleteBtn) deleteBtn.dataset.questionId = String(newPrimaryId);
-            }
-          }
-          if (!newPrimaryId) {
-            resetQuestionEditorActionsForCell({
-              row,
-              textarea,
-              itemId: change.itemId,
-              companyId: change.companyId || textarea.dataset.companyId || '',
-              saveKey: key
-            });
-          }
-
-          statusIndicator.style.display = 'block';
-          statusIndicator.innerHTML = icon('check', 'icon-only');
-          statusIndicator.style.color = 'var(--success)';
-          setTimeout(() => {
-            statusIndicator.style.display = 'none';
-          }, 1200);
-          return true;
-        } catch (err) {
-          console.error('Erreur suppression question retiree:', err);
-          statusIndicator.style.display = 'block';
-          statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
-          statusIndicator.style.color = 'var(--copper)';
-          return false;
-        }
-      }
 
       if (change.deleteQuestion) {
         const deleteCompanyId = change.companyId || textarea.dataset.companyId || qs('#questions-target-company')?.value || '';
@@ -6612,6 +6627,42 @@ async function runQuestionsAutoSaveBatch() {
         }
         statusIndicator.style.display = 'none';
         return false;
+      }
+
+      // Cellule multi-questions : synchronisation ligne à ligne, jamais
+      // d'écrasement de la première question avec tout le contenu du textarea.
+      const originalQuestions = parseQuestionTextareaMetadata(textarea);
+      if (originalQuestions.length > 1) {
+        try {
+          const syncResult = await syncQuestionCellLines({ textarea, change });
+          if (!syncResult.ok) {
+            statusIndicator.style.display = 'block';
+            statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+            statusIndicator.style.color = 'var(--copper)';
+            return false;
+          }
+          if (pendingQuestionSaves.get(key) === change) pendingQuestionSaves.delete(key);
+          applyQuestionCellQuestionsMetadata({
+            textarea,
+            itemId: change.itemId,
+            companyId: change.companyId || textarea.dataset.companyId || '',
+            saveKey: key,
+            questions: syncResult.questions
+          });
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('check', 'icon-only');
+          statusIndicator.style.color = 'var(--success)';
+          setTimeout(() => {
+            statusIndicator.style.display = 'none';
+          }, 1200);
+          return true;
+        } catch (err) {
+          console.error('Erreur synchronisation cellule questions:', err);
+          statusIndicator.style.display = 'block';
+          statusIndicator.innerHTML = icon('alert-triangle', 'icon-only');
+          statusIndicator.style.color = 'var(--copper)';
+          return false;
+        }
       }
 
       const companyId = String(change.companyId || textarea.dataset.companyId || qs('#questions-target-company')?.value || '');
