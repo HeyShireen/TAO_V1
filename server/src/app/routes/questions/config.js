@@ -1884,14 +1884,24 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           ELSE i.designation END AS designation,
         COALESCE(i.unit, oi.unit) AS unit,
         (gq.option_item_id IS NOT NULL) AS is_option,
-        pi.num AS parent_num,
-        pi.designation AS parent_designation,
+        COALESCE(NULLIF(pi.num, ''), ctx.num) AS parent_num,
+        CASE WHEN NULLIF(pi.num, '') IS NOT NULL THEN pi.designation
+             ELSE COALESCE(ctx.designation, pi.designation) END AS parent_designation,
         COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         l.name as lot_name,
         p.name as project_name
       FROM generated_questions gq
       LEFT JOIN items i ON i.id = gq.item_id
       LEFT JOIN items pi ON pi.id = i.parent_item_id
+      LEFT JOIN LATERAL (
+        SELECT i2.num, i2.designation
+        FROM items i2
+        WHERE i2.lot_id = i.lot_id
+          AND NULLIF(i2.num, '') IS NOT NULL
+          AND (COALESCE(i2.position, 2147483647), i2.id) < (COALESCE(i.position, 2147483647), i.id)
+        ORDER BY COALESCE(i2.position, 2147483647) DESC, i2.id DESC
+        LIMIT 1
+      ) ctx ON NULLIF(i.num, '') IS NULL
       LEFT JOIN option_items oi ON oi.id = gq.option_item_id
       LEFT JOIN options o ON o.id = oi.option_id
       JOIN companies c ON c.id = gq.company_id
@@ -1924,7 +1934,9 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       params.push(company_id);
     }
     
-    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, pi.num, oi.num), gq.question_type`;
+    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL),
+      COALESCE(NULLIF(i.num, ''), NULLIF(pi.num, ''), ctx.num, oi.num),
+      COALESCE(i.position, 2147483647), i.id, gq.question_type`;
 
     const result = await query(sql, params);
     const questions = result.rows;
