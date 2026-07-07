@@ -85,6 +85,7 @@ const GLOBAL_THRESHOLD_GROUPS = [
   {
     title: 'Seuils de Quantité',
     icon: 'box',
+    askKey: 'ask_questions_qty',
     fields: [
       { key: 'qty_very_low_threshold', label: 'Très Basse', color: '#0d6efd' },
       { key: 'qty_low_threshold', label: 'Basse', color: '#0dcaf0' },
@@ -95,6 +96,7 @@ const GLOBAL_THRESHOLD_GROUPS = [
   {
     title: 'Seuils de Prix Unitaire',
     icon: 'chart',
+    askKey: 'ask_questions_price',
     fields: [
       { key: 'price_very_low_threshold', label: 'Très Bas', color: '#0d6efd' },
       { key: 'price_low_threshold', label: 'Bas', color: '#0dcaf0' },
@@ -105,6 +107,7 @@ const GLOBAL_THRESHOLD_GROUPS = [
   {
     title: 'Seuils de Montant',
     icon: 'chart',
+    askKey: 'ask_questions_amount',
     fields: [
       { key: 'amount_very_low_threshold', label: 'Très Bas', color: '#0d6efd' },
       { key: 'amount_low_threshold', label: 'Bas', color: '#0dcaf0' },
@@ -131,6 +134,7 @@ const GLOBAL_SPECIAL_QUESTION_FIELDS = [
   {
     key: 'unanswered_comment',
     label: 'Réponses Oubliées',
+    askKey: 'ask_questions_unanswered',
     fieldLabel: 'Commentaire',
     icon: 'alert-triangle',
     color: '#ffc107',
@@ -149,6 +153,7 @@ const GLOBAL_SPECIAL_QUESTION_FIELDS = [
   {
     key: 'offer_amount_mismatch_comment',
     label: 'Incohérence de Montant Import',
+    askKey: 'ask_questions_offer_amount_mismatch',
     fieldLabel: 'Commentaire automatique',
     icon: 'file',
     color: '#0dcaf0',
@@ -158,6 +163,7 @@ const GLOBAL_SPECIAL_QUESTION_FIELDS = [
   {
     key: 'question_unit_mismatch',
     label: "Incohérence d'Unité",
+    askKey: 'ask_questions_unit_mismatch',
     fieldLabel: 'Question automatique',
     icon: 'alert-triangle',
     color: '#6f42c1',
@@ -166,6 +172,19 @@ const GLOBAL_SPECIAL_QUESTION_FIELDS = [
   }
 ];
 const GLOBAL_SPECIAL_QUESTION_FIELD_KEYS = GLOBAL_SPECIAL_QUESTION_FIELDS.map(field => field.key);
+const ASK_QUESTION_FIELD_KEYS = [
+  'ask_questions_qty',
+  'ask_questions_price',
+  'ask_questions_amount',
+  'ask_questions_unanswered',
+  'ask_questions_unit_mismatch',
+  'ask_questions_offer_amount_mismatch'
+];
+const askQuestionsToggleHtml = (askKey, enabled) => `
+  <label class="ask-questions-toggle" title="Décochée : ces questions ne sont plus générées et les fiches auto existantes (non éditées) sont retirées à la prochaine génération.">
+    <input type="checkbox" data-ask-field="${askKey}" ${enabled === false ? '' : 'checked'} />
+    <span>Poser ces questions</span>
+  </label>`;
 
 /* ====== Helpers DOM ====== */
 const qs  = (s) => document.querySelector(s);
@@ -3560,6 +3579,30 @@ async function autoSaveLotThresholds() {
 }
 
 /* ================= Sauvegarde auto des questions du projet ================= */
+function readAskQuestionFlagsFromLotDom() {
+  return {
+    ask_questions_qty: qs('#ask-questions-qty')?.checked ?? true,
+    ask_questions_price: qs('#ask-questions-price')?.checked ?? true,
+    ask_questions_amount: qs('#ask-questions-amount')?.checked ?? true,
+    ask_questions_unanswered: qs('#ask-questions-unanswered')?.checked ?? true,
+    ask_questions_unit_mismatch: qs('#ask-questions-unit-mismatch')?.checked ?? true,
+    ask_questions_offer_amount_mismatch: qs('#ask-questions-offer-amount-mismatch')?.checked ?? true
+  };
+}
+
+function applyAskQuestionFlagsToLotDom(config) {
+  const setAsk = (selector, value) => {
+    const el = qs(selector);
+    if (el) el.checked = value !== false;
+  };
+  setAsk('#ask-questions-qty', config.ask_questions_qty);
+  setAsk('#ask-questions-price', config.ask_questions_price);
+  setAsk('#ask-questions-amount', config.ask_questions_amount);
+  setAsk('#ask-questions-unanswered', config.ask_questions_unanswered);
+  setAsk('#ask-questions-unit-mismatch', config.ask_questions_unit_mismatch);
+  setAsk('#ask-questions-offer-amount-mismatch', config.ask_questions_offer_amount_mismatch);
+}
+
 async function autoSaveProjectQuestionConfig() {
   if (!currentProject) return;
   
@@ -3581,7 +3624,8 @@ async function autoSaveProjectQuestionConfig() {
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
-      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
+      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim(),
+      ...readAskQuestionFlagsFromLotDom()
     };
     const url = currentLot
       ? `/question-config/lot/${currentLot.id}/question-config`
@@ -3624,6 +3668,7 @@ async function loadProjectQuestionConfig(){
     if (qs('#q-unit-mismatch')) qs('#q-unit-mismatch').value = config.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?';
     unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
     unansweredConfig.color = config.unanswered_color || '#fff3cd';
+    applyAskQuestionFlagsToLotDom(config);
     attachProjectQuestionsListeners();
   } catch (err) {
     console.error('Erreur chargement config questions:', err);
@@ -3698,7 +3743,8 @@ async function saveProjectQuestionConfig(){
       unanswered_comment: (qs('#q-unanswered-comment')?.value || '').trim(),
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
-      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim()
+      question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim(),
+      ...readAskQuestionFlagsFromLotDom()
     };
     const url = currentLot
       ? `/question-config/lot/${currentLot.id}/question-config`
@@ -3774,11 +3820,13 @@ function attachProjectQuestionsListeners(){
                            'q-price-very-low', 'q-price-low', 'q-price-high', 'q-price-very-high',
                            'q-amount-very-low', 'q-amount-low', 'q-amount-high', 'q-amount-very-high',
                            'q-unanswered-comment', 'q-unanswered-color', 'q-offer-amount-mismatch-comment',
-                           'q-unit-mismatch'];
+                           'q-unit-mismatch',
+                           'ask-questions-qty', 'ask-questions-price', 'ask-questions-amount',
+                           'ask-questions-unanswered', 'ask-questions-unit-mismatch', 'ask-questions-offer-amount-mismatch'];
   questionFieldIds.forEach(id => {
     const el = qs(`#${id}`);
     if (el) {
-      if (el.type === 'color') {
+      if (el.type === 'color' || el.type === 'checkbox') {
         el.removeEventListener('change', autosaveHandlers.projectQuestions);
         el.addEventListener('change', autosaveHandlers.projectQuestions);
       } else {
@@ -3833,10 +3881,15 @@ function readGlobalThresholdRowsFromDom() {
 
 function readGlobalQuestionConfigFromDom() {
   const questionFields = [...Object.values(QUESTION_CONFIG_FIELDS), ...GLOBAL_SPECIAL_QUESTION_FIELD_KEYS];
-  return questionFields.reduce((data, field) => {
-    data[field] = (qs(`#global-thresholds-body [data-question-field="${field}"]`)?.value || '').trim();
-    return data;
+  const data = questionFields.reduce((acc, field) => {
+    acc[field] = (qs(`#global-thresholds-body [data-question-field="${field}"]`)?.value || '').trim();
+    return acc;
   }, {});
+  ASK_QUESTION_FIELD_KEYS.forEach(field => {
+    const box = qs(`#global-thresholds-body [data-ask-field="${field}"]`);
+    if (box) data[field] = box.checked;
+  });
+  return data;
 }
 
 function renderGlobalLotThresholds(rows = []) {
@@ -3846,8 +3899,11 @@ function renderGlobalLotThresholds(rows = []) {
   const globalThresholds = globalLotThresholds?.global_thresholds || {};
   const questionConfig = globalLotThresholds?.question_config || {};
   const thresholdSections = GLOBAL_THRESHOLD_GROUPS.map(group => `
-    <section class="global-threshold-section">
-      <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-${group.icon}"></use></svg>${group.title}</h4>
+    <section class="global-threshold-section${questionConfig[group.askKey] === false ? ' ask-questions-disabled' : ''}">
+      <div class="global-threshold-section-head" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <h4 style="margin:0"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-${group.icon}"></use></svg>${group.title}</h4>
+        ${askQuestionsToggleHtml(group.askKey, questionConfig[group.askKey])}
+      </div>
       <div class="global-threshold-grid">
         ${group.fields.map(field => `
           <div class="global-threshold-card" style="--threshold-color:${field.color};--threshold-bg:${hexToRgba(field.color, 0.08)}">
@@ -3877,11 +3933,12 @@ function renderGlobalLotThresholds(rows = []) {
       <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg>Paramètres Complémentaires</h4>
       <div class="global-threshold-grid">
         ${GLOBAL_SPECIAL_QUESTION_FIELDS.map(field => `
-          <div class="global-threshold-card" style="--threshold-color:${field.color};--threshold-bg:${hexToRgba(field.color, 0.08)}">
+          <div class="global-threshold-card${field.askKey && questionConfig[field.askKey] === false ? ' ask-questions-disabled' : ''}" style="--threshold-color:${field.color};--threshold-bg:${hexToRgba(field.color, 0.08)}">
             <div class="global-threshold-card-title">
               <span></span>
               <strong>${field.label}</strong>
             </div>
+            ${field.askKey ? askQuestionsToggleHtml(field.askKey, questionConfig[field.askKey]) : ''}
             <div class="global-threshold-lot-list">
               <label class="global-threshold-question-row">
                 <span>${field.fieldLabel}</span>
@@ -3897,9 +3954,15 @@ function renderGlobalLotThresholds(rows = []) {
 
   container.innerHTML = thresholdSections + specialSection;
 
-  qsa('.global-threshold-input, [data-question-field]').forEach(input => {
+  qsa('.global-threshold-input, [data-question-field], #global-thresholds-body [data-ask-field]').forEach(input => {
     input.removeEventListener('input', autosaveHandlers.globalThresholds);
     input.addEventListener('input', autosaveHandlers.globalThresholds);
+  });
+  qsa('#global-thresholds-body [data-ask-field]').forEach(box => {
+    box.addEventListener('change', () => {
+      const holder = box.closest('.global-threshold-section, .global-threshold-card');
+      if (holder) holder.classList.toggle('ask-questions-disabled', !box.checked);
+    });
   });
 }
 

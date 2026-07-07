@@ -91,6 +91,29 @@ async function runMigrations() {
   }
 }
 
+const REQUIRED_COLUMNS = [
+  ['generated_questions', 'generated_text'],   // migration 043
+  ['project_question_config', 'ask_questions_qty'], // migration 044
+  ['lot_question_config', 'ask_questions_qty_override'] // migration 044
+]
+
+async function assertSchemaSanity() {
+  const missing = []
+  for (const [table, column] of REQUIRED_COLUMNS) {
+    const res = await pool.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
+      [table, column]
+    )
+    if (res.rowCount === 0) missing.push(`${table}.${column}`)
+  }
+  if (missing.length > 0) {
+    console.error('❌ ERREUR CRITIQUE: schéma incomplet, colonnes manquantes:', missing.join(', '))
+    console.error('   Le déploiement n\'inclut probablement pas les fichiers de migration correspondants.')
+    console.error('   Démarrage refusé pour éviter toute corruption de données.')
+    process.exit(1)
+  }
+}
+
 export async function ensureSchema() {
   const __dirname = path.dirname(fileURLToPath(import.meta.url))
   const schemaPath = path.join(__dirname, 'schema.sql')
@@ -106,7 +129,12 @@ export async function ensureSchema() {
   
   // Exécuter les migrations
   await runMigrations()
-  
+
+  // Sanity check : colonnes sentinelles des migrations récentes. Si elles
+  // manquent, le déploiement est incomplet (fichiers de migration absents) et
+  // le code planterait en cours de requête — on refuse de démarrer.
+  await assertSchemaSanity()
+
   // Vérifier si un utilisateur admin existe
   const usersCount = await query('SELECT COUNT(*) FROM users')
   if (Number(usersCount.rows[0].count) === 0) {
