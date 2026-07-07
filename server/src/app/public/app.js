@@ -6064,9 +6064,14 @@ async function handleDeleteEditorQuestionButton(currentBtn) {
         if (itemId) {
           suppressedQuestionSaveItemIds.add(saveKey);
           pendingQuestionSaves.delete(saveKey);
-          hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
         }
-        await waitForQuestionSaveIdle();
+        // Flusher les éditions en attente des AUTRES cellules avant le
+        // rechargement forcé, sinon elles seraient perdues.
+        const flushed = await flushPendingQuestionSaves();
+        if (!flushed) {
+          showNotify({ title:'Enregistrement', message:'Des modifications de questions n\'ont pas pu être sauvegardées. Réessayez.', type:'error' });
+          return;
+        }
         const result = await deleteQuestionEditorCell(itemId, companyId);
 
         const row = itemId ? qs(`#questions-editor-body tr[data-item-id="${itemId}"]`) : null;
@@ -6112,8 +6117,13 @@ async function handleRegenerateEditorQuestionButton(currentBtn) {
       try {
         suppressedQuestionSaveItemIds.add(saveKey);
         pendingQuestionSaves.delete(saveKey);
-        hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
-        await waitForQuestionSaveIdle();
+        // Flusher les éditions en attente des AUTRES cellules avant le
+        // rechargement forcé, sinon elles seraient perdues.
+        const flushed = await flushPendingQuestionSaves();
+        if (!flushed) {
+          showNotify({ title:'Enregistrement', message:'Des modifications de questions n\'ont pas pu être sauvegardées. Réessayez.', type:'error' });
+          return;
+        }
 
         currentBtn.disabled = true;
         const result = await api(`/question-config/lot/${currentLot.id}/regenerate-question`, {
@@ -6407,8 +6417,10 @@ async function validateAllQuestionsEditor() {
     return;
   }
   if (!currentLot || !currentRound) return;
-  if (hasUnsavedQuestionChanges || isQuestionSaving || activeQuestionSavePromise) {
-    showNotify({ title:'Enregistrement', message:'Une question est encore en cours de sauvegarde.', type:'info' });
+  // Flusher les éditions en attente avant le rechargement forcé.
+  const flushed = await flushPendingQuestionSaves();
+  if (!flushed) {
+    showNotify({ title:'Enregistrement', message:'Une question n\'a pas pu être sauvegardée. Réessayez.', type:'info' });
     return;
   }
 
@@ -6454,6 +6466,19 @@ async function waitForQuestionSaveIdle() {
   try {
     await activeQuestionSavePromise;
   } catch {}
+}
+
+// Sauvegarde immédiate des éditions encore en attente (fenêtre de debounce) :
+// à appeler avant tout rechargement forcé de l'éditeur, sinon le re-render
+// écrase les saisies pas encore envoyées au serveur.
+async function flushPendingQuestionSaves(maxAttempts = 3) {
+  await waitForQuestionSaveIdle();
+  for (let attempt = 0; pendingQuestionSaves.size > 0 && attempt < maxAttempts; attempt++) {
+    await autoSaveQuestionsEditor();
+    await waitForQuestionSaveIdle();
+  }
+  hasUnsavedQuestionChanges = pendingQuestionSaves.size > 0;
+  return pendingQuestionSaves.size === 0;
 }
 
 async function runQuestionsAutoSaveBatch() {
