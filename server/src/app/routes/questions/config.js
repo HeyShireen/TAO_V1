@@ -1884,11 +1884,14 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
           ELSE i.designation END AS designation,
         COALESCE(i.unit, oi.unit) AS unit,
         (gq.option_item_id IS NOT NULL) AS is_option,
+        pi.num AS parent_num,
+        pi.designation AS parent_designation,
         COALESCE(NULLIF(lc.display_name, ''), c.name) as company_name,
         l.name as lot_name,
         p.name as project_name
       FROM generated_questions gq
       LEFT JOIN items i ON i.id = gq.item_id
+      LEFT JOIN items pi ON pi.id = i.parent_item_id
       LEFT JOIN option_items oi ON oi.id = gq.option_item_id
       LEFT JOIN options o ON o.id = oi.option_id
       JOIN companies c ON c.id = gq.company_id
@@ -1921,8 +1924,8 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       params.push(company_id);
     }
     
-    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, oi.num), gq.question_type`;
-    
+    sql += ` ORDER BY company_name, (gq.option_item_id IS NOT NULL), COALESCE(i.num, pi.num, oi.num), gq.question_type`;
+
     const result = await query(sql, params);
     const questions = result.rows;
     
@@ -1982,8 +1985,18 @@ router.get('/lot/:lotId/export-excel', async (req, res) => {
       
       // Ajouter les données pour cette entreprise
       companyData.questions.forEach(q => {
-        // Désignation combinée (num - designation) comme dans l'affichage
-        const articleLabel = q.num ? `${q.num} - ${q.designation || ''}` : (q.designation || '');
+        // Désignation combinée (num - designation) comme dans l'affichage.
+        // Sous-article sans numéro : rappeler l'article parent (num - désignation)
+        // sur une première ligne pour situer le poste dans la DPGF.
+        let articleLabel;
+        if (q.num) {
+          articleLabel = `${q.num} - ${q.designation || ''}`;
+        } else if (q.parent_num || q.parent_designation) {
+          const parentLabel = [q.parent_num, q.parent_designation].filter(Boolean).join(' - ');
+          articleLabel = `${parentLabel}\n${q.designation || ''}`;
+        } else {
+          articleLabel = q.designation || '';
+        }
 
         const row = worksheet.addRow({
           company: q.company_name,
