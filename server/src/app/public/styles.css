@@ -4078,3 +4078,29 @@ tbody tr:hover,
 .ask-questions-disabled .global-threshold-lot-list {
   opacity: 0.45;
 }
+/* Contexte multi-tenant */
+.demo-reset-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2000;
+  padding: 10px 18px;
+  background: #7c2d12;
+  color: #fff7ed;
+  text-align: center;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+
+.tenant-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.tenant-context label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tenant-context select { min-width: 150px; }

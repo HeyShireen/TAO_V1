@@ -672,6 +672,25 @@ function showLoader() { qs('#global-loader')?.classList.remove('hidden'); }
 function hideLoader() { qs('#global-loader')?.classList.add('hidden'); }
 
 /* ====== API ====== */
+let refreshSessionPromise = null;
+
+async function refreshSession() {
+  if (!refreshSessionPromise) {
+    refreshSessionPromise = fetch(API_BASE + '/auth/refresh', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }).then(async response => {
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (!data.token) return false;
+      token = data.token;
+      localStorage.setItem('token', token);
+      if (data.user) currentUser = data.user;
+      return true;
+    }).finally(() => { refreshSessionPromise = null; });
+  }
+  return refreshSessionPromise;
+}
+
 async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
@@ -692,6 +711,15 @@ async function api(path, opts = {}) {
     const res = await fetch(url, { ...opts, headers, body, credentials: 'include' });
     const isJson = res.headers.get('content-type')?.includes('application/json');
     const data = isJson ? await res.json().catch(()=> ({})) : await res.text();
+    if (res.status === 401 && !opts._retried && !path.startsWith('/auth/')) {
+      if (await refreshSession()) {
+        return api(path, { ...opts, _retried: true, showLoader: false });
+      }
+      token = null;
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      throw new Error('Session expirée');
+    }
     if (!res.ok) {
       const msg = (isJson && data?.error) ? data.error : (data || res.statusText);
       showNotify({ title: 'Erreur', message: msg, type: 'error' });
@@ -877,7 +905,15 @@ function updateCurrentUser() {
     const payload = parseJwt(token);
     console.log('JWT Payload:', payload);
     if (payload) {
-      currentUser = { id: payload.id, email: payload.email, role: payload.role || 'visionneur' };
+      currentUser = {
+        id: payload.id,
+        email: payload.email,
+        role: payload.role || 'visionneur',
+        company_id: payload.company_id || null,
+        tenant_id: Number(payload.tenant_id),
+        active_tenant_id: Number(payload.active_tenant_id || payload.tenant_id),
+        active_tenant_type: payload.active_tenant_type || null,
+      };
       console.log('Current user updated:', currentUser);
       // Ajuster l'UI selon le rôle
       applyRoleVisibility();
@@ -909,7 +945,8 @@ async function login(email, password){
 }
 
 /* ================= Permissions helpers ================= */
-function isAdmin() { return currentUser && currentUser.role === 'admin'; }
+function isAdmin() { return currentUser && ['platform_admin', 'tenant_admin'].includes(currentUser.role); }
+function isPlatformAdmin() { return currentUser && currentUser.role === 'platform_admin'; }
 function isResponsable() { return currentUser && currentUser.role === 'responsable'; }
 function isVisionneur() { return currentUser && currentUser.role === 'visionneur'; }
 function isEntreprise() { return currentUser && currentUser.role === 'entreprise'; }
@@ -928,6 +965,97 @@ async function loadUsers() {
   }
 }
 
+async function inviteTenantUser() {
+  const email = qs('#invite-user-email')?.value.trim();
+  const role = qs('#invite-user-role')?.value || 'visionneur';
+  const companyValue = qs('#invite-company-id')?.value;
+  if (!email) return showNotify({ title: 'Invitation', message: 'Saisissez une adresse email.', type: 'info' });
+  try {
+    await api('/tenant/invitations', {
+      method: 'POST',
+      body: { email, role, company_id: companyValue ? Number(companyValue) : null },
+    });
+    if (qs('#invite-user-email')) qs('#invite-user-email').value = '';
+    showNotify({ title: 'Invitation envoyée', message: `Une invitation a été envoyée à ${email}.`, type: 'success' });
+  } catch (error) {
+    showNotify({ title: 'Invitation impossible', message: error.message, type: 'error' });
+  }
+}
+
+async function loadPlatformTenants() {
+  if (!isPlatformAdmin()) return;
+  try {
+    const tenants = await api('/platform/tenants');
+    const select = qs('#platform-tenant-select');
+    if (select) {
+      select.innerHTML = tenants.map(tenant =>
+        `<option value="${tenant.id}" ${Number(tenant.id) === currentUser.active_tenant_id ? 'selected' : ''}>${escapeHtml(tenant.name)}</option>`
+      ).join('');
+      select.dataset.current = String(currentUser.active_tenant_id);
+    }
+    const tbody = qs('#platform-tenants-table tbody');
+    if (tbody) {
+      tbody.innerHTML = tenants.map(tenant => `
+        <tr>
+          <td>${escapeHtml(tenant.name)} <span class="muted">(${escapeHtml(tenant.slug)})</span></td>
+          <td>${escapeHtml(tenant.type)}</td><td>${escapeHtml(tenant.status)}</td>
+          <td>${Number(tenant.user_count || 0)}</td>
+          <td>${tenant.type === 'demo' ? '' : `<button class="btn ghost btn-sm" data-tenant-status="${tenant.id}" data-current-status="${tenant.status}">${tenant.status === 'active' ? 'Suspendre' : 'Réactiver'}</button>`}</td>
+        </tr>`).join('');
+      qsa('[data-tenant-status]').forEach(button => button.addEventListener('click', () => changeTenantStatus(button)));
+    }
+  } catch (error) {
+    console.error('Chargement organisations:', error);
+  }
+}
+
+async function switchPlatformTenant() {
+  const select = qs('#platform-tenant-select');
+  if (!select || Number(select.value) === Number(select.dataset.current)) return;
+  const reason = prompt('Motif de l\'accès à cette organisation :');
+  if (!reason || reason.trim().length < 3) {
+    select.value = select.dataset.current;
+    return;
+  }
+  try {
+    const result = await api('/platform/active-tenant', {
+      method: 'POST', body: { tenantId: Number(select.value), reason: reason.trim() },
+    });
+    if (result.token) localStorage.setItem('token', result.token);
+    window.location.reload();
+  } catch (error) {
+    select.value = select.dataset.current;
+    showNotify({ title: 'Changement impossible', message: error.message, type: 'error' });
+  }
+}
+
+async function createPlatformTenant() {
+  const name = qs('#new-tenant-name')?.value.trim();
+  const slug = qs('#new-tenant-slug')?.value.trim();
+  const admin_email = qs('#new-tenant-admin-email')?.value.trim();
+  try {
+    await api('/platform/tenants', { method: 'POST', body: { name, slug, admin_email } });
+    showNotify({ title: 'Organisation créée', message: 'L\'administrateur a reçu son invitation.', type: 'success' });
+    await loadPlatformTenants();
+  } catch (error) {
+    showNotify({ title: 'Création impossible', message: error.message, type: 'error' });
+  }
+}
+
+async function changeTenantStatus(button) {
+  const nextStatus = button.dataset.currentStatus === 'active' ? 'suspended' : 'active';
+  const reason = prompt(`Motif pour ${nextStatus === 'active' ? 'réactiver' : 'suspendre'} cette organisation :`);
+  if (!reason || reason.trim().length < 3) return;
+  try {
+    await api(`/platform/tenants/${button.dataset.tenantStatus}/status`, {
+      method: 'PATCH', body: { status: nextStatus, reason: reason.trim() },
+    });
+    await loadPlatformTenants();
+  } catch (error) {
+    showNotify({ title: 'Modification impossible', message: error.message, type: 'error' });
+  }
+}
+
 function renderUsersTable(users) {
   const tbody = qs('#users-table tbody');
   if (!tbody) return;
@@ -935,7 +1063,7 @@ function renderUsersTable(users) {
   
   for (const user of users) {
     const tr = document.createElement('tr');
-    const roleOptions = ['visionneur', 'entreprise', 'responsable', 'admin'];
+    const roleOptions = ['visionneur', 'entreprise', 'responsable', 'tenant_admin'];
     const roleSelect = roleOptions.map(r => 
       `<option value="${r}" ${r === user.role ? 'selected' : ''}>${r.charAt(0).toUpperCase() + r.slice(1)}</option>`
     ).join('');
@@ -11232,6 +11360,19 @@ function showDashboard(){
 }
 
 function updateUIForRole() {
+  const demoBanner = qs('#demo-reset-banner');
+  if (demoBanner) demoBanner.classList.toggle('hidden', currentUser?.active_tenant_type !== 'demo');
+  if (isPlatformAdmin()) {
+    show('#platform-tenant-context');
+    show('#platform-admin-section');
+    loadPlatformTenants();
+  } else {
+    hide('#platform-tenant-context');
+    hide('#platform-admin-section');
+  }
+  const resetCooldownsButton = qs('#reset-cooldowns-btn');
+  if (resetCooldownsButton) resetCooldownsButton.classList.toggle('hidden', !isPlatformAdmin());
+
   // Sections admin
   if (isAdmin()) {
     show('#admin-section');
@@ -12464,6 +12605,9 @@ function bindHelpToggle(){
 document.addEventListener('DOMContentLoaded', () => { 
   updateCurrentUser(); // Charger le rôle depuis le token au démarrage
   bindUI(); 
+  qs('#invite-user-btn')?.addEventListener('click', inviteTenantUser);
+  qs('#platform-tenant-select')?.addEventListener('change', switchPlatformTenant);
+  qs('#create-tenant-btn')?.addEventListener('click', createPlatformTenant);
   if (token) showDashboard(); 
 
   // Masquer les onglets de tour non utilisables des le chargement

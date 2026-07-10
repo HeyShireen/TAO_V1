@@ -45,7 +45,7 @@ router.post('/', async (req, res) => {
     
     // Notifier les responsables et admins
     const responsables = await query(
-      `SELECT email FROM users WHERE role IN ('admin', 'responsable')`
+      `SELECT email FROM users WHERE role IN ('platform_admin', 'tenant_admin', 'responsable')`
     );
     
     for (const responsable of responsables.rows) {

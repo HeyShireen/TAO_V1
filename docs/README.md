@@ -1,56 +1,59 @@
-# Documentation TAO_V1
+# Documentation AO Link
 
-Cette documentation couvre l'État actuel du dépôt. L'application est une web app Node.js + PostgreSQL dont l'interface HTML/CSS/JS est servie directement par Express depuis `server/src/app/public/`.
-
-## démarrage rapide
-
-Pre-requis:
-- Node.js 18+
-- PostgreSQL
-
-Commandes:
-```bash
-cd server
-npm install
-npm run dev
-```
-
-Le serveur démarre sur `http://localhost:4000` par défaut. Au lancement, `src/app/server.js` valide la configuration, charge le schéma SQL, puis applique automatiquement les migrations présentes dans `server/src/app/migrations/`.
-
-Variables minimales:
-- `DATABASE_URL`
-- `JWT_SECRET`
-
-Variables frequentes selon l'environnement:
-- `ALLOWED_ORIGINS`
-- `REDIS_URL`
-- `EMAIL_USER` / `EMAIL_PASS`
-- `ADMIN_EMAIL` / `ADMIN_PASSWORD`
-- `HTTPS_PROXY`
+L’application est une web app Node.js/Express avec une interface HTML, CSS et
+JavaScript servie par le backend. Les données sont stockées dans PostgreSQL et
+cloisonnées par tenant avec Row-Level Security.
 
 ## Documents actifs
 
-- `GUIDE_TECHNIQUE.md` : vue d'ensemble du produit, architecture et principaux flux.
-- `MAINTENANCE.md` : exploitation courante, migrations, dépendances et contrôles manuels.
-- `SECURITY.md` : protections actuellement implementees et points d'attention.
-- `DEPLOY_VPS.md` : déploiement sur VPS avec nginx et PM2.
+- [GUIDE_TECHNIQUE.md](GUIDE_TECHNIQUE.md) : architecture et flux applicatifs ;
+- [GUIDE_NAVIGATION.md](GUIDE_NAVIGATION.md) : parcours utilisateur et rôles ;
+- [MULTI_TENANT.md](MULTI_TENANT.md) : isolation, rôles PostgreSQL et procédure
+  de déploiement ;
+- [SETUP_DEMO.md](SETUP_DEMO.md) : configuration et reset du tenant DEMO ;
+- [MAINTENANCE.md](MAINTENANCE.md) : exploitation courante et migrations ;
+- [SECURITY.md](SECURITY.md) : protections et points de vigilance ;
+- [SCHEMA_BASE_DONNEES.md](SCHEMA_BASE_DONNEES.md) : modèle de données ;
+- [DEPLOY_VPS.md](DEPLOY_VPS.md) : déploiement sur VPS avec nginx et PM2.
 
-## Structure utile du dépôt
+## Démarrage local
 
-- `server/src/app/server.js` : point d'entrée Express.
-- `server/src/app/public/` : interface web (home, login, app).
-- `server/src/app/routes/` : API REST.
-- `server/src/app/middleware/` : auth, rôles, Sécurité, honeypot, erreurs.
-- `server/src/app/migrations/` : migrations SQL appliquees au démarrage.
-- `tests/` : scripts de vérification manuelle et Sécurité.
+Prérequis : Node.js, PostgreSQL et des credentials dédiés à une base locale.
+
+```bash
+cd server
+npm install
+npm run db:migrate
+npm run dev
+```
+
+`db:migrate` nécessite `MIGRATION_DATABASE_URL`. Le serveur web utilise
+`DATABASE_URL`, vérifie que le schéma est à jour et refuse un rôle propriétaire
+ou `BYPASSRLS`.
+
+Variables principales :
+
+- `DATABASE_URL` ;
+- `MIGRATION_DATABASE_URL`, uniquement pendant une migration ;
+- `JWT_SECRET` ;
+- `ALLOWED_ORIGINS` ;
+- `PLATFORM_ADMIN_EMAIL` ;
+- `DEMO_HOST`, `DEMO_USER_EMAIL`, `DEMO_USER_PASSWORD` ;
+- `REDIS_URL` et les variables email selon l’environnement.
+
+## Structure utile
+
+- `server/src/app/server.js` : point d’entrée Express ;
+- `server/src/app/db.js` : pool, contextes SQL et migrations ;
+- `server/src/app/routes/` : routes API ;
+- `server/src/app/public/` : interface web ;
+- `server/src/app/migrations/` : migrations SQL explicites ;
+- `server/src/app/tools/` : audit, reset DEMO et outils d’exploitation ;
+- `server/tests/` : tests Node.js et intégration PostgreSQL ;
 - `render.yaml` : configuration Render.
 
-## Archives documentaires
+## Archives
 
-Les documents historiques, rapports d'audit, plans ponctuels et anciennes syntheses sont conserves dans `docs/_archive/` :
-
-- `docs/_archive/audit/`
-- `docs/_archive/reports/`
-- `docs/_archive/SECURITY_AUDIT/`
-
-Les documents places dans `_archive` sont conserves pour l'historique, mais ne doivent pas être traites comme référence operationnelle principale.
+`docs/_archive/` contient des audits et procédures historiques. Ces documents
+ne sont pas une référence opérationnelle et peuvent décrire d’anciens rôles ou
+modes de déploiement.

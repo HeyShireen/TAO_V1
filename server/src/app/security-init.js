@@ -67,6 +67,21 @@ if (process.env.NODE_ENV === 'production' && process.env.RENDER === undefined) {
   console.warn('   Assurez-vous que HTTPS est forcé et que tous les secrets sont sécurisés');
 }
 
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.PLATFORM_ADMIN_EMAIL) {
+    console.error('❌ ERREUR CRITIQUE: PLATFORM_ADMIN_EMAIL non defini');
+    process.exit(1);
+  }
+  if (!process.env.DEMO_HOST || !process.env.DEMO_USER_EMAIL || !process.env.DEMO_USER_PASSWORD) {
+    console.error('❌ ERREUR CRITIQUE: configuration du tenant DEMO incomplete');
+    process.exit(1);
+  }
+  if (process.env.DEMO_USER_PASSWORD.length < 12 || process.env.DEMO_USER_PASSWORD === 'DemoAoLink2026!') {
+    console.error('❌ ERREUR CRITIQUE: DEMO_USER_PASSWORD doit etre un secret specifique de 12 caracteres minimum');
+    process.exit(1);
+  }
+}
+
 // 7. VALIDER LES VARIABLES CRITIQUES
 const CRITICAL_VARS = [
   'JWT_SECRET',

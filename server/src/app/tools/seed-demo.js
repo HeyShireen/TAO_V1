@@ -1,7 +1,8 @@
 import 'dotenv/config';
 
-import { ensureSchema, pool } from '../db.js';
+import { authQuery, ensureSchema, pool, runWithTenantContext } from '../db.js';
 import { hashPassword } from '../utils/hash.js';
+import { sendOperationalAlert } from '../utils/email.js';
 
 const DEMO_EMAIL = (process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim().toLowerCase();
 const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || 'DemoAoLink2026!';
@@ -169,17 +170,30 @@ async function addOption(client, { lotId, roundId, companyIds }) {
 
 async function main() {
   await ensureSchema();
+  const tenantResult = await authQuery("SELECT id FROM tenants WHERE slug = 'demo' AND type = 'demo'");
+  if (tenantResult.rowCount !== 1) throw new Error('Le tenant DEMO est introuvable');
+  const demoTenantId = Number(tenantResult.rows[0].id);
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await runWithTenantContext({ tenantId: demoTenantId, userId: 0 }, async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtext('aolink-demo-reset')) AS acquired");
+      if (!lock.rows[0]?.acquired) throw new Error('Une réinitialisation DEMO est déjà en cours');
 
-    const demoUserId = await ensureDemoUser(client);
+      const demoUserId = await ensureDemoUser(client);
 
-    await client.query(
-      'DELETE FROM projects WHERE reference = $1 AND COALESCE(is_demo, false) = true',
-      [DEMO_REFERENCE]
-    );
+      await client.query(
+        'UPDATE refresh_tokens SET revoked_at = now() WHERE tenant_id = $1 AND revoked_at IS NULL',
+        [demoTenantId]
+      );
+      await client.query('DELETE FROM projects WHERE tenant_id = $1', [demoTenantId]);
+      await client.query('DELETE FROM tenant_invitations WHERE tenant_id = $1', [demoTenantId]);
+      await client.query(
+        'DELETE FROM users WHERE tenant_id = $1 AND id <> $2',
+        [demoTenantId, demoUserId]
+      );
+      await client.query('DELETE FROM companies WHERE tenant_id = $1', [demoTenantId]);
 
     const project = await client.query(
       `INSERT INTO projects
@@ -375,18 +389,22 @@ async function main() {
       companyIds: companies,
     });
 
-    await client.query('COMMIT');
-    console.log('Demo commerciale prete.');
-    console.log(`Utilisateur: ${DEMO_EMAIL}`);
-    console.log(`Projet: ${DEMO_REFERENCE}`);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Erreur seed demo:', err);
-    process.exitCode = 1;
-  } finally {
-    client.release();
-    await pool.end();
-  }
+      await client.query('COMMIT');
+      console.log('Demo commerciale prete.');
+      console.log(`Utilisateur: ${DEMO_EMAIL}`);
+      console.log(`Projet: ${DEMO_REFERENCE}`);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Erreur seed demo:', err);
+      try { await sendOperationalAlert('Echec de la reinitialisation DEMO', err.stack || err.message); } catch (alertError) {
+        console.error('Echec envoi alerte DEMO:', alertError.message);
+      }
+      process.exitCode = 1;
+    } finally {
+      await client.release();
+    }
+  });
+  await pool.end();
 }
 
 main();

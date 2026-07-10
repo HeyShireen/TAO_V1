@@ -1118,7 +1118,7 @@ async function handleSummaryExport(req, res) {
     const accessCheck = await query(
       `SELECT 1 FROM projects p
        LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
-       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('platform_admin', 'tenant_admin', 'responsable'))`,
       [round.project_id, userId, req.user.role]
     );
 
@@ -1730,7 +1730,7 @@ async function handleRoundsComparison(req, res) {
     // Vérifier l'accès au projet
     const projectRes = await query(
       `SELECT p.*, 
-         (p.owner_id = $2 OR EXISTS(SELECT 1 FROM project_shares WHERE project_id = p.id AND shared_with_user_id = $2) OR $3 IN ('admin', 'responsable')) as has_access
+         (p.owner_id = $2 OR EXISTS(SELECT 1 FROM project_shares WHERE project_id = p.id AND shared_with_user_id = $2) OR $3 IN ('platform_admin', 'tenant_admin', 'responsable')) as has_access
        FROM projects p
        WHERE p.id = $1`,
       [projectId, userId, req.user.role]
@@ -2861,7 +2861,7 @@ async function handleRaoExport(req, res) {
 
     // Vérifier l'accès
     const accessCheck = await query(
-      `SELECT 1 FROM projects WHERE id = $1 AND (owner_id = $2 OR $3 IN ('admin', 'responsable'))`,
+      `SELECT 1 FROM projects WHERE id = $1 AND (owner_id = $2 OR $3 IN ('platform_admin', 'tenant_admin', 'responsable'))`,
       [projectId, userId, req.user.role]
     );
     if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès refusé' });
@@ -3619,7 +3619,7 @@ router.get('/questions-send-status', async (req, res) => {
     const accessCheck = await query(
       `SELECT 1 FROM projects p
        LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
-       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('platform_admin', 'tenant_admin', 'responsable'))`,
       [projectId, userId, req.user.role]
     );
     if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });
@@ -3675,7 +3675,7 @@ router.get('/questions-by-company/:lotId', async (req, res) => {
     const accessCheck = await query(
       `SELECT 1 FROM projects p
        LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
-       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('platform_admin', 'tenant_admin', 'responsable'))`,
       [projectId, req.user.id, req.user.role]
     );
     if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });
@@ -3776,7 +3776,7 @@ router.post('/send-questions-to-company', async (req, res) => {
     const accessCheck = await query(
       `SELECT 1 FROM projects p
        LEFT JOIN project_shares ps ON ps.project_id = p.id AND ps.shared_with_user_id = $2
-       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('admin', 'responsable'))`,
+       WHERE p.id = $1 AND (p.owner_id = $2 OR ps.shared_with_user_id IS NOT NULL OR $3 IN ('platform_admin', 'tenant_admin', 'responsable'))`,
       [projectId, userId, req.user.role]
     );
     if (accessCheck.rowCount === 0) return res.status(403).json({ error: 'Accès non autorisé' });

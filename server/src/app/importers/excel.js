@@ -119,7 +119,7 @@ export async function importLotFromExcel({ lotId, buffer, roundId }) {
   for (const key of Object.keys(companyGroups)) {
     // Clean key (capitalize words)
     const name = key.replace(/\b\w/g, (c) => c.toUpperCase());
-    const r1 = await query('INSERT INTO companies (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name RETURNING id, name', [name]);
+    const r1 = await query('INSERT INTO companies (name) VALUES ($1) ON CONFLICT (tenant_id, name) DO UPDATE SET name=EXCLUDED.name RETURNING id, name', [name]);
     const company = r1.rows[0];
     companies.push({ ...company, cols: companyGroups[key] });
     // link to lot

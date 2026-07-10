@@ -837,7 +837,7 @@ router.patch('/companies/:companyId/email', isResponsableOrAdmin, async (req, re
 
 /* ---------- SAUVEGARDE DU TABLEUR (édition) ---------- */
 // Body: { rows: [ { item_id?, num, designation, unit, moe:{qty,pu}, offers:{ [companyId]:{u,qty,pu} } } ] }
-router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']), async (req, res) => {
+router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 'responsable', 'entreprise']), async (req, res) => {
   const lotId = Number(req.params.id);
   const { rows, round_id } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] requis' });
@@ -1030,7 +1030,7 @@ router.post('/:id/save-grid', requireRole(['admin', 'responsable', 'entreprise']
 });
 
 /* ---------- Smart Import : Preview ---------- */
-router.post('/:id/import-preview', requireRole(['admin', 'responsable']), upload.single('file'), async (req, res) => {
+router.post('/:id/import-preview', requireRole(['platform_admin', 'tenant_admin', 'responsable']), upload.single('file'), async (req, res) => {
   const lotId = Number(req.params.id);
   if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
   try {
@@ -1056,7 +1056,7 @@ router.post('/:id/import-preview', requireRole(['admin', 'responsable']), upload
 });
 
 /* ---------- Smart Import : Apply ---------- */
-router.post('/:id/import-apply', requireRole(['admin', 'responsable']), upload.single('file'), async (req, res) => {
+router.post('/:id/import-apply', requireRole(['platform_admin', 'tenant_admin', 'responsable']), upload.single('file'), async (req, res) => {
   const lotId = Number(req.params.id);
 
   try {

@@ -69,7 +69,7 @@ router.post('/projects/:projectId', isResponsableOrAdmin, async (req, res) => {
 
     // Ne pas partager avec un admin ou responsable (ils ont déjà accès)
     const targetRole = userExists.rows[0].role;
-    if (targetRole === 'admin' || targetRole === 'responsable') {
+    if (['platform_admin', 'tenant_admin', 'responsable'].includes(targetRole)) {
       return res.status(400).json({ error: 'Les administrateurs et responsables ont déjà accès à tous les projets' });
     }
 

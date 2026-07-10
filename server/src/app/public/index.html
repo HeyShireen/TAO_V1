@@ -16,6 +16,9 @@
   <meta name="theme-color" content="#091216" />
 </head>
 <body>
+  <div id="demo-reset-banner" class="demo-reset-banner hidden" role="status">
+    Environnement de démonstration : toutes les données saisies ici seront supprimées chaque jour à 03:00, heure de Paris.
+  </div>
   <!-- Spinner global -->
   <div id="global-loader" class="loader-overlay hidden">
     <div class="loader-spinner"></div>
@@ -38,6 +41,10 @@
             <button data-tab="tab-rounds" class="nav-btn" disabled><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-repeat"></use></svg><span class="nav-label">Tours</span></button>
             <button data-tab="tab-settings" class="nav-btn"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-settings"></use></svg><span class="nav-label">Paramètres</span></button>
           </nav>
+          <div id="platform-tenant-context" class="tenant-context hidden">
+            <label for="platform-tenant-select">Organisation</label>
+            <select id="platform-tenant-select" aria-label="Organisation active"></select>
+          </div>
           <button id="toggle-help" class="btn ghost" title="Aide contextuelle"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-help"></use></svg><span class="btn-label">Aide</span></button>
           <button id="logout" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-arrow-right"></use></svg><span class="btn-label">Déconnexion</span></button>
         </div>
@@ -1091,8 +1098,39 @@
           <h3><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-users"></use></svg>Gestion des Utilisateurs (Admin)</h3>
           
           <p class="muted" style="margin-bottom:1rem;">
-            <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-info"></use></svg>Les utilisateurs peuvent s'inscrire directement via la page de connexion. Vous pouvez modifier leur rôle ci-dessous.
+            <svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-info"></use></svg>Les comptes rejoignent cette organisation uniquement sur invitation.
           </p>
+
+          <div class="settings-section">
+            <h4>Inviter un utilisateur</h4>
+            <div class="grid grid-4 gap">
+              <input id="invite-user-email" type="email" placeholder="utilisateur@entreprise.fr" />
+              <select id="invite-user-role">
+                <option value="visionneur">Visionneur</option>
+                <option value="responsable">Responsable</option>
+                <option value="tenant_admin">Administrateur du tenant</option>
+                <option value="entreprise">Entreprise</option>
+              </select>
+              <input id="invite-company-id" type="number" min="1" placeholder="ID entreprise (si entreprise)" />
+              <button id="invite-user-btn" class="btn" type="button">Envoyer l'invitation</button>
+            </div>
+          </div>
+
+          <div id="platform-admin-section" class="settings-section hidden">
+            <h4>Administration plateforme</h4>
+            <div class="grid grid-4 gap">
+              <input id="new-tenant-name" placeholder="Nom de l'organisation" />
+              <input id="new-tenant-slug" placeholder="slug-client" />
+              <input id="new-tenant-admin-email" type="email" placeholder="admin@client.fr" />
+              <button id="create-tenant-btn" class="btn" type="button">Créer et inviter</button>
+            </div>
+            <div class="table-wrapper" style="margin-top:1rem">
+              <table id="platform-tenants-table">
+                <thead><tr><th>Organisation</th><th>Type</th><th>Statut</th><th>Utilisateurs</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
           
           <div class="settings-section">
             <h4><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#icon-lock"></use></svg>Sécurité</h4>

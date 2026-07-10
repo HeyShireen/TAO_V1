@@ -22,20 +22,23 @@ module.exports = {
         PORT: 3000,
         // Les autres variables sont dans /home/tao/TAO/TAO_V1/server/.env
       },
-      env_demo: {
-        NODE_ENV: 'production',
-        PORT: 3000,
-        DOTENV_CONFIG_PATH: '.env.demo',
-        DEMO_MODE: 'true',
-        BETA_ACCESS_MODE: 'true',
-        ALLOWED_ORIGINS: 'https://demo.ao-link.fr,https://ao-link.fr',
-        HTTPS_PROXY: 'true',
-      },
       // Logs
       out_file: '/var/log/tao-app.log',
       error_file: '/var/log/tao-app-error.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs: true,
+    },
+    {
+      name: 'tao-demo-reset',
+      script: 'src/app/tools/reset-demo-tenant.js',
+      cwd: '/home/tao/TAO/TAO_V1/server/',
+      interpreter: 'node',
+      autorestart: false,
+      cron_restart: '0 3 * * *',
+      env: { NODE_ENV: 'production', TZ: 'Europe/Paris' },
+      out_file: '/var/log/tao-demo-reset.log',
+      error_file: '/var/log/tao-demo-reset-error.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
 
     // ──────────────────────────────────────────────────────────────────────────

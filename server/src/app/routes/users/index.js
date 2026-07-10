@@ -20,7 +20,9 @@ router.get('/', async (req, res) => {
       `SELECT u.id, u.email, u.role, u.created_at, u.company_id, u.email_verified, c.name as company_name
        FROM users u
        LEFT JOIN companies c ON c.id = u.company_id
+       WHERE ($1::boolean OR u.role <> 'platform_admin')
        ORDER BY u.created_at DESC`
+      , [req.user.role === 'platform_admin']
     );
     res.json(result.rows);
   } catch (err) {
@@ -31,32 +33,7 @@ router.get('/', async (req, res) => {
 
 // Créer un utilisateur
 router.post('/', async (req, res) => {
-  try {
-    const { email, password, role = 'visionneur' } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email et mot de passe requis' });
-    }
-
-    const validRoles = ['admin', 'responsable', 'entreprise', 'visionneur'];
-    if (!validRoles.includes(role)) {
-      return res.status(400).json({ error: 'Rôle invalide' });
-    }
-
-    const password_hash = await hashPassword(password);
-    const result = await query(
-      'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id, email, role, created_at',
-      [email.trim().toLowerCase(), password_hash, role]
-    );
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Erreur création user:', err);
-    if (err.code === '23505') { // Duplicate key
-      return res.status(400).json({ error: 'Cet email existe déjà' });
-    }
-    res.status(500).json({ error: 'Impossible de créer l\'utilisateur' });
-  }
+  return res.status(410).json({ error: 'La création directe est remplacée par POST /api/tenant/invitations' });
 });
 
 // Modifier le rôle d'un utilisateur
@@ -65,18 +42,20 @@ router.patch('/:id/role', async (req, res) => {
     const { id } = req.params;
     const { role } = req.body;
 
-    const validRoles = ['admin', 'responsable', 'entreprise', 'visionneur'];
+    const validRoles = ['tenant_admin', 'responsable', 'entreprise', 'visionneur'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
 
     // Empêcher de se retirer ses propres droits admin
-    if (Number(id) === req.user.id && role !== 'admin') {
+    if (Number(id) === req.user.id && !['tenant_admin', 'platform_admin'].includes(role)) {
       return res.status(400).json({ error: 'Vous ne pouvez pas retirer vos propres droits admin' });
     }
 
     const result = await query(
-      'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role, created_at',
+      `UPDATE users SET role = $1
+       WHERE id = $2 AND role <> 'platform_admin'
+       RETURNING id, email, role, created_at`,
       [role, id]
     );
 
@@ -104,13 +83,16 @@ router.post('/:id/verify-email', async (req, res) => {
     if (existingUser.rowCount === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
     }
+    if (existingUser.rows[0].role === 'platform_admin' && req.user.role !== 'platform_admin') {
+      return res.status(403).json({ error: 'Le compte plateforme ne peut pas être modifié' });
+    }
 
     if (existingUser.rows[0].email_verified) {
       return res.json(existingUser.rows[0]);
     }
 
     const result = await query(
-      'UPDATE users SET email_verified = TRUE WHERE id = $1 RETURNING id, email, role, created_at, email_verified',
+      "UPDATE users SET email_verified = TRUE WHERE id = $1 AND role <> 'platform_admin' RETURNING id, email, role, created_at, email_verified",
       [id]
     );
 
@@ -136,7 +118,7 @@ router.delete('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte' });
     }
 
-    const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    const result = await query("DELETE FROM users WHERE id = $1 AND role <> 'platform_admin' RETURNING id", [id]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
@@ -161,7 +143,7 @@ router.post('/:id/reset-password', async (req, res) => {
 
     const password_hash = await hashPassword(password);
     const result = await query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id',
+      "UPDATE users SET password_hash = $1 WHERE id = $2 AND role <> 'platform_admin' RETURNING id",
       [password_hash, id]
     );
 
@@ -193,7 +175,7 @@ router.patch('/:id/company', async (req, res) => {
     }
 
     const result = await query(
-      'UPDATE users SET company_id = $1 WHERE id = $2 RETURNING id, email, role, company_id',
+      "UPDATE users SET company_id = $1 WHERE id = $2 AND role <> 'platform_admin' RETURNING id, email, role, company_id, tenant_id",
       [company_id, id]
     );
 
@@ -207,9 +189,9 @@ router.patch('/:id/company', async (req, res) => {
     let newToken = null;
     if (Number(id) === req.user?.id) {
       newToken = jwt.sign(
-        { id: user.id, email: user.email, role: user.role, company_id: user.company_id },
+        { id: user.id, email: user.email, role: user.role, company_id: user.company_id, tenant_id: user.tenant_id, active_tenant_id: req.user.active_tenant_id },
         process.env.JWT_SECRET,
-        { expiresIn: '7d' }
+        { expiresIn: '15m' }
       );
     }
 

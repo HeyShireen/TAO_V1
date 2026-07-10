@@ -1,130 +1,103 @@
-# AO Link - Guide technique
+# AO Link — Guide technique
 
-## Vue d'ensemble
+## Vue d’ensemble
 
-AO Link est une application web de gestion et d'analyse d'offres. Le coeur du produit permet de structurer un projet en lots et rondes, d'importer ou saisir les offres des entreprises, de comparer ces offres aux Données MOE, puis d'exporter les analyses.
+AO Link structure des projets d’appel d’offres en lots, tours, articles et
+options. Il permet d’importer les données MOE et les offres des entreprises,
+de produire des comparatifs, de générer des questions et d’exporter les
+résultats en Excel ou Word.
 
-fonctionnalités actuellement visibles dans le dépôt:
-- gestion des projets, lots et rondes
-- gestion des articles et options
-- import DPGF / Excel
-- comparaison MOE vs entreprises
-- génération et suivi de questions
-- exports Excel et Word
-- gestion des utilisateurs, partages et demandes d'accès
-
-## Architecture actuelle
+## Architecture
 
 ### Backend
 
-- Runtime: Node.js ESM
-- Framework: Express
-- Base de données: PostgreSQL via `pg`
-- Export: `exceljs`, `docx`
-- Sécurité: `helmet`, `cors`, `express-rate-limit`, JWT, Redis optionnel pour révocation
+- Node.js en modules ESM ;
+- Express 4 ;
+- PostgreSQL avec le client `pg` ;
+- Redis optionnel pour la révocation et certains contrôles de sécurité ;
+- JWT d’accès et refresh tokens rotatifs ;
+- `exceljs` et `docx` pour les exports.
 
-Le point d'entrée est `server/src/app/server.js`. Au démarrage, le serveur:
-1. charge `.env`
-2. valide les variables critiques via `security-init.js`
-3. initialise Redis si configuré
-4. charge `Schéma.sql`
-5. applique les migrations SQL présentes dans `server/src/app/migrations/`
-6. démarre l'API et sert les fichiers statiques
+Le point d’entrée est `server/src/app/server.js`. Au démarrage, il :
+
+1. charge et valide la configuration ;
+2. initialise les dépendances applicatives ;
+3. vérifie que les migrations attendues sont présentes ;
+4. refuse un rôle PostgreSQL propriétaire, superutilisateur ou `BYPASSRLS` ;
+5. enregistre les routes et sert l’interface statique.
+
+Le serveur n’exécute aucun DDL. Les migrations sont lancées séparément avec
+`npm run db:migrate`.
 
 ### Frontend
 
-L'interface est une SPA en JavaScript vanilla servie depuis `server/src/app/public/`:
-- `home.html`: page d'accueil publique
-- `login.html` + `login.js`: connexion, inscription, vérification email, reset mot de passe
-- `index.html` + `app.js`: application authentifiee
+L’interface est une SPA en JavaScript vanilla dans
+`server/src/app/public/` :
 
-Il n'y a pas de dossier `frontend/` séparé dans l'état actuel du dépôt.
+- `home.html` : accueil public ;
+- `login.html` et `login.js` : connexion et acceptation d’invitation ;
+- `index.html` et `app.js` : application authentifiée.
 
-## Routage principal
+## Multi-tenant
 
-Routes HTML:
-- `GET /` -> page publique
-- `GET /login` -> page de connexion
-- `GET /app` -> SPA principale avec vérification du cookie JWT cote serveur
+Les tenants initiaux sont `dmx` et `demo`. Un utilisateur standard appartient
+à un seul tenant. Toutes les tables métier portent `tenant_id` et PostgreSQL
+applique `FORCE ROW LEVEL SECURITY`.
 
-Routes API principales:
-- `/api/auth` -> auth, vérification email, reset mot de passe, refresh token, logout
-- `/api/projects` -> projets, lots, imports DPGF
-- `/api/lots` -> détail des lots, entreprises, offres, comparaisons
-- `/api/rounds` -> gestion des rondes et tableaux comparatifs
-- `/api/questions` et `/api/question-config` -> RAO et configuration
-- `/api/options` -> options et grilles associees
-- `/api/users`, `/api/shares`, `/api/access-requests` -> administration et partage
-- `/api/exports` -> exports Excel / Word
-- `/api/healthz` -> vérification rapide app + base + Redis
+Le JWT contient le tenant d’appartenance et le tenant actif. L’utilisateur est
+revalidé en base à chaque requête authentifiée. Le `platform_admin` travaille
+toujours dans un tenant actif unique ; il n’existe pas de vue métier globale.
 
-## rôles applicatifs
+Voir [MULTI_TENANT.md](MULTI_TENANT.md) pour les rôles PostgreSQL, les garde-fous
+de migration et la procédure Render.
 
-rôles actuellement supportes dans le code:
-- `admin`: administration globale, gestion des utilisateurs et Accès total
-- `responsable`: gestion des projets, lots, rondes, partages et analyses
-- `visionneur`: lecture et demandes d'accès à des projets partages
-- `entreprise`: Accès restreint a ses propres Données, sans visibilite MOE ni Données des autres entreprises
+## Rôles applicatifs
 
-Notes de comportement Vérifiées:
-- le premier utilisateur inscrit devient `admin`
-- les inscriptions suivantes deviennent `visionneur` tant que l'email n'est pas vérifié
-- les utilisateurs `entreprise` sont rattachés à une `company_id`
+- `platform_admin` : gestion des tenants et changement de contexte audité ;
+- `tenant_admin` : utilisateurs et invitations de son tenant ;
+- `responsable` : opérations métier ;
+- `visionneur` : consultation ;
+- `entreprise` : données limitées à son entreprise répondante.
 
-## Données et structure
+Les comptes sont créés par invitation. L’adresse email est unique sur toute la
+plateforme.
 
-Objets principaux:
-- `projects`
-- `lots`
-- `rounds`
-- `items`
-- `moe_items`
-- `offers`
-- `companies`
-- `questions`
-- `options`
-- `users`
-- tables de sécurité et de support: `email_verifications`, `password_resets`, `refresh_tokens`, `suspicious_token_attempts`
+## Routes principales
 
-Le schéma initial est defini dans `server/src/app/Schéma.sql`, puis complète par les migrations numerotees.
+- `/api/auth` : connexion, invitation, refresh et déconnexion ;
+- `/api/projects`, `/api/lots`, `/api/rounds`, `/api/options` : données métier ;
+- `/api/questions`, `/api/question-config` : questions et configuration ;
+- `/api/users`, `/api/shares`, `/api/access-requests` : utilisateurs et accès ;
+- `/api/exports` : exports Excel et Word ;
+- `/api/tenant` : invitations et administration du tenant actif ;
+- `/api/platform` : opérations réservées au `platform_admin` ;
+- `/api/public-config` : configuration publique dépendante de l’hôte ;
+- `/api/healthz` : état applicatif.
 
-## Authentification et sessions
+## Données métier
 
-Le flux en place combine JWT et refresh tokens:
-- `POST /api/auth/login` retourne un JWT dans la Réponse JSON
-- le serveur ecrit aussi un cookie HttpOnly `auth`
-- un cookie HttpOnly `refreshToken` est stocke pour la rotation des sessions
-- `POST /api/auth/refresh` renouvelle la session et effectue la rotation du refresh token
-- `POST /api/auth/logout-everywhere` revoque toutes les sessions d'un utilisateur
+Hiérarchie principale :
 
-Le contrôle d'accès est complète par des middlewares de rôles et des filtrages SQL sur les Données sensibles des comptes `entreprise`.
+1. tenant ;
+2. projet ;
+3. lot ;
+4. tour ;
+5. article ou option ;
+6. données MOE et offres des entreprises ;
+7. questions générées et exports.
 
-## Import, comparaison et exports
+`companies` représente les entreprises répondantes. Ce n’est pas la table des
+clients SaaS, qui est `tenants`.
 
-Flux métier principal:
-1. creation du projet
-2. creation ou import des lots et articles
-3. rattachement des entreprises aux lots
-4. creation des rondes
-5. import ou saisie des offres
-6. calcul des tableaux comparatifs et des ecarts
-7. génération des questions
-8. export des resultats
+## Déploiement
 
-Les routes projets et lots portent aussi une partie importante des imports métier, en particulier les aperçus et imports DPGF.
+Render utilise `render.yaml`. Le service web reçoit l’URL de
+`aolink_runtime`, jamais le credential propriétaire. La commande de démarrage
+est :
 
-## déploiement
+```text
+cd server && node src/app/server.js
+```
 
-Deux modes de déploiement sont documentes dans le dépôt:
-- Render via `render.yaml`
-- VPS via nginx + PM2 dans `DEPLOY_VPS.md`
-
-Dans les deux cas, l'application sert elle-meme l'interface web. Aucun serveur frontend distinct n'est requis.
-
-## Documents associes
-
-- `README.md` pour l'index documentaire
-- `SECURITY.md` pour les protections en place
-- `MAINTENANCE.md` pour l'exploitation et les mises a jour
-- `DEPLOY_VPS.md` pour le déploiement manuel sur serveur
-
+Pour un VPS, consulter [DEPLOY_VPS.md](DEPLOY_VPS.md) et
+[MAINTENANCE.md](MAINTENANCE.md).

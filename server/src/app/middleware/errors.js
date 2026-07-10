@@ -36,6 +36,8 @@ export class ForbiddenError extends AppError {
 
 // Middleware global de gestion d'erreurs
 export function errorHandler(err, req, res, next) {
+  if (res.headersSent) return next(err);
+
   let { statusCode = 500, message } = err;
 
   // Erreurs PostgreSQL

@@ -37,16 +37,13 @@ else
   log "📦  Pas de changement dans package.json, npm ci ignoré"
 fi
 
-# ─── Migrations de base de données (si de nouvelles migrations existent) ──────
-MIGRATION_DIR="$APP_DIR/server/src/app/migrations"
-if git diff HEAD~1 HEAD --name-only | grep -q "migrations/"; then
-  log "🗄️   Nouvelles migrations détectées — à appliquer manuellement si besoin"
-  log "     → Vérifier : $MIGRATION_DIR"
-fi
-
-# ─── Rechargement de l'application avec PM2 (sans coupure) ───────────────────
-log "♻️   Rechargement PM2 : $APP_NAME"
-pm2 reload "$APP_NAME" --update-env
+# ─── Migration explicite, application arretee ──────────────────────────────
+log "Migration et redemarrage PM2 : $APP_NAME"
+pm2 stop "$APP_NAME" || true
+log "Execution npm run db:migrate avec MIGRATION_DATABASE_URL"
+npm run db:migrate
+pm2 startOrReload ecosystem.config.cjs --only "$APP_NAME" --update-env
+pm2 startOrReload ecosystem.config.cjs --only tao-demo-reset --update-env
 
 log "✅  Déploiement $COMMIT terminé avec succès"
 log "═══════════════════════════════════════════"

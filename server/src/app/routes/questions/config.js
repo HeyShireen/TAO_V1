@@ -306,7 +306,7 @@ function httpError(status, message) {
 // Autoriser uniquement admin ou responsable pour la configuration et la génération
 function requireManager(req, res, next) {
   const role = req.user?.role;
-  if (role !== 'admin' && role !== 'responsable') {
+  if (!['platform_admin', 'tenant_admin', 'responsable'].includes(role)) {
     return res.status(403).json({ error: 'Accès refusé' });
   }
   next();

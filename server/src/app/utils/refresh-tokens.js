@@ -3,7 +3,7 @@
 
 import jwt from 'jsonwebtoken'
 import crypto from 'node:crypto'
-import { query } from '../db.js'
+import { authQuery, query } from '../db.js'
 
 /**
  * Génère un refresh token unique et le stocke en DB
@@ -11,7 +11,7 @@ import { query } from '../db.js'
  * @param {string} family - Groupe de tokens (détecte réutilisations)
  * @returns {object} { refreshToken, family, expiresIn }
  */
-export async function generateRefreshToken(userId, family = null) {
+export async function generateRefreshToken(userId, family = null, activeTenantId = null) {
   const token = crypto.randomBytes(32).toString('hex')
   const expiresIn = 30 * 24 * 60 * 60 * 1000 // 30 jours
   const expiresAt = new Date(Date.now() + expiresIn)
@@ -19,11 +19,16 @@ export async function generateRefreshToken(userId, family = null) {
   // Si pas de family fournie, en créer une nouvelle (premier login)
   const tokenFamily = family || crypto.randomUUID()
   
+  if (!activeTenantId) {
+    const userResult = await query('SELECT tenant_id FROM users WHERE id = $1', [userId])
+    activeTenantId = userResult.rows[0]?.tenant_id
+  }
   const result = await query(
-    `INSERT INTO refresh_tokens (user_id, token, family, expires_at, rotation_count)
-     VALUES ($1, $2, $3, $4, 0)
+    `INSERT INTO refresh_tokens (user_id, token, family, expires_at, rotation_count, tenant_id, active_tenant_id)
+     SELECT $1, $2, $3, $4, 0, u.tenant_id, $5
+     FROM users u WHERE u.id = $1
      RETURNING token, family, expires_at`,
-    [userId, token, tokenFamily, expiresAt]
+    [userId, token, tokenFamily, expiresAt, activeTenantId]
   )
   
   return {
@@ -44,7 +49,7 @@ export async function generateRefreshToken(userId, family = null) {
 export async function rotateRefreshToken(token, ipAddress, userAgent) {
   // 1. Récupérer le token en DB
   const tokenRes = await query(
-    `SELECT id, user_id, family, expires_at, revoked_at, rotation_count
+    `SELECT id, user_id, family, expires_at, revoked_at, rotation_count, active_tenant_id
      FROM refresh_tokens
      WHERE token = $1`,
     [token]
@@ -85,8 +90,8 @@ export async function rotateRefreshToken(token, ipAddress, userAgent) {
     
     // Logger la tentative suspecte
     await query(
-      `INSERT INTO suspicious_token_attempts (user_id, token_family, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO suspicious_token_attempts (user_id, token_family, ip_address, user_agent, tenant_id)
+       SELECT $1, $2, $3, $4, tenant_id FROM users WHERE id = $1`,
       [refreshTokenRecord.user_id, refreshTokenRecord.family, ipAddress, userAgent]
     )
     
@@ -105,17 +110,22 @@ export async function rotateRefreshToken(token, ipAddress, userAgent) {
   const expiresAt = new Date(Date.now() + expiresIn)
   
   const newTokenRes = await query(
-    `INSERT INTO refresh_tokens (user_id, token, family, expires_at, rotation_count)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO refresh_tokens (user_id, token, family, expires_at, rotation_count, tenant_id, active_tenant_id)
+     SELECT $1, $2, $3, $4, $5, u.tenant_id, $6 FROM users u WHERE u.id = $1
      RETURNING token`,
-    [refreshTokenRecord.user_id, newToken, refreshTokenRecord.family, expiresAt, refreshTokenRecord.rotation_count + 1]
+    [refreshTokenRecord.user_id, newToken, refreshTokenRecord.family, expiresAt, refreshTokenRecord.rotation_count + 1, refreshTokenRecord.active_tenant_id]
   )
   
   // 6. Récupérer les données utilisateur pour nouveau JWT
   const userRes = await query(
-    `SELECT id, email, role FROM users WHERE id = $1`,
-    [refreshTokenRecord.user_id]
+    `SELECT u.id, u.email, u.role, u.company_id, u.tenant_id,
+            t.id AS active_tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+            t.type AS tenant_type, t.status AS tenant_status
+     FROM users u JOIN tenants t ON t.id = $2
+     WHERE u.id = $1`,
+    [refreshTokenRecord.user_id, refreshTokenRecord.active_tenant_id]
   )
+  if (userRes.rows[0]?.tenant_status !== 'active') throw new Error('Organisation suspendue')
   
   return {
     user: userRes.rows[0],
@@ -128,7 +138,7 @@ export async function rotateRefreshToken(token, ipAddress, userAgent) {
  * Révoque un refresh token (logout)
  */
 export async function revokeRefreshToken(token) {
-  await query(
+  await authQuery(
     `UPDATE refresh_tokens SET revoked_at = NOW() WHERE token = $1`,
     [token]
   )
@@ -138,7 +148,7 @@ export async function revokeRefreshToken(token) {
  * Révoque TOUS les refresh tokens d'un utilisateur (logout partout)
  */
 export async function revokeAllUserTokens(userId) {
-  await query(
+  await authQuery(
     `UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`,
     [userId]
   )

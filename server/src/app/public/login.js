@@ -19,6 +19,8 @@
   const registerMsg = qs('#login-msg');
   const rememberMe = qs('#remember-me');
   const forgotPasswordLink = qs('#forgot-password-link');
+  const invitationForm = qs('#invitation-form');
+  const invitationToken = new URLSearchParams(window.location.search).get('invitation');
   let loginCooldownTimer = null;
   let betaAccessConfig = null;
 
@@ -154,7 +156,18 @@
 
   function applyBetaAccessConfig(config) {
     betaAccessConfig = config?.betaAccess || null;
-    if (!betaAccessConfig?.enabled) return;
+    if (config?.demo?.enabled) {
+      const banner = qs('#demo-login-banner');
+      if (banner) {
+        banner.textContent = config.demo.message;
+        banner.classList.remove('hidden');
+      }
+    }
+    if (betaAccessConfig?.registrationDisabled) {
+      tabRegister?.classList.add('hidden');
+      registerForm?.classList.add('hidden');
+    }
+    if (!betaAccessConfig?.enabled || invitationToken) return;
 
     showLogin();
 
@@ -181,6 +194,42 @@
     .then((resp) => resp.ok ? resp.json() : null)
     .then(applyBetaAccessConfig)
     .catch(() => {});
+
+  if (invitationToken) {
+    form?.classList.add('hidden');
+    registerForm?.classList.add('hidden');
+    invitationForm?.classList.remove('hidden');
+    tabLogin?.classList.add('hidden');
+    tabRegister?.classList.add('hidden');
+    qs('.max-480 > p.muted').textContent = 'Choisissez votre mot de passe pour rejoindre votre organisation.';
+  }
+
+  invitationForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const password = qs('#invitation-password')?.value || '';
+    const confirmation = qs('#invitation-password-confirm')?.value || '';
+    const invitationMsg = qs('#invitation-msg');
+    if (password.length < 12) {
+      invitationMsg.textContent = 'Le mot de passe doit contenir au moins 12 caractères.';
+      return;
+    }
+    if (password !== confirmation) {
+      invitationMsg.textContent = 'Les mots de passe ne correspondent pas.';
+      return;
+    }
+    try {
+      const response = await fetch(`/api/auth/invitations/${encodeURIComponent(invitationToken)}/accept`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ password }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Invitation invalide');
+      invitationMsg.textContent = data.message;
+      setTimeout(() => { window.location.href = '/login'; }, 1200);
+    } catch (error) {
+      invitationMsg.textContent = error.message;
+    }
+  });
 
   // Prefill depuis le stockage local (si l'utilisateur a choisi de se souvenir)
   try {

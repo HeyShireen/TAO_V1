@@ -5,7 +5,6 @@ import { requireAuth } from '../../middleware/auth.js';
 import { validateRequired, validateMaxLength, ValidationError } from '../../utils/validation.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject, canDeleteProject, getVisibleProjects } from '../../utils/permissions.js';
-import { isDemoMode } from '../../middleware/demo-mode.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
 
 const uploadDpgf = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
@@ -43,7 +42,7 @@ router.post('/', isResponsableOrAdmin, async (req, res) => {
         study_date, 
         req.user?.id || null,
         req.user?.id || null,
-        isDemoMode()
+        req.user?.active_tenant_type === 'demo'
       ]
     );
     res.json(r.rows[0]);

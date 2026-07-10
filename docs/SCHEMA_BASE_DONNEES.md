@@ -1,6 +1,11 @@
 # Schéma de données PostgreSQL
 
-Documentation consolidee depuis `server/src/app/Schéma.sql` et les migrations `server/src/app/migrations/*.sql`.
+Documentation consolidée depuis `server/src/app/schema.sql` et les migrations
+`server/src/app/migrations/*.sql`.
+
+Les listes de colonnes ci-dessous décrivent les champs métier principaux. Toute
+table appartenant à un tenant porte également un `tenant_id NOT NULL`, protégé
+par RLS et, lorsque nécessaire, par des clés étrangères composites.
 
 ## Vue d'ensemble
 
@@ -8,6 +13,9 @@ L'application gere des affaires d'appel d'offres autour de cette hierarchie prin
 
 ```mermaid
 erDiagram
+  tenants ||--o{ users : contains
+  tenants ||--o{ projects : isolates
+  tenants ||--o{ companies : isolates
   users ||--o{ projects : owns
   projects ||--o{ lots : contains
   projects ||--o{ rounds : has
@@ -39,14 +47,25 @@ Logique métier importante :
 - Les `generated_questions` stockent les fiches questions generees ou manuelles, par lot, tour, entreprise et ligne ou option.
 - Les `options` représentent des mini-lots optionnels, avec leurs propres lignes, MOE et offres.
 
+## Cloisonnement tenant
+
+La migration 045 ajoute `tenant_id` aux tables métier, des clés étrangères
+composites et des politiques PostgreSQL `FORCE ROW LEVEL SECURITY`. La
+migration 046 réserve le scope de migration au propriétaire du schéma.
+`companies` reste la table des entreprises répondantes et ne représente pas une
+organisation cliente. Les deux tenants initiaux sont `dmx` et `demo`.
+
 ## Cycle d'initialisation
 
-Au démarrage, `ensureSchema()` dans `server/src/app/db.js` :
+Avant le demarrage, `npm run db:migrate` :
 
-1. execute `server/src/app/Schéma.sql` ;
+1. exécute `server/src/app/schema.sql` ;
 2. crée la table technique `migrations` si besoin ;
 3. execute les migrations SQL triees par nom ;
-4. crée ou promeut un administrateur si `ADMIN_EMAIL` et `ADMIN_PASSWORD` sont definis.
+4. enregistre chaque migration terminee.
+
+Au demarrage web, `ensureSchema()` ne fait que verifier le schema et le role
+PostgreSQL runtime.
 
 La table `migrations` contient :
 
@@ -56,7 +75,20 @@ La table `migrations` contient :
 | `name` | `TEXT UNIQUE NOT NULL` | Nom du fichier de migration execute |
 | `executed_at` | `TIMESTAMPTZ DEFAULT now()` | Date d'execution |
 
-## Domaine utilisateurs et Accès
+## Domaine utilisateurs et accès
+
+### `tenants`
+
+Organisations clientes et environnement de démonstration.
+
+| Colonne | Type | Rôle |
+| --- | --- | --- |
+| `id` | `BIGSERIAL PRIMARY KEY` | Identifiant du tenant |
+| `slug` | `TEXT UNIQUE NOT NULL` | Clé stable (`dmx`, `demo`) |
+| `name` | `TEXT NOT NULL` | Nom affiché |
+| `type` | `TEXT NOT NULL` | `customer` ou `demo` |
+| `status` | `TEXT NOT NULL` | `active` ou `suspended` |
+| `created_at` | `TIMESTAMPTZ NOT NULL` | Date de création |
 
 ### `users`
 
@@ -67,7 +99,8 @@ Comptes applicatifs.
 | `id` | `BIGSERIAL PRIMARY KEY` | Identifiant utilisateur |
 | `email` | `TEXT NOT NULL` | Email de connexion |
 | `password_hash` | `TEXT NOT NULL` | Mot de passe hashe |
-| `Rôle` | `TEXT NOT NULL DEFAULT 'visionneur'` | Rôle applicatif : `admin`, `responsable`, `visionneur` |
+| `role` | `TEXT NOT NULL DEFAULT 'visionneur'` | `platform_admin`, `tenant_admin`, `responsable`, `visionneur`, `entreprise` |
+| `tenant_id` | `BIGINT REFERENCES tenants(id)` | Organisation d'appartenance du compte |
 | `company_id` | `INTEGER REFERENCES companies(id) ON DELETE SET NULL` | Entreprise rattachée, utile pour les comptes entreprise |
 | `email_verified` | `BOOLEAN DEFAULT FALSE` | Statut de vérification email |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date de creation |
@@ -505,9 +538,9 @@ Table historique issue du premier système RAO. Elle est supprimée lors de la m
 
 ## Points d'attention
 
-- `Schéma.sql` et le `defaultSchemaSQL()` de `db.js` ne sont pas strictement identiques. Par exemple `defaultSchemaSQL()` crée un index unique `companies_name_lower_idx`, alors que `Schéma.sql` ne le crée pas.
-- Les importeurs `excel.js` et `clipboard.js` utilisent `ON CONFLICT (name)` sur `companies`, ce qui nécessite une contrainte unique ou un index unique simple sur `companies(name)`. L'index fonctionnel sur `lower(name)` ne suffit pas pour cette clause.
-- Plusieurs migrations ont corrige des modeles précédents. Pour comprendre l'État final, il faut lire `Schéma.sql` plus toutes les migrations executees, pas seulement le fichier initial.
+- Plusieurs migrations ont corrigé des modèles précédents. Pour comprendre
+  l’état final, il faut lire `schema.sql` et toutes les migrations exécutées.
+- Les unicités métier des entreprises sont limitées au tenant, notamment
+  `(tenant_id, name)` et `(tenant_id, lower(name))`.
 - Les `items` et `moe_items` ne dependent plus des tours ; les `offers` et `generated_questions` en dependent.
 - `generated_questions` peut cibler soit une ligne DPGF (`item_id`), soit une ligne d'option (`option_item_id`).
-

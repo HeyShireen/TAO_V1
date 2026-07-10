@@ -1,7 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { query } from '../../db.js';
+import { pool, query, runWithDbContext } from '../../db.js';
 import { hashPassword, comparePassword } from '../../utils/hash.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../../utils/email.js';
 import { emailRateLimiter, resetEmailAttempts, resetAllCooldowns } from '../../middleware/security.js';
@@ -9,84 +9,80 @@ import { requireAuth, revokeToken } from '../../middleware/auth.js';
 import { validatePassword } from '../../utils/validation.js';
 import { honeypotValidator } from '../../middleware/honeypot.js';
 import { generateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllUserTokens, detectTokenAbusePatterns } from '../../utils/refresh-tokens.js';
+import { cookieValue, isDemoHost, publicUser } from '../../utils/tenant.js';
 
 const router = express.Router();
-
-function isPublicRegistrationDisabled() {
-  return process.env.DISABLE_PUBLIC_REGISTRATION === 'true'
-    || process.env.BETA_ACCESS_MODE === 'true'
-    || process.env.DEMO_MODE === 'true';
-}
+router.use((req, _res, next) => runWithDbContext({ authScope: true }, () => next()));
 
 // Helper: create token
-function sign(user) {
+function sign(user, activeTenantId = user.active_tenant_id || user.tenant_id) {
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) throw new Error('JWT_SECRET missing');
-  return jwt.sign({ id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }, jwtSecret, { expiresIn: '7d' });
+  return jwt.sign({
+    id: Number(user.id),
+    email: user.email,
+    role: user.role,
+    company_id: user.company_id || null,
+    tenant_id: Number(user.tenant_id),
+    active_tenant_id: Number(activeTenantId),
+    active_tenant_type: user.active_tenant_type || user.tenant_type || null,
+  }, jwtSecret, { expiresIn: '15m' });
 }
 
 // Register: auto-inscription publique avec honeypot anti-bot
 router.post('/register', emailRateLimiter, honeypotValidator, async (req, res) => {
-  if (isPublicRegistrationDisabled()) {
-    return res.status(403).json({ error: 'La creation de compte est desactivee pour la beta. Utilisez le compte beta pre-rempli.' });
-  }
+  return res.status(403).json({ error: 'La création publique de compte est désactivée. Demandez une invitation à votre administrateur.' });
+});
 
-  const { email, password } = req.body;
-  
-  // Validation
-  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Format d\'email invalide' });
-  
-  // Validation du mot de passe avec critères de sécurité
+router.post('/invitations/:token/accept', emailRateLimiter, async (req, res) => {
+  const rawToken = String(req.params.token || '')
+  const password = String(req.body?.password || '')
   try {
-    validatePassword(password);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
+    validatePassword(password)
+  } catch (error) {
+    return res.status(400).json({ error: error.message })
   }
-
-  const usersCount = await query('SELECT COUNT(*) FROM users');
-  const count = Number(usersCount.rows[0].count);
-  
-  // Premier utilisateur devient automatiquement admin et vérifié, tous les autres sont visionneurs non vérifiés
-  const finalRole = count === 0 ? 'admin' : 'visionneur';
-  const emailVerified = count === 0; // Admin auto-vérifié
-
-  const password_hash = await hashPassword(password);
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+  const client = await pool.connect()
   try {
-    const result = await query(
-      'INSERT INTO users (email, password_hash, role, email_verified) VALUES ($1,$2,$3,$4) RETURNING id, email, role, email_verified, company_id',
-      [email, password_hash, finalRole, emailVerified]
-    );
-    const user = result.rows[0];
-    
-    // Si pas admin, envoyer email de vérification
-    if (!emailVerified) {
-      const verificationToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
-      
-      await query(
-        'INSERT INTO email_verifications (user_id, token, expires_at) VALUES ($1, $2, $3)',
-        [user.id, verificationToken, expiresAt]
-      );
-      
-      try {
-        await sendVerificationEmail(user.email, verificationToken);
-        return res.json({ 
-          user: { id: user.id, email: user.email, role: user.role },
-          emailSent: true,
-          message: 'Compte créé. Vérifiez votre email pour activer votre compte.'
-        });
-      } catch (emailErr) {
-        console.error('Erreur envoi email:', emailErr);
-        return res.status(500).json({ error: 'Compte créé mais impossible d\'envoyer l\'email de vérification. Contactez le support.' });
-      }
+    await client.query('BEGIN')
+    const invitationResult = await client.query(
+      `SELECT i.*, t.status AS tenant_status
+       FROM tenant_invitations i JOIN tenants t ON t.id = i.tenant_id
+       WHERE i.token_hash = $1 FOR UPDATE OF i`,
+      [tokenHash]
+    )
+    if (invitationResult.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Invitation invalide' })
     }
-    
-    // Admin auto-connecté
-    return res.json({ user, token: sign(user) });
-  } catch (e) {
-    console.error(e);
-    return res.status(400).json({ error: 'Cet email est déjà utilisé' });
+    const invitation = invitationResult.rows[0]
+    if (invitation.accepted_at || new Date(invitation.expires_at) <= new Date()) {
+      await client.query('ROLLBACK')
+      return res.status(410).json({ error: 'Invitation expirée ou déjà utilisée' })
+    }
+    if (invitation.tenant_status !== 'active') {
+      await client.query('ROLLBACK')
+      return res.status(403).json({ error: 'Organisation suspendue' })
+    }
+
+    const passwordHash = await hashPassword(password)
+    const userResult = await client.query(
+      `INSERT INTO users (email, password_hash, role, company_id, email_verified, tenant_id)
+       VALUES ($1, $2, $3, $4, true, $5)
+       RETURNING id, email, role, company_id, tenant_id`,
+      [invitation.email, passwordHash, invitation.role, invitation.company_id, invitation.tenant_id]
+    )
+    await client.query('UPDATE tenant_invitations SET accepted_at = now() WHERE id = $1', [invitation.id])
+    await client.query('COMMIT')
+    return res.status(201).json({ user: publicUser(userResult.rows[0]), message: 'Invitation acceptée. Vous pouvez vous connecter.' })
+  } catch (error) {
+    try { await client.query('ROLLBACK') } catch {}
+    if (error.code === '23505') return res.status(409).json({ error: 'Cette adresse est déjà utilisée' })
+    console.error('Acceptation invitation:', error)
+    return res.status(500).json({ error: 'Impossible d\'accepter l\'invitation' })
+  } finally {
+    await client.release()
   }
 });
 
@@ -94,7 +90,13 @@ router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-    const r = await query('SELECT * FROM users WHERE email=$1', [email]);
+    const r = await query(
+      `SELECT u.*, t.slug AS tenant_slug, t.name AS tenant_name,
+              t.type AS tenant_type, t.status AS tenant_status
+       FROM users u JOIN tenants t ON t.id = u.tenant_id
+       WHERE lower(u.email) = lower($1)`,
+      [email.trim()]
+    );
     if (r.rowCount === 0) return res.status(401).json({ error: 'Identifiants invalides' });
     const user = r.rows[0];
     const ok = await comparePassword(password, user.password_hash);
@@ -108,12 +110,19 @@ router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
         email: user.email
       });
     }
+
+    if (user.tenant_status !== 'active') {
+      return res.status(403).json({ error: 'Organisation suspendue' });
+    }
+    if (isDemoHost(req) && user.tenant_type !== 'demo') {
+      return res.status(403).json({ error: 'Ce compte ne peut pas se connecter à l\'espace de démonstration' });
+    }
     
     await resetEmailAttempts(email);
     
     // Générer JWT court terme (15 min) + refresh token long terme (30 j)
-    const token = sign(user);
-    const { refreshToken } = await generateRefreshToken(user.id);
+    const token = sign(user, user.tenant_id);
+    const { refreshToken } = await generateRefreshToken(user.id, null, user.tenant_id);
     
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
     
@@ -137,7 +146,13 @@ router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
     
     return res.json({ 
       token, 
-      user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id || null }
+      user: publicUser(user, {
+        id: user.tenant_id,
+        slug: user.tenant_slug,
+        name: user.tenant_name,
+        type: user.tenant_type,
+        status: user.tenant_status,
+      })
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -156,7 +171,7 @@ router.post('/logout', requireAuth, async (req, res) => {
     }
     
     // Révoquer le refresh token si présent
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = cookieValue(req, 'refreshToken');
     if (refreshToken) {
       try {
         await revokeRefreshToken(refreshToken);
@@ -230,8 +245,8 @@ router.post('/resend-verification', emailRateLimiter, async (req, res) => {
     
     // Créer le nouveau token
     await query(
-      'INSERT INTO email_verifications (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, verificationToken, expiresAt]
+      'INSERT INTO email_verifications (user_id, token, expires_at, tenant_id) VALUES ($1, $2, $3, $4)',
+      [user.id, verificationToken, expiresAt, user.tenant_id]
     );
     
     // Envoyer l'email
@@ -316,7 +331,7 @@ router.post('/forgot-password', emailRateLimiter, async (req, res) => {
     }
     
     // Chercher l'utilisateur (silencieux si pas trouvé pour éviter l'énumération)
-    const result = await query('SELECT id, email FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    const result = await query('SELECT id, email, tenant_id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     
     // Toujours retourner succès même si l'email n'existe pas (sécurité)
     if (result.rows.length === 0) {
@@ -337,8 +352,8 @@ router.post('/forgot-password', emailRateLimiter, async (req, res) => {
     
     // Créer le nouveau token
     await query(
-      'INSERT INTO password_resets (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, resetToken, expiresAt]
+      'INSERT INTO password_resets (user_id, token, expires_at, tenant_id) VALUES ($1, $2, $3, $4)',
+      [user.id, resetToken, expiresAt, user.tenant_id]
     );
     
     // Envoyer l'email
@@ -578,7 +593,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
 router.post('/reset-cooldowns', requireAuth, async (req, res) => {
   try {
     // Vérifier que l'utilisateur est admin
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== 'platform_admin') {
       return res.status(403).json({ error: 'Accès refusé - Admin uniquement' });
     }
     
@@ -599,17 +614,19 @@ router.post('/refresh-token', requireAuth, async (req, res) => {
     }
     
     // Récupérer les données à jour de l'utilisateur
-    const userResult = await query('SELECT id, email, role, company_id FROM users WHERE id = $1', [userId]);
+    const userResult = await query('SELECT id, email, role, company_id, tenant_id FROM users WHERE id = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
     }
     
     const user = userResult.rows[0];
-    const newToken = sign(user);
+    user.active_tenant_id = req.user.active_tenant_id;
+    user.active_tenant_type = req.user.active_tenant_type;
+    const newToken = sign(user, req.user.active_tenant_id);
     
     return res.json({ 
       token: newToken,
-      user: { id: user.id, email: user.email, role: user.role, company_id: user.company_id }
+      user: publicUser(user)
     });
   } catch (err) {
     console.error('Erreur rafraîchissement token:', err);
@@ -622,7 +639,7 @@ router.post('/refresh-token', requireAuth, async (req, res) => {
 // À appeler quand JWT expire pour obtenir un nouveau JWT sans re-login
 router.post('/refresh', async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
+    const refreshToken = cookieValue(req, 'refreshToken') || req.body.refreshToken;
     
     if (!refreshToken) {
       return res.status(401).json({ error: 'Refresh token manquant' });
@@ -634,6 +651,9 @@ router.post('/refresh', async (req, res) => {
       req.ip,
       req.get('user-agent')
     );
+    if (isDemoHost(req) && result.user.tenant_type !== 'demo') {
+      return res.status(403).json({ error: 'Ce compte ne peut pas utiliser l\'espace de démonstration' });
+    }
     
     // Vérifier les patterns d'abus
     const hasAbuse = await detectTokenAbusePatterns(result.user.id);
@@ -643,7 +663,7 @@ router.post('/refresh', async (req, res) => {
     }
     
     // Générer un nouveau JWT court terme
-    const newJWT = sign(result.user);
+    const newJWT = sign(result.user, result.user.active_tenant_id);
     
     // Mettre à jour les cookies
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
@@ -667,7 +687,13 @@ router.post('/refresh', async (req, res) => {
     return res.json({
       token: newJWT,
       refreshToken: result.newRefreshToken,
-      user: result.user,
+      user: publicUser(result.user, {
+        id: result.user.active_tenant_id,
+        slug: result.user.tenant_slug,
+        name: result.user.tenant_name,
+        type: result.user.tenant_type,
+        status: result.user.tenant_status,
+      }),
       message: 'Token rafraîchi avec succès'
     });
   } catch (err) {

@@ -2,7 +2,8 @@
 // Middleware pour gérer les rôles et permissions
 
 const ROLES = {
-  ADMIN: 'admin',
+  PLATFORM_ADMIN: 'platform_admin',
+  TENANT_ADMIN: 'tenant_admin',
   RESPONSABLE: 'responsable',
   ENTREPRISE: 'entreprise',
   VISIONNEUR: 'visionneur'
@@ -10,10 +11,11 @@ const ROLES = {
 
 // Hiérarchie des rôles (admin > responsable > entreprise > visionneur)
 const ROLE_HIERARCHY = {
-  admin: 4,
+  platform_admin: 5,
+  tenant_admin: 4,
   responsable: 3,
   entreprise: 2,
-  visionneur: 1
+  visionneur: 1,
 };
 
 /**
@@ -60,14 +62,14 @@ function hasRoleLevel(userRole, minimumRole) {
  * Vérifier si l'utilisateur est admin
  */
 function isAdmin(req, res, next) {
-  return requireRole(ROLES.ADMIN)(req, res, next);
+  return requireRole([ROLES.PLATFORM_ADMIN, ROLES.TENANT_ADMIN])(req, res, next);
 }
 
 /**
  * Vérifier si l'utilisateur est au moins responsable
  */
 function isResponsableOrAdmin(req, res, next) {
-  return requireRole([ROLES.ADMIN, ROLES.RESPONSABLE])(req, res, next);
+  return requireRole([ROLES.PLATFORM_ADMIN, ROLES.TENANT_ADMIN, ROLES.RESPONSABLE])(req, res, next);
 }
 
 export {

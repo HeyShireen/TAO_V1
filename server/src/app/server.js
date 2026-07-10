@@ -13,11 +13,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
 
-import { query, ensureSchema } from './db.js'
+import { authQuery, query, ensureSchema } from './db.js'
 import { hashPassword } from './utils/hash.js'
 import { initRedis } from './utils/redis.js'
 import { sanitizeInput } from './middleware/security.js'
-import { demoModeMiddleware, isDemoMode } from './middleware/demo-mode.js'
+import { DEMO_RESET_MESSAGE, isDemoHost } from './utils/tenant.js'
 import authRoutes from './routes/auth/index.js'
 import projectRoutes from './routes/projects/index.js'
 import lotRoutes from './routes/lots/index.js'
@@ -29,6 +29,8 @@ import userRoutes from './routes/users/index.js'
 import shareRoutes from './routes/shares/index.js'
 import accessRequestRoutes from './routes/access-requests/index.js'
 import exportRoutes from './routes/exports/index.js'
+import tenantRoutes from './routes/tenant/index.js'
+import platformRoutes from './routes/platform/index.js'
 
 const app = express()
 
@@ -43,31 +45,28 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : [];
 
-if (isDemoMode()) {
-  console.log('Mode DEMO active - actions destructives limitees');
-}
-
 const DEFAULT_DEMO_EMAIL = 'demo@ao-link.fr';
 const DEFAULT_DEMO_PASSWORD = 'DemoAoLink2026!';
 
 function isBetaAccessMode() {
-  return process.env.BETA_ACCESS_MODE === 'true' || isDemoMode();
+  return process.env.BETA_ACCESS_MODE === 'true';
 }
 
 function getBetaAccessCredentials() {
   const email = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase();
   const password = process.env.BETA_USER_PASSWORD
     || process.env.DEMO_USER_PASSWORD
-    || (isDemoMode() ? DEFAULT_DEMO_PASSWORD : '');
+    || '';
 
   return { email, password };
 }
 
 async function ensureBetaAccessUser() {
-  if (!isBetaAccessMode()) return;
+  if (!isBetaAccessMode() && !process.env.DEMO_USER_PASSWORD) return;
 
   const { email, password } = getBetaAccessCredentials();
-  const role = process.env.BETA_USER_ROLE || 'responsable';
+  const isDemoAccount = email === (process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase();
+  const role = isDemoAccount ? 'responsable' : (process.env.BETA_USER_ROLE || 'responsable');
 
   if (!password) {
     console.warn('Mode beta actif, mais aucun BETA_USER_PASSWORD/DEMO_USER_PASSWORD n\'est defini.');
@@ -75,20 +74,24 @@ async function ensureBetaAccessUser() {
   }
 
   const passwordHash = await hashPassword(password);
-  const existing = await query('SELECT id FROM users WHERE lower(email) = lower($1)', [email]);
+  const tenant = await authQuery('SELECT id FROM tenants WHERE slug = $1', [isDemoAccount ? 'demo' : 'dmx']);
+  if (!tenant.rowCount) throw new Error('Tenant initial introuvable');
+  const tenantId = tenant.rows[0].id;
+  const existing = await authQuery('SELECT id, role FROM users WHERE lower(email) = lower($1)', [email]);
 
   if (existing.rowCount > 0) {
-    await query(
-      'UPDATE users SET password_hash = $2, role = $3, email_verified = true WHERE id = $1',
-      [existing.rows[0].id, passwordHash, role]
+    if (existing.rows[0].role === 'platform_admin') return;
+    await authQuery(
+      'UPDATE users SET password_hash = $2, role = $3, email_verified = true, tenant_id = $4 WHERE id = $1',
+      [existing.rows[0].id, passwordHash, role, tenantId]
     );
     console.log(`Compte beta mis a jour: ${email}`);
     return;
   }
 
-  await query(
-    'INSERT INTO users (email, password_hash, role, email_verified) VALUES ($1, $2, $3, true)',
-    [email, passwordHash, role]
+  await authQuery(
+    'INSERT INTO users (email, password_hash, role, email_verified, tenant_id) VALUES ($1, $2, $3, true, $4)',
+    [email, passwordHash, role, tenantId]
   );
   console.log(`Compte beta cree: ${email}`);
 }
@@ -200,20 +203,31 @@ app.use('/api/', globalLimiter)
 
 // Sanitizer global: nettoyer les inputs
 app.use(sanitizeInput)
-app.use(demoModeMiddleware)
+// Le mode DEMO est maintenant un tenant. Aucun verbe HTTP n'est bloqué
+// globalement : le jeu de données est restauré par la tâche quotidienne.
 
 // API
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
-app.get('/api/public-config', (_req, res) => {
-  const betaAccessEnabled = isBetaAccessMode();
-  const betaCredentials = getBetaAccessCredentials();
+app.get('/api/public-config', (req, res) => {
+  const demoAccessEnabled = isDemoHost(req);
+  const betaAccessEnabled = demoAccessEnabled || process.env.BETA_ACCESS_MODE === 'true';
+  const betaCredentials = demoAccessEnabled ? {
+    email: (process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase(),
+    password: process.env.DEMO_USER_PASSWORD || DEFAULT_DEMO_PASSWORD,
+  } : getBetaAccessCredentials();
 
   res.json({
     betaAccess: {
       enabled: betaAccessEnabled,
       email: betaAccessEnabled ? betaCredentials.email : '',
       password: betaAccessEnabled ? betaCredentials.password : '',
-      registrationDisabled: betaAccessEnabled || process.env.DISABLE_PUBLIC_REGISTRATION === 'true',
+      registrationDisabled: true,
+    },
+    demo: {
+      enabled: demoAccessEnabled,
+      resetTime: '03:00',
+      timezone: 'Europe/Paris',
+      message: demoAccessEnabled ? DEMO_RESET_MESSAGE : '',
     },
   });
 })
@@ -238,6 +252,8 @@ app.use('/api/questions', questionRoutes)
 app.use('/api/question-config', questionConfigRoutes)
 app.use('/api/options', optionsRoutes)
 app.use('/api/exports', exportRoutes)
+app.use('/api/tenant', tenantRoutes)
+app.use('/api/platform', platformRoutes)
 
 // Front same-origin
 const __filename = fileURLToPath(import.meta.url)
@@ -285,7 +301,7 @@ const loginCsp = helmet({
 // Routes spécifiques AVANT express.static
 // Page d'accueil publique (pas d'authentification requise)
 app.get('/', (_req, res) => {
-  if (isDemoMode()) return res.redirect('/app')
+  if (isDemoHost(_req)) return res.redirect('/app')
   res.sendFile(homeFile)
 })
 

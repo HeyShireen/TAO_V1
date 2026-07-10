@@ -66,7 +66,7 @@ export async function importLotFromClipboard({ lotId, headers, rows, roundId }) 
   for (const key of Object.keys(groups)) {
     const name = key.replace(/\b\w/g, c => c.toUpperCase());
     const r1 = await query(
-      'INSERT INTO companies (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name RETURNING id, name',
+      'INSERT INTO companies (name) VALUES ($1) ON CONFLICT (tenant_id, name) DO UPDATE SET name=EXCLUDED.name RETURNING id, name',
       [name]
     );
     const company = r1.rows[0];

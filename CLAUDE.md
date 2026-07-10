@@ -28,11 +28,11 @@ Il n'y a **pas de suite de tests ni de lint**. Vérification manuelle : `GET /ap
 
 Tout le code applicatif vit dans `server/src/app/` :
 
-- `server.js` — point d'entrée. Au démarrage : valide l'env (`security-init.js`), init Redis, `ensureSchema()` charge `schema.sql` **puis applique automatiquement toutes les migrations de `migrations/` non enregistrées dans la table `migrations`**, dans l'ordre des numéros. Sert ensuite l'API et le frontend statique.
+- `server.js` — point d'entrée. Au démarrage : valide l'env, init Redis et vérifie le schéma. Les migrations sont exécutées explicitement avant le serveur avec `npm run db:migrate` et `MIGRATION_DATABASE_URL`.
 - `routes/` — API REST par domaine : `auth`, `projects`, `lots`, `rounds`, `questions` (+ `questions/config.js` pour la config et la génération), `options`, `users`, `shares`, `access-requests`, `exports`. Les fichiers `exports/index.js` (~3900 lignes) et `questions/config.js` (~1900 lignes) concentrent la logique métier lourde.
 - `public/` — frontend : `home.html` (public), `login.html`+`login.js`, `index.html`+`app.js`. **`app.js` est un monolithe de ~12 400 lignes** contenant toute la SPA.
 - `importers/` — import DPGF/Excel (exceljs), presse-papiers, options.
-- `middleware/` — `auth.js` (JWT), `roles.js`, `security.js`, `honeypot.js`, `demo-mode.js`, `errors.js`.
+- `middleware/` — `auth.js` (JWT + contexte tenant), `roles.js`, `security.js`, `honeypot.js`, `errors.js`.
 - `migrations/` — SQL numéroté. Pour toute évolution de schéma : **ajouter une nouvelle migration numérotée** (idempotente de préférence), jamais modifier une migration publiée ni `schema.sql` seul.
 
 ### Auth et rôles

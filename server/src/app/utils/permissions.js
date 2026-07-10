@@ -2,17 +2,10 @@
 // Helpers pour vérifier les permissions sur les projets
 
 import { query } from '../db.js';
-import { isDemoMode } from '../middleware/demo-mode.js';
 
 async function isProjectAllowedInCurrentMode(projectId) {
-  if (!isDemoMode()) return true;
-
-  const project = await query(
-    'SELECT is_demo FROM projects WHERE id = $1',
-    [projectId]
-  );
-
-  return project.rows[0]?.is_demo === true;
+  const project = await query('SELECT 1 FROM projects WHERE id = $1', [projectId]);
+  return project.rowCount === 1;
 }
 
 /**
@@ -28,7 +21,7 @@ async function canViewProject(userId, projectId, userRole, userCompanyId = null)
   }
 
   // Admin et responsable peuvent tout voir
-  if (userRole === 'admin' || userRole === 'responsable') {
+  if (['platform_admin', 'tenant_admin', 'responsable'].includes(userRole)) {
     return true;
   }
 
@@ -67,7 +60,7 @@ async function canEditProject(userId, projectId, userRole) {
   }
 
   // Admin et responsable peuvent tout éditer
-  if (userRole === 'admin' || userRole === 'responsable') {
+  if (['platform_admin', 'tenant_admin', 'responsable'].includes(userRole)) {
     return true;
   }
 
@@ -97,7 +90,7 @@ async function canDeleteProject(userId, projectId, userRole) {
     return false;
   }
 
-  if (userRole === 'admin') {
+  if (userRole === 'platform_admin' || userRole === 'tenant_admin') {
     return true;
   }
 
@@ -122,19 +115,17 @@ async function canDeleteProject(userId, projectId, userRole) {
  * - Visionneur: jamais
  */
 function canShareProject(userRole) {
-  return userRole === 'admin' || userRole === 'responsable';
+  return ['platform_admin', 'tenant_admin', 'responsable'].includes(userRole);
 }
 
 /**
  * Obtenir la liste des projets visibles pour un utilisateur
  */
 async function getVisibleProjects(userId, userRole, userCompanyId = null) {
-  const demoProjectFilter = isDemoMode() ? 'COALESCE(p.is_demo, false) = true' : 'TRUE';
-
   // Admin et responsable voient tout
-  if (userRole === 'admin' || userRole === 'responsable') {
+  if (['platform_admin', 'tenant_admin', 'responsable'].includes(userRole)) {
     const result = await query(
-      `SELECT p.* FROM projects p WHERE ${demoProjectFilter} ORDER BY p.created_at DESC`
+      'SELECT p.* FROM projects p ORDER BY p.created_at DESC'
     );
     return result.rows;
   }
@@ -145,7 +136,7 @@ async function getVisibleProjects(userId, userRole, userCompanyId = null) {
       `SELECT DISTINCT p.* FROM projects p
        JOIN lots l ON l.project_id = p.id
        JOIN lot_companies lc ON lc.lot_id = l.id
-       WHERE lc.company_id = $1 AND ${demoProjectFilter}
+       WHERE lc.company_id = $1
        ORDER BY p.created_at DESC`,
       [userCompanyId]
     );
@@ -156,7 +147,7 @@ async function getVisibleProjects(userId, userRole, userCompanyId = null) {
   const result = await query(
     `SELECT p.* FROM projects p
      INNER JOIN project_shares ps ON p.id = ps.project_id
-     WHERE ps.shared_with_user_id = $1 AND ps.can_view = true AND ${demoProjectFilter}
+     WHERE ps.shared_with_user_id = $1 AND ps.can_view = true
      ORDER BY p.created_at DESC`,
     [userId]
   );

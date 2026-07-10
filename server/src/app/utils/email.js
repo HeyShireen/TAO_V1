@@ -69,6 +69,36 @@ export async function sendVerificationEmail(email, token) {
   }
 }
 
+export async function sendTenantInvitationEmail(email, token, tenantName) {
+  const invitationUrl = `${process.env.APP_URL || 'http://localhost:4000'}/login?invitation=${encodeURIComponent(token)}`;
+  const safeTenantName = String(tenantName).replace(/[<>&"']/g, '');
+  await getTransporter().sendMail({
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: `Invitation AO Link - ${safeTenantName}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+        <h2>Invitation AO Link</h2>
+        <p>Vous êtes invité à rejoindre l'espace <strong>${safeTenantName}</strong>.</p>
+        <p><a href="${invitationUrl}" style="background:#0066cc;color:white;padding:12px 24px;text-decoration:none;border-radius:5px">Accepter l'invitation</a></p>
+        <p style="color:#666;font-size:14px">Cette invitation expire dans 48 heures.</p>
+      </div>`,
+  });
+}
+
+export async function sendOperationalAlert(subject, message) {
+  const recipient = process.env.ALERT_EMAIL || process.env.PLATFORM_ADMIN_EMAIL;
+  if (!recipient || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) return false;
+  const safeMessage = String(message).replace(/[<>&]/g, '');
+  await getTransporter().sendMail({
+    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    to: recipient,
+    subject: `[AO Link] ${subject}`,
+    text: safeMessage,
+  });
+  return true;
+}
+
 /**
  * Envoyer une notification aux responsables pour une demande d'accès
  */

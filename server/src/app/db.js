@@ -1,10 +1,13 @@
 import pg from 'pg'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const { Pool } = pg
+const dbContext = new AsyncLocalStorage()
+const appliedClientContexts = new WeakMap()
 
 // Configuration SSL
 // Problème rencontré: "SSL/TLS required" sur Render lorsque NODE_ENV=development et DB_SSL non défini.
@@ -27,19 +30,122 @@ if (process.env.DB_SSL === 'true' || isRenderHost) {
   sslConfig = false
 }
 
-export const pool = new Pool({
+const runtimePool = new Pool({
   connectionString,
   ssl: sslConfig
 })
 
-export const query = (t, p) => pool.query(t, p)
+function normalizedContext(extra = {}) {
+  return { ...(dbContext.getStore() || {}), ...extra }
+}
 
-async function runMigrations() {
+export function runWithDbContext(context, callback) {
+  return dbContext.run(normalizedContext(context), callback)
+}
+
+export function runWithTenantContext(context, callback) {
+  return runWithDbContext({
+    tenantId: Number(context.tenantId),
+    userId: Number(context.userId),
+    authScope: false,
+    platformScope: false,
+  }, callback)
+}
+
+function contextSettings(context = dbContext.getStore()) {
+  const tenantId = Number.isFinite(Number(context?.tenantId)) ? String(context.tenantId) : ''
+  const userId = Number.isFinite(Number(context?.userId)) ? String(context.userId) : ''
+  return {
+    tenantId,
+    userId,
+    authScope: context?.authScope === true ? 'true' : 'false',
+    platformScope: context?.platformScope === true ? 'true' : 'false',
+  }
+}
+
+function contextSignature(settings) {
+  return [settings.tenantId, settings.userId, settings.authScope, settings.platformScope].join('|')
+}
+
+async function applyContextIfChanged(client, context = dbContext.getStore()) {
+  const settings = contextSettings(context)
+  const signature = contextSignature(settings)
+  if (appliedClientContexts.get(client) === signature) return
+
+  await client.query(
+    `SELECT
+       set_config('app.tenant_id', $1, false),
+       set_config('app.user_id', $2, false),
+       set_config('app.auth_scope', $3, false),
+       set_config('app.platform_scope', $4, false)`,
+    [
+      settings.tenantId,
+      settings.userId,
+      settings.authScope,
+      settings.platformScope,
+    ]
+  )
+  appliedClientContexts.set(client, signature)
+}
+
+async function connectWithContext() {
+  const client = await runtimePool.connect()
+  try {
+    await applyContextIfChanged(client)
+  } catch (error) {
+    appliedClientContexts.delete(client)
+    client.release(true)
+    throw error
+  }
+
+  const release = client.release.bind(client)
+  let released = false
+  client.release = async (destroy = false) => {
+    if (released) return
+    released = true
+    if (destroy) {
+      appliedClientContexts.delete(client)
+      return release(true)
+    }
+    // Le contexte reste sur la connexion inactive, inaccessible hors de cette
+    // façade. Au prochain checkout il est comparé au contexte demandé et
+    // remplacé avant toute requête si nécessaire.
+    release()
+  }
+  return client
+}
+
+// Façade compatible avec les transactions existantes. Chaque connexion reçoit
+// le contexte AsyncLocalStorage courant avant sa première requête.
+export const pool = {
+  connect: connectWithContext,
+  query: async (text, params) => {
+    const client = await connectWithContext()
+    try {
+      return await client.query(text, params)
+    } finally {
+      await client.release()
+    }
+  },
+  end: () => runtimePool.end(),
+}
+
+export const query = (text, params) => pool.query(text, params)
+
+export function authQuery(text, params) {
+  return runWithDbContext({ authScope: true }, () => query(text, params))
+}
+
+export function platformQuery(text, params) {
+  return runWithDbContext({ platformScope: true }, () => query(text, params))
+}
+
+async function runMigrations(client) {
   const __dirname = path.dirname(fileURLToPath(import.meta.url))
   const migrationsDir = path.join(__dirname, 'migrations')
   
   // Créer la table de suivi des migrations si elle n'existe pas
-  await pool.query(`
+  await client.query(`
     CREATE TABLE IF NOT EXISTS migrations (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -54,7 +160,7 @@ async function runMigrations() {
     
     for (const file of sqlFiles) {
       // Vérifier si la migration a déjà été exécutée
-      const exists = await pool.query(
+      const exists = await client.query(
         'SELECT id FROM migrations WHERE name = $1',
         [file]
       )
@@ -65,17 +171,17 @@ async function runMigrations() {
         const migrationSQL = await fs.readFile(migrationPath, 'utf8')
         
         // Exécuter la migration dans une transaction
-        await pool.query('BEGIN')
+        await client.query('BEGIN')
         try {
-          await pool.query(migrationSQL)
-          await pool.query(
+          await client.query(migrationSQL)
+          await client.query(
             'INSERT INTO migrations (name) VALUES ($1)',
             [file]
           )
-          await pool.query('COMMIT')
+          await client.query('COMMIT')
           console.log(`✅ Migration ${file} exécutée avec succès`)
         } catch (err) {
-          await pool.query('ROLLBACK')
+          await client.query('ROLLBACK')
           console.error(`❌ Erreur lors de la migration ${file}:`, err.message)
           throw err
         }
@@ -94,13 +200,15 @@ async function runMigrations() {
 const REQUIRED_COLUMNS = [
   ['generated_questions', 'generated_text'],   // migration 043
   ['project_question_config', 'ask_questions_qty'], // migration 044
-  ['lot_question_config', 'ask_questions_qty_override'] // migration 044
+  ['lot_question_config', 'ask_questions_qty_override'], // migration 044
+  ['users', 'tenant_id'], // migration 045
+  ['projects', 'tenant_id'] // migration 045
 ]
 
 async function assertSchemaSanity() {
   const missing = []
   for (const [table, column] of REQUIRED_COLUMNS) {
-    const res = await pool.query(
+    const res = await runtimePool.query(
       `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
       [table, column]
     )
@@ -114,70 +222,95 @@ async function assertSchemaSanity() {
   }
 }
 
-export async function ensureSchema() {
+async function assertRuntimeRoleSafety() {
+  const result = await runtimePool.query(
+    `SELECT r.rolsuper, r.rolbypassrls,
+            EXISTS (
+              SELECT 1 FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public'
+                AND c.relrowsecurity
+                AND c.relowner = r.oid
+            ) AS owns_business_tables
+     FROM pg_roles r WHERE r.rolname = current_user`
+  )
+  const role = result.rows[0]
+  if (!role || role.rolsuper || role.rolbypassrls || role.owns_business_tables) {
+    throw new Error('DATABASE_URL doit utiliser un role applicatif non proprietaire, NOSUPERUSER et NOBYPASSRLS')
+  }
+}
+
+export async function migrateSchema() {
   const __dirname = path.dirname(fileURLToPath(import.meta.url))
   const schemaPath = path.join(__dirname, 'schema.sql')
-  let sql
+  const sql = await fs.readFile(schemaPath, 'utf8')
+  const migrationConnectionString = process.env.MIGRATION_DATABASE_URL
+  if (!migrationConnectionString) {
+    throw new Error('MIGRATION_DATABASE_URL est obligatoire; DATABASE_URL ne sert jamais de repli pour une migration')
+  }
+
+  const parsedMigrationUrl = new URL(migrationConnectionString)
+  if (!['postgres:', 'postgresql:'].includes(parsedMigrationUrl.protocol)) {
+    throw new Error('MIGRATION_DATABASE_URL doit etre une URL PostgreSQL')
+  }
+  const databaseName = decodeURIComponent(parsedMigrationUrl.pathname.replace(/^\//, ''))
+  const target = `${parsedMigrationUrl.host}/${databaseName}`
+  const isLocalTarget = ['localhost', '127.0.0.1', '::1'].includes(parsedMigrationUrl.hostname)
+
+  if (!isLocalTarget) {
+    if (process.env.ALLOW_REMOTE_MIGRATION !== 'true') {
+      throw new Error(`Migration distante refusee. Pour cette cible, definir ALLOW_REMOTE_MIGRATION=true et MIGRATION_CONFIRM_TARGET=${target}`)
+    }
+    if (process.env.MIGRATION_CONFIRM_TARGET !== target) {
+      throw new Error(`Cible non confirmee. MIGRATION_CONFIRM_TARGET doit valoir exactement: ${target}`)
+    }
+    if (!(process.env.MIGRATION_BACKUP_REFERENCE || '').trim()) {
+      throw new Error('MIGRATION_BACKUP_REFERENCE est obligatoire pour une migration distante')
+    }
+  }
+
+  if (process.env.DATABASE_URL) {
+    const runtimeUrl = new URL(process.env.DATABASE_URL)
+    const sameCredentialsAndTarget = runtimeUrl.username === parsedMigrationUrl.username
+      && runtimeUrl.hostname === parsedMigrationUrl.hostname
+      && runtimeUrl.port === parsedMigrationUrl.port
+      && runtimeUrl.pathname === parsedMigrationUrl.pathname
+    if (sameCredentialsAndTarget && process.env.ALLOW_SHARED_MIGRATION_CREDENTIALS !== 'true') {
+      throw new Error('Le role de migration est aussi le role DATABASE_URL. Definir ALLOW_SHARED_MIGRATION_CREDENTIALS=true uniquement pour la migration de transition, puis separer les roles')
+    }
+  }
+
+  const migrationIsRender = /render\.com/.test(migrationConnectionString)
+  const migrationPool = new Pool({
+    connectionString: migrationConnectionString,
+    ssl: process.env.DB_SSL === 'true' || migrationIsRender ? { rejectUnauthorized: false } : sslConfig,
+  })
+  const client = await migrationPool.connect()
   try {
-    sql = await fs.readFile(schemaPath, 'utf8')
-  } catch {
-    console.warn('schema.sql introuvable, chargement du schéma embarqué')
-    sql = defaultSchemaSQL()
+    await client.query(
+      `SELECT set_config('app.demo_email', $1, false),
+              set_config('app.platform_admin_email', $2, false),
+              set_config('app.migration_scope', 'true', false)`,
+      [
+        (process.env.DEMO_USER_EMAIL || 'demo@ao-link.fr').trim().toLowerCase(),
+        (process.env.PLATFORM_ADMIN_EMAIL || 'alban.michaud65@gmail.com').trim().toLowerCase(),
+      ]
+    )
+    await client.query(sql)
+    await runMigrations(client)
+    console.log('Schéma et migrations OK')
+  } finally {
+    client.release()
+    await migrationPool.end()
   }
-  await pool.query(sql)
-  console.log('Schema OK')
-  
-  // Exécuter les migrations
-  await runMigrations()
+}
 
-  // Sanity check : colonnes sentinelles des migrations récentes. Si elles
-  // manquent, le déploiement est incomplet (fichiers de migration absents) et
-  // le code planterait en cours de requête — on refuse de démarrer.
+export async function ensureSchema() {
+  // Le processus applicatif n'exécute jamais de DDL. Cela permet d'utiliser un
+  // rôle PostgreSQL non propriétaire soumis à FORCE ROW LEVEL SECURITY.
   await assertSchemaSanity()
-
-  // Vérifier si un utilisateur admin existe
-  const usersCount = await query('SELECT COUNT(*) FROM users')
-  if (Number(usersCount.rows[0].count) === 0) {
-    console.log('\n⚠️  AUCUN UTILISATEUR - Utilisez l\'une de ces méthodes pour créer un admin:')
-    console.log('   1. Via l\'interface: Cliquez sur "Créer admin" au premier lancement')
-    console.log('   2. Via variables d\'environnement (.env):')
-    console.log('      ADMIN_EMAIL=admin@example.com')
-    console.log('      ADMIN_PASSWORD=VotreMotDePasseSécurisé123!\n')
-    
-    // Si les variables d'environnement sont définies, créer l'admin
-    if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-      console.log('Création de l\'utilisateur admin depuis .env (base vide)...')
-      const bcrypt = await import('bcrypt')
-      const password_hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10)
-      await query(
-        'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
-        [process.env.ADMIN_EMAIL, password_hash, 'admin']
-      )
-      console.log('✅ Utilisateur admin créé:', process.env.ADMIN_EMAIL)
-    }
-  }
-
-  // Garantir l'existence / rôle admin même si la base n'est pas vide
-  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-    const adminRes = await query('SELECT id, role FROM users WHERE lower(email)=lower($1)', [process.env.ADMIN_EMAIL])
-    if (adminRes.rowCount === 0) {
-      console.log('Création admin manquante (base non vide) - ajout...')
-      const bcrypt = await import('bcrypt')
-      const password_hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10)
-      await query(
-        'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)',
-        [process.env.ADMIN_EMAIL, password_hash, 'admin']
-      )
-      console.log('✅ Admin ajouté:', process.env.ADMIN_EMAIL)
-    } else if (adminRes.rows[0].role !== 'admin') {
-      await query('UPDATE users SET role=$2 WHERE id=$1', [adminRes.rows[0].id, 'admin'])
-      console.log('⚠️ Utilisateur existant promu admin:', process.env.ADMIN_EMAIL)
-    } else {
-      console.log('ℹ️ Admin déjà présent:', process.env.ADMIN_EMAIL)
-    }
-  } else {
-    console.log('ℹ️ ADMIN_EMAIL / ADMIN_PASSWORD non définis - bypass impossible')
-  }
+  await assertRuntimeRoleSafety()
+  console.log('Schéma applicatif OK')
 }
 
 function defaultSchemaSQL() {

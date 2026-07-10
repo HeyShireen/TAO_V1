@@ -1,143 +1,125 @@
 # Sécurité AO Link
 
-Ce document décrit les mécanismes de sécurité visibles dans le code actuel. Il remplace les anciennes syntheses d'audit qui sont conservées dans `docs/_archive/`.
+Ce document décrit l’état actuel du code. Les anciens audits sont conservés
+dans `docs/_archive/` et ne constituent pas une procédure opérationnelle.
 
-## démarrage securise
+## Démarrage sécurisé
 
-Le serveur charge `server/src/app/security-init.js` avant Express. Les contrôles verifies au démarrage sont notamment:
-- presence de `JWT_SECRET`
-- longueur minimale de `JWT_SECRET`
-- presence de `DATABASE_URL`
-- presence de `ALLOWED_ORIGINS` en production
-- journalisation des variables critiques et optionnelles configurées
+`server/src/app/security-init.js` valide notamment `JWT_SECRET`,
+`DATABASE_URL` et, en production, `ALLOWED_ORIGINS`. Le démarrage est refusé si
+la configuration critique est absente.
 
-Si une variable critique manque, le processus s'arrete.
+`ensureSchema()` vérifie ensuite :
 
-## CORS
+- la présence des colonnes sentinelles des dernières migrations ;
+- que le rôle PostgreSQL runtime n’est ni propriétaire, ni superutilisateur,
+  ni `BYPASSRLS`.
 
-La politique CORS est definie dans `server/src/app/server.js`.
+Le serveur web ne reçoit jamais le credential de migration et n’exécute aucun
+DDL au démarrage.
 
-Comportement actuel:
-- en production, seules les origines declarees dans `ALLOWED_ORIGINS` sont acceptees
-- en développement, une liste localhost est acceptée en plus des origines configurées
-- les credentials sont actives
+## Isolation multi-tenant
 
-En production, l'absence de `ALLOWED_ORIGINS` provoque l'arret du serveur.
+Chaque table métier porte un `tenant_id`. L’isolation combine :
 
-## Headers HTTP et CSP
+- contexte tenant appliqué par la façade SQL de `db.js` ;
+- clés étrangères composites incluant le tenant ;
+- politiques PostgreSQL `ENABLE ROW LEVEL SECURITY` et
+  `FORCE ROW LEVEL SECURITY` ;
+- revalidation en base de l’utilisateur et du tenant actif à chaque requête
+  authentifiée.
 
-Le serveur utilisé `helmet` avec notamment:
-- CSP active
-- `frameguard: deny`
-- `referrerPolicy: strict-origin-when-cross-origin`
-- HSTS active uniquement si `HTTPS_PROXY=true`
-
-Particularite importante du code actuel:
-- la CSP autorise encore `unsafe-inline` pour les scripts et styles de l'interface actuelle
-- `upgrade-insecure-requests` n'est ajoute que si l'application est explicitement derriere un proxy HTTPS
-
-Cela correspond au fonctionnement present du frontend, mais ce n'est pas une CSP stricte au sens maximal.
-
-## Limitation de debit
-
-Deux niveaux principaux sont appliques:
-
-- limite globale API: `2000` requetes / 15 minutes en production, `10000` en développement
-- limite auth IP: `5` tentatives / minute sur `/api/auth/*`, avec Réponse de cooldown detaillee
-
-Un limiteur supplémentaire par email est utilisé dans les routes d'authentification via le middleware de sécurité.
+Sans contexte, une requête métier ne voit aucune ligne. Le scope de migration
+est réservé au propriétaire du schéma et ne peut pas être activé par
+`aolink_runtime`.
 
 ## Authentification et sessions
 
-Le système combine plusieurs mécanismes:
+- mots de passe hachés avec `bcrypt` ;
+- JWT d’accès signé, valable 15 minutes ;
+- cookie `auth` HttpOnly, `Secure` en production et `SameSite=Lax` ;
+- refresh token rotatif valable 30 jours ;
+- révocation d’une session ou de toutes les sessions ;
+- détection des réutilisations suspectes d’une famille de refresh tokens ;
+- blacklist Redis comme couche de révocation complémentaire.
 
-- hash de mot de passe via `bcrypt`
-- JWT signes avec `JWT_SECRET`
-- cookie HttpOnly `auth`
-- refresh token en base avec rotation
-- blacklist de JWT via Redis pour la révocation
+Le JWT contient l’utilisateur, le rôle, le tenant d’appartenance et le tenant
+actif. Ces informations ne sont jamais considérées comme suffisantes sans
+relecture de la base.
 
-Endpoints notables:
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `POST /api/auth/refresh`
-- `POST /api/auth/logout-everywhere`
+## Création des comptes
 
-État exact du code:
-- le JWT retourne par `sign()` est signe avec `expiresIn: '7d'`
-- le cookie `auth` pose au login expire au bout de 15 minutes
-- un cookie `refreshToken` expire au bout de 30 jours
-- le frontend recoit aussi le JWT dans la Réponse JSON
+L’inscription publique est désactivée. Un `tenant_admin` invite un utilisateur
+dans son tenant. Le token d’invitation est haché, expire et ne peut être utilisé
+qu’une fois.
 
-La révocation des JWT repose sur Redis. Si Redis est indisponible, le middleware retombe sur une vérification JWT seule afin de ne pas bloquer toute l'application.
+Un `tenant_admin` ne peut pas :
 
-## Refresh tokens
+- attribuer `platform_admin` ;
+- déplacer un compte vers un autre tenant ;
+- consulter les utilisateurs d’un autre tenant.
 
-Le flux de refresh est implemente:
-- stockage en base dans `refresh_tokens`
-- rotation a chaque refresh
-- révocation sur logout
-- révocation globale via `logout-everywhere`
-- journalisation des reutilisations suspectes dans `suspicious_token_attempts`
+L’adresse email reste unique sur l’ensemble de la plateforme.
 
-Le code declenche aussi une detection d'abus sur les reutilisations suspectes d'une meme famille de tokens.
+## Administration plateforme
 
-## vérification email et reset mot de passe
+Le `platform_admin` peut créer ou suspendre un tenant et changer son tenant
+actif avec un motif obligatoire. Chaque bascule et accès plateforme est
+journalisé avec l’utilisateur, le tenant, le motif, l’adresse IP et la date.
 
-Fonctions actuellement présentes:
-- vérification d'email avec token en base et expiration 24h
-- renvoi de mail de vérification avec cooldown
-- oubli de mot de passe avec token temporaire
-- formulaire HTML de reinitialisation servi par l'API
+Le compte plateforme ne dispose pas d’une requête métier globale : il travaille
+toujours dans un tenant actif unique.
 
-Les inscriptions autres que le tout premier compte restent bloquees tant que l'email n'est pas vérifié.
+## Environnement DEMO
 
-## Honeypot et anti-bots
+Sur `demo.ao-link.fr` :
 
-Le middleware `server/src/app/middleware/honeypot.js` vérifié des champs pieges sur certaines routes d'authentification.
+- seuls les comptes du tenant DEMO sont acceptés ;
+- les identifiants préremplis ne sont exposés que sur cet hôte ;
+- un bandeau annonce le reset quotidien ;
+- le reset vérifie le type du tenant, prend un verrou PostgreSQL et travaille
+  dans une transaction.
 
-État actuel:
-- champs surveilles: `website_url`, `phone_number`, `company_name`
-- en cas de declenchement, la requête est absorbee avec une Réponse de Succès factice
-- une tentative de journalisation en base est faite dans `honeypot_attempts`
+Le reset ne doit jamais utiliser le rôle propriétaire du schéma.
 
-Attention:
-- la journalisation honeypot depend de l'existence de la table `honeypot_attempts`
-- le middleware degrade silencieusement si cette table n'existe pas
+## Protections HTTP
 
-## Protections applicatives complementaires
+- CORS limité à `ALLOWED_ORIGINS` en production ;
+- cookies avec credentials ;
+- `helmet`, CSP, HSTS derrière proxy HTTPS et interdiction d’iframe ;
+- limite globale API ;
+- limite renforcée sur `/api/auth` et par adresse email ;
+- honeypot sur les routes d’authentification concernées ;
+- requêtes SQL paramétrées et validation des entrées ;
+- taille JSON limitée.
 
-- sanitation globale des inputs
-- vérification des permissions par Rôle
-- masquage des données MOE pour les comptes `entreprise`
-- filtrage `company_id` sur plusieurs routes métier sensibles
-- taille JSON limitee a `10mb`
+La CSP autorise encore certaines ressources inline nécessaires à l’interface
+actuelle. Son durcissement demandera une migration des scripts et styles vers
+des fichiers ou des nonces.
 
-## Secrets et configuration
+## Secrets
 
-Ne jamais versionner:
-- `JWT_SECRET`
-- `DATABASE_URL` avec identifiants
-- `EMAIL_PASS`
-- `REDIS_URL` si l'instance n'est pas publique
+Ne jamais versionner :
 
-En production, Vérifier au minimum:
-- `NODE_ENV=production`
-- `ALLOWED_ORIGINS` renseigne
-- `JWT_SECRET` fort
-- `HTTPS_PROXY=true` si TLS termine par nginx ou autre reverse proxy
-- `REDIS_URL` configuré si la révocation JWT doit être effective
+- `JWT_SECRET` ;
+- les URL PostgreSQL avec credentials ;
+- `EMAIL_PASS` ;
+- les credentials Redis ;
+- les mots de passe DEMO.
 
-## contrôles manuels recommandes
+Les fichiers `.env` et `.env.*.local` sont ignorés par Git. En production,
+utiliser le gestionnaire de secrets Render ou celui de l’hébergeur.
 
-Vérifier regulierement:
-- qu'une origine non autorisee est bien rejetee en production
-- que `GET /api/healthz` remonte l'État attendu de Redis et PostgreSQL
-- qu'un compte `entreprise` ne voit ni les Données MOE ni les offres des autres entreprises
-- que le cycle login -> refresh -> logout -> logout everywhere reste fonctionnel
+## Contrôles réguliers
 
-## Limites connues a garder en tete
+- `GET /api/healthz` ;
+- `npm run tenant:audit` avec un credential autorisé ;
+- `npm run tenant:validate-app-role` ;
+- tests d’accès croisé entre DMX, DEMO et un tenant fictif ;
+- cycle login, refresh, logout et logout global ;
+- invitations expirées ou réutilisées ;
+- imports et exports avec des noms d’entreprises identiques dans deux tenants ;
+- reset DEMO sans modification de DMX.
 
-- le JWT signe 7 jours et le cookie `auth` 15 minutes ne refletent pas exactement la meme duree de session
-- la blacklist JWT perd de sa valeur si Redis est indisponible
-- la CSP reste permissive pour supporter l'interface actuelle
+Voir [MULTI_TENANT.md](MULTI_TENANT.md) pour la procédure de migration et de
+retour arrière.

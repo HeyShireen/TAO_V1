@@ -16,6 +16,7 @@
   <meta name="theme-color" content="#091216" />
 </head>
 <body>
+  <div id="demo-login-banner" class="demo-reset-banner hidden" role="status"></div>
   <div class="max-480 card" style="width:calc(100% - 16px);max-width:480px">
     <div class="login-logo-container">
       <img id="login-logo" src="./assets/logo.png" alt="Logo" class="login-logo" />
@@ -54,6 +55,14 @@
         <button type="button" class="btn ghost" id="back-to-login">J'ai déjà un compte</button>
       </div>
       <p class="muted" style="margin-top:8px">Un email de confirmation sera envoyé pour activer votre compte.</p>
+    </form>
+
+    <form class="auth-form hidden" id="invitation-form" autocomplete="on">
+      <h3>Accepter l'invitation</h3>
+      <label class="field"><span>Nouveau mot de passe</span><input id="invitation-password" type="password" autocomplete="new-password" required/></label>
+      <label class="field"><span>Confirmer</span><input id="invitation-password-confirm" type="password" autocomplete="new-password" required/></label>
+      <button class="btn" type="submit">Activer mon compte</button>
+      <p id="invitation-msg" class="muted"></p>
     </form>
   </div>
 
