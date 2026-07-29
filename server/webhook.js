@@ -5,6 +5,8 @@
  * Flux : GitHub push → webhook → deploy.sh → git pull + pm2 restart
  */
 
+import 'dotenv/config';
+
 import express from 'express';
 import crypto from 'crypto';
 import { execFile } from 'child_process';

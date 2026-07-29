@@ -57,7 +57,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         WEBHOOK_PORT: 9000,
-        WEBHOOK_SECRET: '',   // ← À remplir ou charger depuis .env.webhook
+        // WEBHOOK_SECRET est lu depuis server/.env. Ne pas le declarer ici :
+        // une valeur vide ecraserait celle du fichier .env.
         WEBHOOK_BRANCH: 'main',
         DEPLOY_SCRIPT: '/home/tao/TAO/TAO_V1/server/deploy.sh',
       },
