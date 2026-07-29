@@ -9,7 +9,7 @@ import { requireAuth, revokeToken } from '../../middleware/auth.js';
 import { validatePassword } from '../../utils/validation.js';
 import { honeypotValidator } from '../../middleware/honeypot.js';
 import { generateRefreshToken, rotateRefreshToken, revokeRefreshToken, revokeAllUserTokens, detectTokenAbusePatterns } from '../../utils/refresh-tokens.js';
-import { cookieValue, isDemoHost, publicUser } from '../../utils/tenant.js';
+import { cookieValue, isDemoHost, publicUser, sessionCookieOptions, AUTH_COOKIE_MAX_AGE, REFRESH_COOKIE_MAX_AGE } from '../../utils/tenant.js';
 
 const router = express.Router();
 router.use((req, _res, next) => runWithDbContext({ authScope: true }, () => next()));
@@ -124,25 +124,11 @@ router.post('/login', emailRateLimiter, honeypotValidator, async (req, res) => {
     const token = sign(user, user.tenant_id);
     const { refreshToken } = await generateRefreshToken(user.id, null, user.tenant_id);
     
-    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-    
     // JWT en cookie HttpOnly
-    res.cookie('auth', token, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
-    
+    res.cookie('auth', token, sessionCookieOptions(req, AUTH_COOKIE_MAX_AGE));
+
     // Refresh token en cookie HttpOnly séparé
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-    });
+    res.cookie('refreshToken', refreshToken, sessionCookieOptions(req, REFRESH_COOKIE_MAX_AGE));
     
     return res.json({ 
       token, 
@@ -180,13 +166,8 @@ router.post('/logout', requireAuth, async (req, res) => {
       }
     }
     
-    const opts = { 
-      httpOnly: true, 
-      secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, 
-      sameSite: 'lax', 
-      path: '/' 
-    };
-    
+    const opts = sessionCookieOptions(req);
+
     res.clearCookie('auth', opts);
     res.clearCookie('refreshToken', opts);
     
@@ -666,23 +647,8 @@ router.post('/refresh', async (req, res) => {
     const newJWT = sign(result.user, result.user.active_tenant_id);
     
     // Mettre à jour les cookies
-    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-    
-    res.cookie('auth', newJWT, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
-    
-    res.cookie('refreshToken', result.newRefreshToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-    });
+    res.cookie('auth', newJWT, sessionCookieOptions(req, AUTH_COOKIE_MAX_AGE));
+    res.cookie('refreshToken', result.newRefreshToken, sessionCookieOptions(req, REFRESH_COOKIE_MAX_AGE));
     
     return res.json({
       token: newJWT,
@@ -719,13 +685,8 @@ router.post('/logout-everywhere', requireAuth, async (req, res) => {
       await revokeToken(req.token);
     }
     
-    const opts = { 
-      httpOnly: true, 
-      secure: process.env.NODE_ENV === 'production' || !!process.env.RENDER, 
-      sameSite: 'lax', 
-      path: '/' 
-    };
-    
+    const opts = sessionCookieOptions(req);
+
     res.clearCookie('auth', opts);
     res.clearCookie('refreshToken', opts);
     

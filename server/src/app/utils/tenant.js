@@ -15,6 +15,26 @@ export function cookieValue(req, name) {
   return pair ? decodeURIComponent(pair.slice(name.length + 1)) : null
 }
 
+// Options des cookies de session (`auth` et `refreshToken`).
+// Le drapeau Secure doit suivre le protocole réellement vu par le navigateur, pas
+// NODE_ENV : sur le VPS servi en HTTP simple, `secure: true` fait silencieusement
+// jeter le cookie par le navigateur. Le refreshToken n'est alors jamais stocké et
+// la session meurt sans recours à l'expiration du JWT (15 min).
+// `trust proxy` étant activé en production, req.secure vaut bien true derrière
+// nginx TLS (X-Forwarded-Proto) et false en HTTP direct.
+export function sessionCookieOptions(req, maxAge = null) {
+  const options = {
+    httpOnly: true,
+    secure: req?.secure === true,
+    sameSite: 'lax',
+    path: '/',
+  }
+  return maxAge === null ? options : { ...options, maxAge }
+}
+
+export const AUTH_COOKIE_MAX_AGE = 15 * 60 * 1000            // 15 minutes, aligné sur le JWT
+export const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000 // 30 jours
+
 export function publicUser(user, activeTenant = null) {
   const activeTenantId = Number(activeTenant?.id || user.active_tenant_id || user.tenant_id)
   return {

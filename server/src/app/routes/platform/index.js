@@ -5,7 +5,7 @@ import { authQuery, platformQuery } from '../../db.js'
 import { requireAuth } from '../../middleware/auth.js'
 import { requireRole } from '../../middleware/roles.js'
 import { sendTenantInvitationEmail } from '../../utils/email.js'
-import { cookieValue } from '../../utils/tenant.js'
+import { cookieValue, sessionCookieOptions, AUTH_COOKIE_MAX_AGE } from '../../utils/tenant.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -148,10 +148,7 @@ router.post('/active-tenant', async (req, res) => {
     }
     await audit(req, tenantId, 'tenant.context_switched', reason, { fromTenantId: req.user.active_tenant_id })
     const newToken = signForTenant(req.user, tenantResult.rows[0])
-    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER
-    res.cookie('auth', newToken, {
-      httpOnly: true, secure: isProd, sameSite: 'lax', path: '/', maxAge: 15 * 60 * 1000,
-    })
+    res.cookie('auth', newToken, sessionCookieOptions(req, AUTH_COOKIE_MAX_AGE))
     res.json({ token: newToken, activeTenant: tenantResult.rows[0] })
   } catch (error) {
     console.error('Bascule tenant:', error)
