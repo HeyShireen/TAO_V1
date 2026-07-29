@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { query } from '../../db.js';
-import { requireAuth } from '../../middleware/auth.js';
+import { requireAuth, preserveDbContext } from '../../middleware/auth.js';
 import { validateRequired, validateMaxLength, ValidationError } from '../../utils/validation.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject, canDeleteProject, getVisibleProjects } from '../../utils/permissions.js';
@@ -342,7 +342,7 @@ router.delete('/:id', isResponsableOrAdmin, async (req, res) => {
 });
 
 // Prévisualiser un fichier DPGF sans lot (pour créer des lots depuis un tour)
-router.post('/:id/import-dpgf-preview', isResponsableOrAdmin, uploadDpgf.single('file'), async (req, res) => {
+router.post('/:id/import-dpgf-preview', isResponsableOrAdmin, preserveDbContext(uploadDpgf.single('file')), async (req, res) => {
   try {
     const projectId = req.params.id;
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);
@@ -364,7 +364,7 @@ router.post('/:id/import-dpgf-preview', isResponsableOrAdmin, uploadDpgf.single(
 });
 
 // Créer un lot et importer sa DPGF (depuis la vue tour)
-router.post('/:id/import-dpgf', isResponsableOrAdmin, uploadDpgf.single('file'), async (req, res) => {
+router.post('/:id/import-dpgf', isResponsableOrAdmin, preserveDbContext(uploadDpgf.single('file')), async (req, res) => {
   try {
     const projectId = req.params.id;
     const canEdit = await canEditProject(req.user.id, projectId, req.user.role);

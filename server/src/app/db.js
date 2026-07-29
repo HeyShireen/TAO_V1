@@ -43,6 +43,10 @@ export function runWithDbContext(context, callback) {
   return dbContext.run(normalizedContext(context), callback)
 }
 
+export function getDbContext() {
+  return dbContext.getStore()
+}
+
 export function runWithTenantContext(context, callback) {
   return runWithDbContext({
     tenantId: Number(context.tenantId),

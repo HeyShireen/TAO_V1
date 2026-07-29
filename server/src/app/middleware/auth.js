@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { redisSet, redisExists } from '../utils/redis.js';
-import { query, runWithTenantContext } from '../db.js';
+import { query, runWithTenantContext, runWithDbContext, getDbContext } from '../db.js';
 
 // SÉCURITÉ: Token blacklist via Redis (fallback mémoire auto si Redis indisponible)
 const BLACKLIST_PREFIX = 'blacklist:';
@@ -103,6 +103,22 @@ export async function requireAuth(req, res, next) {
   // pas des erreurs d'authentification. Toute exception synchrone est donc
   // transmise au middleware d'erreur Express, jamais transformée en 401.
   return runWithTenantContext(tenantContext, async () => next()).catch(next);
+}
+
+// Multer lit le corps de la requête : son `next()` final est déclenché depuis le
+// flux du socket HTTP, créé bien avant `requireAuth`. Le contexte
+// AsyncLocalStorage ouvert plus haut est donc perdu en aval, `app.tenant_id`
+// reste vide et la RLS masque toutes les lignes (imports refusés à tort).
+// Ce wrapper restaure le contexte capturé avant d'appeler la suite de la chaîne.
+export function preserveDbContext(middleware) {
+  return (req, res, next) => {
+    const context = getDbContext();
+    middleware(req, res, (err) => {
+      if (err) return next(err);
+      if (!context) return next();
+      return runWithDbContext(context, async () => next()).catch(next);
+    });
+  };
 }
 
 export function requireAdmin(req, res, next) {

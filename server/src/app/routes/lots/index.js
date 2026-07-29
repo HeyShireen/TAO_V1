@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
 import { query, pool } from '../../db.js';
-import { requireAuth } from '../../middleware/auth.js';
+import { requireAuth, preserveDbContext } from '../../middleware/auth.js';
 import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
@@ -1030,7 +1030,7 @@ router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 're
 });
 
 /* ---------- Smart Import : Preview ---------- */
-router.post('/:id/import-preview', requireRole(['platform_admin', 'tenant_admin', 'responsable']), upload.single('file'), async (req, res) => {
+router.post('/:id/import-preview', requireRole(['platform_admin', 'tenant_admin', 'responsable']), preserveDbContext(upload.single('file')), async (req, res) => {
   const lotId = Number(req.params.id);
   if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
   try {
@@ -1056,7 +1056,7 @@ router.post('/:id/import-preview', requireRole(['platform_admin', 'tenant_admin'
 });
 
 /* ---------- Smart Import : Apply ---------- */
-router.post('/:id/import-apply', requireRole(['platform_admin', 'tenant_admin', 'responsable']), upload.single('file'), async (req, res) => {
+router.post('/:id/import-apply', requireRole(['platform_admin', 'tenant_admin', 'responsable']), preserveDbContext(upload.single('file')), async (req, res) => {
   const lotId = Number(req.params.id);
 
   try {
