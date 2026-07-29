@@ -5,7 +5,8 @@
 set -euo pipefail   # Arrêt immédiat en cas d'erreur
 
 # ─── Variables à adapter à votre VPS ──────────────────────────────────────────
-APP_DIR="/var/www/tao"          # Répertoire racine du projet sur le VPS
+APP_DIR="/home/tao/TAO/TAO_V1"  # Répertoire racine du projet sur le VPS
+                                # Doit correspondre au cwd de ecosystem.config.cjs
 APP_NAME="tao-app"              # Nom PM2 de votre application principale
 BRANCH="main"
 LOG_FILE="/var/log/tao-deploy.log"
