@@ -59,6 +59,43 @@ const COLUMN_PATTERNS = {
 // Patterns courts qui ne doivent matcher qu'en mot entier (exact ou bordé par espaces)
 const WORD_BOUNDARY_PATTERNS = new Set(['pu', 'mt', 'q', 'qt', 'nb', 'no']);
 
+// Signatures de fichiers. exceljs ne lit que l'OOXML (.xlsx / .xlsm), qui est une
+// archive ZIP. Un .xls Excel 97-2003 est un conteneur OLE2 binaire : sans ce
+// contrôle, JSZip échoue sur « Can't find end of central directory », message
+// incompréhensible pour l'utilisateur qui a simplement choisi un vieux fichier.
+const SIGNATURE_OOXML = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // "PK\x03\x04"
+const SIGNATURE_OLE2 = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+/**
+ * Charge un classeur en validant d'abord le format, pour produire une erreur
+ * exploitable plutôt que celle de la couche ZIP.
+ * @param {Buffer} buffer - Contenu du fichier
+ * @returns {Promise<ExcelJS.Workbook>}
+ */
+export async function loadWorkbook(buffer) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+
+  if (bytes.length === 0) {
+    throw new Error('Fichier vide.');
+  }
+  if (bytes.subarray(0, 8).equals(SIGNATURE_OLE2)) {
+    throw new Error(
+      'Format .xls (Excel 97-2003) non pris en charge. Ouvrez le fichier dans Excel, ' +
+      'faites « Enregistrer sous » en choisissant « Classeur Excel (*.xlsx) », puis relancez l\'import.'
+    );
+  }
+  if (!bytes.subarray(0, 4).equals(SIGNATURE_OOXML)) {
+    throw new Error(
+      'Fichier illisible : ce n\'est pas un classeur .xlsx. Vérifiez qu\'il n\'a pas été ' +
+      'renommé depuis un autre format (.xls, .csv, .ods, .pdf).'
+    );
+  }
+
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes);
+  return wb;
+}
+
 /**
  * Lit un fichier Excel et retourne un aperçu des données + suggestions de mapping.
  * @param {Buffer} buffer - Le buffer du fichier Excel
@@ -66,8 +103,7 @@ const WORD_BOUNDARY_PATTERNS = new Set(['pu', 'mt', 'q', 'qt', 'nb', 'no']);
  * @returns {{ sheets: string[], selectedSheet: string, headers: {index: number, name: string}[], suggestedMapping: object, previewRows: object[], totalRows: number }}
  */
 export async function previewExcel({ buffer, sheetName, headerRow: headerRowOverride }) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  const wb = await loadWorkbook(buffer);
 
   const sheetNames = wb.worksheets.map(ws => ws.name);
   if (sheetNames.length === 0) throw new Error('Fichier Excel vide');
@@ -234,8 +270,7 @@ export async function convertPdfToExcelBuffer({ buffer, headerRow }) {
  * @param {Object}  params.mapping    - { num: colIndex|colIndex[], designation: colIndex|colIndex[], unit: colIndex, qty: colIndex, unit_price: colIndex, amount: colIndex }
  */
 export async function applyImport({ buffer, mode, lotId, roundId, companyId, companyName, sheetName, headerRow, mapping, excludedRows, importOperation = 'replace', detectOptions = true }) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  const wb = await loadWorkbook(buffer);
   const ws = wb.worksheets.find(s => s.name === sheetName) || wb.worksheets[0];
 
   // Lignes exclues par l'utilisateur (numéros de ligne Excel)

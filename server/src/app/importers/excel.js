@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { query } from '../db.js';
+import { loadWorkbook } from './smart-import.js';
 
 /**
  * Extrait le commentaire d'une valeur (texte qui n'est pas un nombre)
@@ -26,8 +27,7 @@ function extractComment(val) {
  * Sheet can be the first sheet or a sheet named like the lot. The importer tries to map automatically.
  */
 export async function importLotFromExcel({ lotId, buffer, roundId }) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  const wb = await loadWorkbook(buffer);
   const ws = wb.worksheets[0];
   if (!ws) throw new Error('Empty workbook');
 
