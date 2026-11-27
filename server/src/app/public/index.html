@@ -348,6 +348,10 @@
             </table>
           </div>
 
+          <!-- Légende des écarts, identique à celle de l'onglet Questions :
+               le comparatif applique désormais le même code couleur. -->
+          <div id="compare-legend" class="ecart-legend"></div>
+
           <!-- VUE COMPARATIF OPTIONS (sous le total) -->
           <div id="options-compare-view" class="table-wrapper tall" style="margin-top:12px">
             <table id="options-compare-table">
@@ -401,46 +405,9 @@
             </div>
             
             <!-- Légende des couleurs d'écarts -->
-            <div id="questions-legend" style="margin:16px 0;padding:12px;background:var(--input-bg);border-radius:8px;border:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-              <span style="font-weight:600;color:var(--fg)">Légende des écarts (%) :</span>
-              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                <!-- Très Basse (écart très négatif) -->
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:16px;height:16px;background:rgba(13, 110, 253, 0.15);border-left:3px solid #0d6efd;border-radius:2px"></div>
-                  <span style="font-size:0.9rem;color:var(--fg)">Très bas</span>
-                  <span id="legend-qty-very-low" style="font-size:0.85rem;color:var(--muted);font-weight:600">&lt; -<span id="legend-qty-very-low-val">25</span>%</span>
-                </div>
-                
-                <!-- Basse (écart négatif modéré) -->
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:16px;height:16px;background:rgba(13, 202, 240, 0.15);border-left:3px solid #0dcaf0;border-radius:2px"></div>
-                  <span style="font-size:0.9rem;color:var(--fg)">Bas</span>
-                  <span id="legend-qty-low" style="font-size:0.85rem;color:var(--muted);font-weight:600">-<span id="legend-qty-very-low-val2">25</span> à -<span id="legend-qty-low-val">10</span>%</span>
-                </div>
-                
-                <!-- Haute (écart positif modéré) -->
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:16px;height:16px;background:rgba(253, 126, 20, 0.15);border-left:3px solid #fd7e14;border-radius:2px"></div>
-                  <span style="font-size:0.9rem;color:var(--fg)">Haut</span>
-                  <span id="legend-qty-high" style="font-size:0.85rem;color:var(--muted);font-weight:600">+<span id="legend-qty-high-val">10</span> à +<span id="legend-qty-high-val2">25</span>%</span>
-                </div>
-                
-                <!-- Très Haute (écart très positif) -->
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:16px;height:16px;background:rgba(220, 53, 69, 0.15);border-left:3px solid #dc3545;border-radius:2px"></div>
-                  <span style="font-size:0.9rem;color:var(--fg)">Très haut</span>
-                  <span id="legend-qty-very-high" style="font-size:0.85rem;color:var(--muted);font-weight:600">&gt; +<span id="legend-qty-very-high-val">25</span>%</span>
-                </div>
-
-                <!-- Réponses Oubliées -->
-                <div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)">
-                  <div id="legend-unanswered-swatch" style="width:16px;height:16px;background:rgba(255,193,7,0.15);border-left:3px solid #ffc107;border-radius:2px"></div>
-                  <span style="font-size:0.9rem;color:var(--fg)">Réponse oubliée</span>
-                  <span id="legend-unanswered-comment" style="font-size:0.85rem;color:var(--muted);font-weight:600">Article sans réponse</span>
-                </div>
-
-              </div>
-            </div>
+            <!-- Légende générée par renderDeviationLegends() : elle reflète les
+                 seuils réellement configurés, pour les trois métriques. -->
+            <div id="questions-legend" class="ecart-legend"></div>
             
             <!-- Tableau des questions éditables -->
             <div class="table-wrapper tall">

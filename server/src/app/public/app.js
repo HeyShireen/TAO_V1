@@ -655,6 +655,132 @@ function unansweredStyleStr(color) {
   return `border-left:3px solid ${color};background:${hexToRgba(color, 0.15)};`;
 }
 
+/* ====== Écarts : seuils, classes et légende ======
+   Partagés entre l'onglet questions, le comparatif et le comparatif des
+   options, qui calculaient chacun leurs couleurs — ou n'en avaient pas. */
+
+const ECART_METRIQUES = [
+  { cle: 'qty', prefixe: 'qty', libelle: 'Quantité' },
+  { cle: 'price', prefixe: 'price', libelle: 'Prix unitaire' },
+  { cle: 'amount', prefixe: 'amount', libelle: 'Montant' },
+];
+
+function readThresholdInput(metrique, niveau, defaut) {
+  const valeur = parseFloat(qs(`#threshold-${metrique}-${niveau}`)?.value);
+  return Number.isFinite(valeur) ? valeur : defaut;
+}
+
+/**
+ * Seuils d'écart effectifs, lus dans la configuration des questions.
+ * Les champs vivent dans l'onglet Questions mais sont présents dans le DOM
+ * quel que soit l'onglet affiché ; à défaut, on retombe sur 25/10/10/25.
+ */
+function readDeviationThresholds() {
+  const pour = (m) => ({
+    veryLow: readThresholdInput(m, 'very-low', 25),
+    low: readThresholdInput(m, 'low', 10),
+    high: readThresholdInput(m, 'high', 10),
+    veryHigh: readThresholdInput(m, 'very-high', 25),
+  });
+  return { qty: pour('qty'), price: pour('price'), amount: pour('amount') };
+}
+
+/** Écart en %, signé : positif = l'entreprise est au-dessus de la MOE. */
+function deviationPct(referenceValue, comparedValue) {
+  const reference = parseNum(referenceValue);
+  const compared = parseNum(comparedValue);
+  if (!Number.isFinite(reference) || !Number.isFinite(compared) || reference === 0) return null;
+  return ((compared - reference) / reference) * 100;
+}
+
+/** Classe CSS d'écart, ou '' si l'écart reste dans les seuils. */
+function deviationClass(deviation, config) {
+  if (!config || !Number.isFinite(deviation)) return '';
+  if (deviation < -Math.abs(config.veryLow)) return 'ecart-very-low';
+  if (deviation < -Math.abs(config.low)) return 'ecart-low';
+  if (deviation > Math.abs(config.veryHigh)) return 'ecart-very-high';
+  if (deviation > Math.abs(config.high)) return 'ecart-high';
+  return '';
+}
+
+/**
+ * Construit la légende des écarts depuis les seuils effectifs.
+ *
+ * L'ancienne légende était du HTML figé n'affichant QUE les seuils de
+ * quantité, avec ses propres couleurs en dur : elle pouvait donc contredire le
+ * tableau qu'elle décrit, et taisait les seuils de prix et de montant quand
+ * ils différaient. Elle est désormais générée, et les pastilles réutilisent les
+ * classes des cellules.
+ */
+function buildDeviationLegendHtml(thresholds) {
+  const nombre = (v) => formatNum(Number(v));
+  const ligneMetrique = ({ cle, libelle }) => {
+    const s = thresholds?.[cle];
+    if (!s) return '';
+    const cases = [
+      { classe: 'ecart-very-low', texte: `&lt; -${nombre(s.veryLow)}%` },
+      { classe: 'ecart-low', texte: `-${nombre(s.veryLow)} à -${nombre(s.low)}%` },
+      { classe: 'ecart-high', texte: `+${nombre(s.high)} à +${nombre(s.veryHigh)}%` },
+      { classe: 'ecart-very-high', texte: `&gt; +${nombre(s.veryHigh)}%` },
+    ].map(c => `
+      <span class="ecart-legend-item">
+        <span class="ecart-legend-swatch ${c.classe}"></span>
+        <span class="ecart-legend-range">${c.texte}</span>
+      </span>`).join('');
+    return `<div class="ecart-legend-row"><span class="ecart-legend-metric">${libelle}</span>${cases}</div>`;
+  };
+
+  const couleurSansReponse = unansweredConfig.color || '#ffc107';
+  const specials = `
+    <div class="ecart-legend-row ecart-legend-special">
+      <span class="ecart-legend-metric">Cas particuliers</span>
+      <span class="ecart-legend-item">
+        <span class="ecart-legend-swatch" style="border-left:3px solid ${escapeHtml(couleurSansReponse)};background:${hexToRgba(couleurSansReponse, 0.15)}"></span>
+        <span class="ecart-legend-range">${escapeHtml(unansweredConfig.comment || 'Article sans réponse')}</span>
+      </span>
+      <span class="ecart-legend-item">
+        <span class="ecart-legend-swatch unit-mismatch-cell"></span>
+        <span class="ecart-legend-range">Unité différente de la MOE</span>
+      </span>
+    </div>`;
+
+  return `
+    <div class="ecart-legend-title">Légende des écarts par rapport à la MOE</div>
+    ${ECART_METRIQUES.map(ligneMetrique).join('')}
+    ${specials}`;
+}
+
+/** Rend la légende dans tous les conteneurs présents (questions, comparatif). */
+function renderDeviationLegends(thresholds = readDeviationThresholds()) {
+  const html = buildDeviationLegendHtml(thresholds);
+  for (const sel of ['#questions-legend', '#compare-legend']) {
+    const el = qs(sel);
+    if (el) el.innerHTML = html;
+  }
+}
+
+/* ====== Postes ajoutés par une entreprise ======
+   Un poste ajouté se reconnaît au même marquage dans le comparatif et dans
+   l'onglet questions : badge au nom de l'entreprise, teinte et liseré de sa
+   couleur. Le markup était recopié à TROIS endroits, et deux d'entre eux
+   n'échappaient pas le nom de l'entreprise — qui provient d'un import. */
+
+function addedPostBadgeHtml(company) {
+  if (!company) return '';
+  const nom = escapeHtml(String(company.name || ''));
+  const fond = company.color
+    ? `background:${escapeHtml(String(company.color))};color:#fff;`
+    : 'background:var(--warning);color:#fff;';
+  return `<span class="added-post-badge" style="${fond}" title="Poste ajouté par ${nom}">${nom}</span>`;
+}
+
+/** Teinte et liseré de ligne, à la couleur de l'entreprise qui a ajouté le poste. */
+function addedPostRowStyle(company) {
+  const couleur = company?.color;
+  if (!couleur) return '';
+  return `background-color:${hexToRgba(couleur, 0.12)};border-left:4px solid ${escapeHtml(String(couleur))};`;
+}
+
 function companyColorFor(cid) {
   const company = lotCompanies.find(x => String(x.id) === String(cid));
   return company?.color || '';
@@ -3828,52 +3954,16 @@ async function loadProjectQuestionConfig(){
   }
 }
 
-function updateQuestionsLegend(thresholds) {
-  // Mettre à jour les valeurs de seuils dans la légende
-  // Les écarts sont exprimés en %, et les seuils sont symétriques (négatifs et positifs)
-  const qtyVeryLow = parseFloat(thresholds?.qty_very_low_threshold) || 25;
-  const qtyLow = parseFloat(thresholds?.qty_low_threshold) || 10;
-  const qtyHigh = parseFloat(thresholds?.qty_high_threshold) || 10;
-  const qtyVeryHigh = parseFloat(thresholds?.qty_very_high_threshold) || 25;
-  
-  // Très bas: < -qtyVeryLow
-  if (qs('#legend-qty-very-low-val')) {
-    qs('#legend-qty-very-low-val').textContent = qtyVeryLow;
-  }
-  
-  // Bas: -qtyVeryLow à -qtyLow
-  if (qs('#legend-qty-very-low-val2')) {
-    qs('#legend-qty-very-low-val2').textContent = qtyVeryLow;
-  }
-  if (qs('#legend-qty-low-val')) {
-    qs('#legend-qty-low-val').textContent = qtyLow;
-  }
-  
-  // Haut: +qtyHigh à +qtyVeryHigh
-  if (qs('#legend-qty-high-val')) {
-    qs('#legend-qty-high-val').textContent = qtyHigh;
-  }
-  if (qs('#legend-qty-high-val2')) {
-    qs('#legend-qty-high-val2').textContent = qtyVeryHigh;
-  }
-  
-  // Très haut: > +qtyVeryHigh
-  if (qs('#legend-qty-very-high-val')) {
-    qs('#legend-qty-very-high-val').textContent = qtyVeryHigh;
-  }
-
-  // Réponses Oubliées: mettre à jour le swatch et le commentaire
-  const swatch = qs('#legend-unanswered-swatch');
-  if (swatch) {
-    const c = unansweredConfig.color || '#ffc107';
-    swatch.style.borderLeft = `3px solid ${c}`;
-    swatch.style.background = hexToRgba(c, 0.15);
-  }
-  const commentEl = qs('#legend-unanswered-comment');
-  if (commentEl) {
-    commentEl.textContent = unansweredConfig.comment || 'Article sans réponse';
-  }
-
+/**
+ * Régénère la légende des écarts (onglet Questions ET comparatif).
+ *
+ * Le paramètre `thresholds` est accepté pour compatibilité avec les anciens
+ * appels, mais ignoré : les seuils sont relus dans les champs de configuration,
+ * ce qui garantit que la légende décrit bien les seuils en vigueur pour les
+ * trois métriques, et non les seuls seuils de quantité.
+ */
+function updateQuestionsLegend(_thresholds) {
+  renderDeviationLegends();
   updateSheetLegend();
 }
 
@@ -3958,14 +4048,9 @@ function attachThresholdListeners(){
 }
 
 function updateLegendFromInputs(){
-  // Récupérer les valeurs actuelles des inputs
-  const thresholds = {
-    qty_very_low_threshold: parseFloat(qs('#threshold-qty-very-low').value) || 25,
-    qty_low_threshold: parseFloat(qs('#threshold-qty-low').value) || 10,
-    qty_high_threshold: parseFloat(qs('#threshold-qty-high').value) || 10,
-    qty_very_high_threshold: parseFloat(qs('#threshold-qty-very-high').value) || 25
-  };
-  updateQuestionsLegend(thresholds);
+  // Les seuils sont relus directement dans les champs, pour les trois
+  // métriques. L'ancienne version n'en transmettait que ceux de la quantité.
+  updateQuestionsLegend();
 }
 
 function attachProjectQuestionsListeners(){
@@ -5130,9 +5215,7 @@ async function refreshQuestions({ silent = false } = {}){
 
       const sourceCompanyId = sourceCompanyByItemId.get(Number(q.item_id));
       const sourceCompany = Number.isFinite(sourceCompanyId) ? companiesById.get(Number(sourceCompanyId)) : null;
-      const sourceBadge = sourceCompany
-        ? `<span style="display:inline-flex;align-items:center;font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceCompany.color ? `background:${sourceCompany.color};color:#fff;` : 'background:var(--warning);color:#fff;'}margin-right:6px" title="Poste ajouté par ${escapeHtml(sourceCompany.name || '')}">${escapeHtml(sourceCompany.name || '')}</span>`
-        : '';
+      const sourceBadge = addedPostBadgeHtml(sourceCompany);
 
       const offerKey = `${Number(q.item_id)}_${Number(q.company_id)}`;
       const offerComment = offerByItemCompany.get(offerKey)?.comment || null;
@@ -5461,34 +5544,11 @@ function renderQuestionsEditorTable(lotData, questionsData) {
 
   attachOfferDesigPillDelegates(tbody);
 
-  const thresholds = {
-    qty: {
-      veryLow: parseFloat(qs('#threshold-qty-very-low')?.value) || 25,
-      low: parseFloat(qs('#threshold-qty-low')?.value) || 10,
-      high: parseFloat(qs('#threshold-qty-high')?.value) || 10,
-      veryHigh: parseFloat(qs('#threshold-qty-very-high')?.value) || 25
-    },
-    price: {
-      veryLow: parseFloat(qs('#threshold-price-very-low')?.value) || 25,
-      low: parseFloat(qs('#threshold-price-low')?.value) || 10,
-      high: parseFloat(qs('#threshold-price-high')?.value) || 10,
-      veryHigh: parseFloat(qs('#threshold-price-very-high')?.value) || 25
-    },
-    amount: {
-      veryLow: parseFloat(qs('#threshold-amount-very-low')?.value) || 25,
-      low: parseFloat(qs('#threshold-amount-low')?.value) || 10,
-      high: parseFloat(qs('#threshold-amount-high')?.value) || 10,
-      veryHigh: parseFloat(qs('#threshold-amount-very-high')?.value) || 25
-    }
-  };
-
-  const getDeviationClass = (deviation, config) => {
-    if (deviation < -Math.abs(config.veryLow)) return 'ecart-very-low';
-    if (deviation < -Math.abs(config.low)) return 'ecart-low';
-    if (deviation > Math.abs(config.veryHigh)) return 'ecart-very-high';
-    if (deviation > Math.abs(config.high)) return 'ecart-high';
-    return '';
-  };
+  // Seuils et classement des écarts : helpers partagés avec le comparatif, pour
+  // que les deux vues ne puissent plus diverger. Les noms locaux sont conservés,
+  // ils sont utilisés en de nombreux endroits dans cette fonction.
+  const thresholds = readDeviationThresholds();
+  const getDeviationClass = deviationClass;
   
   if (!lotData.items || lotData.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--muted)">Aucune donnée disponible</td></tr>';
@@ -5577,14 +5637,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   const questionColCount = isQuestionsMode ? companies.length : 1;
   const emptyColspan = 4 + questionColCount + 1 + metricsColCount;
 
-  const formatDeltaPct = (referenceValue, comparedValue) => {
-    const reference = parseNum(referenceValue);
-    const compared = parseNum(comparedValue);
-    if (!Number.isFinite(reference) || !Number.isFinite(compared) || reference === 0) {
-      return null;
-    }
-    return ((compared - reference) / reference) * 100;
-  };
+  const formatDeltaPct = deviationPct;
 
   const deltaCellHtml = (deviation, metricThresholds, highlightClass = '') => {
     if (!Number.isFinite(deviation)) {
@@ -5814,9 +5867,10 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const sourceCompany = Number.isFinite(Number(item.source_company_id))
       ? companiesById.get(Number(item.source_company_id))
       : null;
-    const sourceCompanyBadge = sourceCompany
-      ? `<span style="display:inline-flex;align-items:center;font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceCompany.color ? `background:${sourceCompany.color};color:#fff;` : 'background:var(--warning);color:#fff;'}margin-right:6px" title="Poste ajouté par ${escapeHtml(sourceCompany.name || '')}">${escapeHtml(sourceCompany.name || '')}</span>`
-      : '';
+    const sourceCompanyBadge = addedPostBadgeHtml(sourceCompany);
+    // Même teinte et même liseré que dans le comparatif, pour qu'un poste
+    // ajouté se reconnaisse de la même façon dans les deux vues.
+    const sourceCompanyRowStyle = addedPostRowStyle(sourceCompany);
     
     const isValidated = questionStatus === 'validated';
     const validateTitle = isValidated
@@ -5825,7 +5879,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     const hierarchyClass = getQuestionHierarchyClass(item.num);
     const desigPills = offerDesigPillsHtml(itemOffers);
 
-    html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}">`;
+    html += `<tr data-item-id="${item.id}" data-question-id="${questionId}" data-question-company-id="${questionCompanyId}"${sourceCompany ? ` class="added-post-row" style="${sourceCompanyRowStyle}"` : ''}>`;
     html += `<td class="sticky-col question-hierarchy ${hierarchyClass}">${item.num || ''}</td>`;
     // Actions (déplacées à gauche)
     html += '<td class="sticky-actions">';
@@ -7129,6 +7183,10 @@ async function refreshCompare({ silent = false } = {}){
   const companyColors = {};
   data.companies.forEach(c => { companyColors[c.id] = c.color || null; });
 
+  // Seuils d'écart, lus une fois pour tout le tableau. Mêmes seuils et mêmes
+  // classes que l'onglet Questions.
+  const compareThresholds = readDeviationThresholds();
+
   // Séparer les items normaux (DPGF) des items ajoutés par les entreprises
   const dpgfRows = data.rows.filter(r => !r.source_company_id);
   const addedRows = data.rows.filter(r => r.source_company_id);
@@ -7145,19 +7203,47 @@ async function refreshCompare({ silent = false } = {}){
     }
     
     for (const c of r.companies){
+      const commentBadge = offerCommentBadgeHtml(c.comment, c.color, c.name);
+
+      // Code couleur des écarts, identique à celui de l'onglet Questions : le
+      // comparatif ne distinguait jusqu'ici qu'un delta positif ou négatif, sans
+      // tenir compte des seuils configurés.
+      const moeTotalLigne = frozenAmountValue(r.moe?.mt, r.moe?.qty, r.moe?.pu);
+      const moeAUnTotal = Number.isFinite(parseNum(moeTotalLigne)) && parseNum(moeTotalLigne) !== 0;
+      const sansReponse = moeAUnTotal && isOfferUnanswered(c.qty, c.pu);
+
+      let classeQte = '';
+      let classePu = '';
+      let classeMt = '';
+      let styleSansReponse = '';
+      let titreSansReponse = '';
+      if (sansReponse) {
+        classeQte = classePu = classeMt = 'ecart-unanswered';
+        styleSansReponse = ` style="${unansweredStyleStr(unansweredConfig.color)}"`;
+        titreSansReponse = unansweredConfig.comment
+          ? ` title="${escapeHtml(unansweredConfig.comment)}"`
+          : '';
+      } else if (getUnitMismatchInfo(r.unit, c.u, c.mt).hasMismatch) {
+        // Unité incohérente : comparer des quantités n'a plus de sens.
+        classeQte = classePu = classeMt = 'unit-mismatch-cell';
+      } else {
+        classeQte = deviationClass(deviationPct(r.moe?.qty, c.qty), compareThresholds.qty);
+        classePu = deviationClass(deviationPct(r.moe?.pu, c.pu), compareThresholds.price);
+        classeMt = deviationClass(deviationPct(moeTotalLigne, c.mt), compareThresholds.amount);
+      }
+
       if (entrepriseMode) {
         // Sans les colonnes ΔQté et ΔPU
-        const commentBadge = offerCommentBadgeHtml(c.comment, c.color, c.name);
-        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}${commentBadge}</td>`;
+        tr += `<td class="company-border">${c.u||''}</td><td class="${classeQte}"${styleSansReponse}${titreSansReponse}>${fmtNum(c.qty)}</td><td class="${classePu}"${styleSansReponse}${titreSansReponse}>${fmtEuro(c.pu)}</td><td class="${classeMt}"${styleSansReponse}${titreSansReponse}>${fmtEuro(c.mt)}${commentBadge}</td>`;
       } else {
-        // Calculer delta quantité (MOE - Offre)
+        // ΔQté reste un écart ABSOLU (MOE - offre) avec son propre code couleur
+        // simple : c'est une information différente du classement par seuils.
         const moeQty = parseNum(r.moe.qty);
         const offerQty = parseNum(c.qty);
         const deltaQty = (moeQty !== null && offerQty !== null) ? moeQty - offerQty : null;
         const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
-        
-        const commentBadge = offerCommentBadgeHtml(c.comment, c.color, c.name);
-        tr += `<td class="company-border">${c.u||''}</td><td>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(c.pu)}</td><td>${fmtEuro(c.mt)}${commentBadge}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
+
+        tr += `<td class="company-border">${c.u||''}</td><td class="${classeQte}"${styleSansReponse}${titreSansReponse}>${fmtNum(c.qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td class="${classePu}"${styleSansReponse}${titreSansReponse}>${fmtEuro(c.pu)}</td><td class="${classeMt}"${styleSansReponse}${titreSansReponse}>${fmtEuro(c.mt)}${commentBadge}</td><td>${fmtPct(c.delta_pu_pct)}</td>`;
       }
       
       // Accumuler le total par entreprise
@@ -7198,17 +7284,16 @@ async function refreshCompare({ silent = false } = {}){
 
     for (const r of addedRows) {
       // Trouver la couleur de l'entreprise qui a ajouté ce poste
-      const sourceColor = companyColors[r.source_company_id] || null;
-      const sourceName = data.companies.find(c => c.id === r.source_company_id)?.name || '';
-      const bgStyle = sourceColor ? `background-color: ${sourceColor}20;` : ''; // 20 = opacity ~12%
-      const borderStyle = sourceColor ? `border-left: 4px solid ${sourceColor};` : '';
+      // Badge et style de ligne partagés avec l'onglet questions. Le nom de
+      // l'entreprise est échappé par le helper : il ne l'était pas ici.
+      const sourceCompany = data.companies.find(c => c.id === r.source_company_id) || null;
       const parentLabel = r.parent_item_id
         ? `<div class="muted" style="font-size:0.75em;margin-top:3px">Sous ${r.parent_num ? escapeHtml(String(r.parent_num)) + ' - ' : ''}${escapeHtml(String(r.parent_designation || 'parent DPGF'))}</div>`
         : '';
 
-      let tr = `<tr style="${bgStyle}${borderStyle}" title="Poste ajouté par ${sourceName}">`;
+      let tr = `<tr class="added-post-row" style="${addedPostRowStyle(sourceCompany)}">`;
       tr += `<td class="sticky-col">${r.num||''}</td>`;
-      tr += `<td class="sticky-col2"><span style="font-size:0.75em;padding:2px 6px;border-radius:4px;${sourceColor ? 'background:'+sourceColor+';color:#fff;' : 'background:var(--warning);color:#fff;'}margin-right:6px">${sourceName}</span>${r.designation||''}${parentLabel}</td>`;
+      tr += `<td class="sticky-col2">${addedPostBadgeHtml(sourceCompany)}${r.designation||''}${parentLabel}</td>`;
       tr += `<td>${r.unit||''}</td>`;
 
       if (!entrepriseMode) {
@@ -7261,12 +7346,15 @@ async function refreshCompare({ silent = false } = {}){
   }
 
   // Rendre le tableau des options séparé (sous le total)
-  renderOptionsCompareTable(data.companies, entrepriseMode);
+  renderOptionsCompareTable(data.companies, entrepriseMode, compareThresholds);
+
+  // La légende décrit le code couleur appliqué juste au-dessus.
+  renderDeviationLegends(compareThresholds);
   } catch (err) {
     console.error('[refreshCompare] Erreur:', err);
     const head = qs('#compare-head'), body = qs('#compare-body');
     head.innerHTML = '';
-    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--error)">Erreur lors du chargement du comparatif : ' + err.message + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Erreur lors du chargement du comparatif. Consultez la console pour le détail.</td></tr>';
   }
 }
 
@@ -9755,6 +9843,44 @@ function bindSmartImport() {
   // Détection automatique des options : re-rendre l'aperçu (badges) au changement
   qs('#import-detect-options')?.addEventListener('change', () => {
     if (importState.preview) renderPreviewTable();
+    updateExcludeOptionsButton();
+  });
+
+  /**
+   * Lignes de l'aperçu actuellement détectées comme options et non déjà exclues.
+   */
+  function detectedOptionRowsToExclude() {
+    if (qs('#import-detect-options')?.checked === false) return [];
+    const detectees = importState.preview?.detectedOptionRows || [];
+    const exclues = importState.excludedRows instanceof Set ? importState.excludedRows : new Set();
+    return detectees.filter(rn => !exclues.has(rn));
+  }
+
+  /** Affiche le bouton d'exclusion groupée, avec le nombre de lignes visées. */
+  function updateExcludeOptionsButton() {
+    const btn = qs('#import-exclude-options');
+    if (!btn) return;
+    const restantes = detectedOptionRowsToExclude();
+    btn.style.display = restantes.length > 0 ? '' : 'none';
+    btn.textContent = `Exclure les ${restantes.length} option${restantes.length > 1 ? 's' : ''} détectée${restantes.length > 1 ? 's' : ''}`;
+  }
+
+  // Exclusion groupée : les lignes détectées comme options sortent de l'import.
+  // Utile quand la trame contient des options qu'on ne veut pas chiffrer du tout.
+  qs('#import-exclude-options')?.addEventListener('click', () => {
+    const aExclure = detectedOptionRowsToExclude();
+    if (aExclure.length === 0) return;
+    if (!(importState.excludedRows instanceof Set)) importState.excludedRows = new Set();
+    for (const rn of aExclure) importState.excludedRows.add(rn);
+    persistActiveFileConfig(false);
+    renderPreviewTable();
+    scheduleImportDraftSave();
+    updateExcludeOptionsButton();
+    showNotify({
+      title: 'Options exclues',
+      message: `${aExclure.length} ligne(s) détectée(s) comme options ont été exclues de l'import.`,
+      type: 'info',
+    });
   });
 
   // Header row manual override
@@ -10039,6 +10165,9 @@ function bindSmartImport() {
       }
       body.appendChild(tr);
     }
+
+    // Le bouton d'exclusion groupée suit l'état de l'aperçu.
+    updateExcludeOptionsButton();
   }
 
   // Back to step 1

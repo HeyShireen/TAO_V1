@@ -2219,39 +2219,143 @@ td.question-cell-modified.question-cell-validated .question-text-editor {
 #questions-editor-table .question-hierarchy.qitem-level-3 {
   font-weight: 500;
 }
-/* Écarts avec couleurs selon le niveau */
-#questions-editor-table .ecart-very-low {
-  background: rgba(13, 110, 253, 0.15);
-  color: #0d6efd;
+/* ===================================================================
+   Palette des écarts — source unique.
+
+   Ces couleurs sont les plus visibles de l'application (comparatif, onglet
+   questions, options) et étaient jusqu'ici recopiées en dur à chaque endroit,
+   légende comprise : la légende pouvait donc afficher d'autres couleurs que le
+   tableau qu'elle décrit.
+
+   Le bloc est placé APRÈS les deux déclarations de thème du fichier pour ne pas
+   pouvoir être écrasé par elles. Les valeurs sont identiques dans les deux
+   thèmes, comme avant ; leur révision par thème est le sujet du lot
+   « identité visuelle ».
+
+   ⚠️ L'export Excel porte sa propre copie de cette palette dans
+   `routes/exports/index.js` (QUESTION_EXPORT_STYLES) : toute modification ici
+   doit y être reportée.
+   =================================================================== */
+/* Cellules d'écart. Le sélecteur n'est plus limité à #questions-editor-table :
+   le comparatif et le comparatif des options partagent désormais le même code
+   couleur. Les surcharges « entreprise ciblée » plus bas conservent leur
+   priorité (sélecteurs à id + 2 classes).
+
+   Les valeurs viennent des blocs de thème : la palette est donc adaptée au
+   clair ET au sombre, ce qui n'était pas le cas auparavant. */
+.ecart-very-low {
+  background: rgba(var(--ecart-very-low-rgb), var(--ecart-fill));
+  color: var(--ecart-very-low);
   font-weight: 700;
-  border-left: 3px solid #0d6efd;
+  border-left: 3px solid var(--ecart-very-low);
 }
-#questions-editor-table .ecart-low {
-  background: rgba(13, 202, 240, 0.15);
-  color: #0dcaf0;
+.ecart-low {
+  background: rgba(var(--ecart-low-rgb), var(--ecart-fill));
+  color: var(--ecart-low);
   font-weight: 600;
-  border-left: 3px solid #0dcaf0;
+  border-left: 3px solid var(--ecart-low);
 }
-#questions-editor-table .ecart-high {
-  background: rgba(253, 126, 20, 0.15);
-  color: #fd7e14;
+.ecart-high {
+  background: rgba(var(--ecart-high-rgb), var(--ecart-fill));
+  color: var(--ecart-high);
   font-weight: 600;
-  border-left: 3px solid #fd7e14;
+  border-left: 3px solid var(--ecart-high);
 }
-#questions-editor-table .ecart-very-high {
-  background: rgba(220, 53, 69, 0.15);
-  color: #dc3545;
+.ecart-very-high {
+  background: rgba(var(--ecart-very-high-rgb), var(--ecart-fill));
+  color: var(--ecart-very-high);
   font-weight: 700;
-  border-left: 3px solid #dc3545;
+  border-left: 3px solid var(--ecart-very-high);
 }
-#questions-editor-table .ecart-unanswered {
+.ecart-unanswered {
   font-weight: 600;
 }
-#questions-editor-table .unit-mismatch-cell {
-  background: rgba(111, 66, 193, 0.12);
-  color: #6f42c1;
+.unit-mismatch-cell {
+  background: rgba(var(--ecart-unit-mismatch-rgb), var(--ecart-fill));
+  color: var(--ecart-unit-mismatch);
   font-weight: 600;
-  border-left: 3px solid #6f42c1;
+  border-left: 3px solid var(--ecart-unit-mismatch);
+}
+
+/* Pastilles de la légende : mêmes couleurs que les cellules, par construction. */
+.ecart-legend-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+/* Légende des écarts, générée par renderDeviationLegends(). Une ligne par
+   métrique, pour que des seuils différents entre quantité, prix et montant
+   soient visibles au lieu d'être tus. */
+.ecart-legend {
+  margin: var(--space-4) 0;
+  padding: var(--space-3);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.ecart-legend:empty {
+  display: none;
+}
+.ecart-legend-title {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+.ecart-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+.ecart-legend-special {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.ecart-legend-metric {
+  min-width: 108px;
+  font-size: 0.88rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.ecart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+/* La pastille emprunte les classes des cellules : on neutralise donc ce qui
+   n'a de sens que dans un tableau. */
+.ecart-legend-item .ecart-legend-swatch {
+  color: inherit;
+  font-weight: 400;
+}
+.ecart-legend-range {
+  font-size: 0.85rem;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .ecart-legend-metric { min-width: 0; flex: 1 0 100%; }
+}
+
+/* Poste ajouté par une entreprise : même marquage dans le comparatif et dans
+   l'onglet questions. La teinte et le liseré sont posés en style inline, car
+   ils dépendent de la couleur de l'entreprise. */
+.added-post-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+  white-space: nowrap;
 }
 #questions-editor-table .unit-mismatch-note {
   display: inline-flex;
@@ -3120,15 +3224,48 @@ td.question-cell-modified.question-cell-validated .question-text-editor {
 .text-wrap{ white-space:normal !important; word-break:break-word }
 .text-truncate{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 
-/* Scroll horizontal fluide pour les wrappers de table */
+/* Barres de défilement des wrappers de table.
+   Elles étaient à `thin` avec une hauteur de 6 px, et SANS largeur : la barre
+   verticale gardait donc la taille par défaut du système, et l'horizontale
+   était trop fine pour être saisie confortablement à la souris. Les tableaux de
+   ce logiciel se parcourent beaucoup : on les élargit et on les rend visibles
+   en permanence plutôt qu'au survol. */
 .table-wrapper{
   scroll-behavior:smooth;
-  scrollbar-width:thin;
-  scrollbar-color: var(--accent) var(--border);
 }
-.table-wrapper::-webkit-scrollbar{ height:6px }
-.table-wrapper::-webkit-scrollbar-track{ background:var(--border); border-radius:3px }
-.table-wrapper::-webkit-scrollbar-thumb{ background:var(--accent); border-radius:3px }
+
+/* Firefox : seules l'épaisseur nommée et les couleurs sont réglables. */
+@supports (scrollbar-width: auto) and (not selector(::-webkit-scrollbar)) {
+  .table-wrapper{
+    scrollbar-width: auto;
+    scrollbar-color: var(--accent) var(--border);
+  }
+}
+
+/* Chromium / WebKit : l'épaisseur est libre via ::-webkit-scrollbar.
+   ⚠️ Chromium IGNORE ces pseudo-éléments dès que `scrollbar-width` ou
+   `scrollbar-color` est déclaré sur le même élément — c'est ce qui rendait la
+   règle précédente sans effet. Les deux mécanismes sont donc exclusifs. */
+@supports selector(::-webkit-scrollbar) {
+  /* 16 px : au-dessus de la barre système (~15 px) et nettement plus épais que
+     l'ancien `scrollbar-width: thin` (~11 px), qui était le vrai réglage actif
+     — la hauteur de 6 px déclarée à l'époque n'avait aucun effet. */
+  .table-wrapper::-webkit-scrollbar{ width:16px; height:16px }
+  .table-wrapper::-webkit-scrollbar-track{
+    background:var(--border);
+    border-radius:8px;
+  }
+  .table-wrapper::-webkit-scrollbar-thumb{
+    background:var(--accent);
+    border-radius:8px;
+    /* Bordure de la couleur de la piste : le pouce paraît plus fin que la
+       gouttière tout en restant facile à attraper. */
+    border:3px solid var(--border);
+    background-clip:padding-box;
+  }
+  .table-wrapper::-webkit-scrollbar-thumb:hover{ background:var(--accent-dim, var(--accent)) }
+  .table-wrapper::-webkit-scrollbar-corner{ background:var(--border) }
+}
 
 /* Safe area pour les iPhones avec notch */
 @supports(padding: max(0px)){

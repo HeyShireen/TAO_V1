@@ -749,10 +749,13 @@ function attachOptionsSheetDelegates() {
 
 /* ================= Comparatif options (sous le tableau principal) ================= */
 
-function renderOptionsCompareTable(companies, entrepriseMode) {
+function renderOptionsCompareTable(companies, entrepriseMode, thresholds = null) {
   const head = qs('#options-compare-head');
   const body = qs('#options-compare-body');
   if (!head || !body) return;
+  // Mêmes seuils que le comparatif principal ; relus si l'appelant n'en
+  // fournit pas (la fonction est aussi appelée hors de refreshCompare).
+  const seuils = thresholds || readDeviationThresholds();
   head.innerHTML = '';
   body.innerHTML = '';
 
@@ -804,17 +807,43 @@ function renderOptionsCompareTable(companies, entrepriseMode) {
       const off = (item.offers || []).find(o => Number(o.company_id) === Number(c.id));
       const qty = off?.qty || 0; const pu = off?.unit_price || 0; const mt = (parseNum(qty) || 0) * (parseNum(pu) || 0);
       const offUnit = off?.unit || '';
-      if (entrepriseMode) {
-        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td>`;
+      const moeQtyItem = parseNum(item.moe_qty);
+      const moePuItem = parseNum(item.moe_unit_price);
+      // `option_item_moe` n'a pas de colonne montant : il est forcément calculé.
+      const moeMtItem = (Number.isFinite(moeQtyItem) && Number.isFinite(moePuItem))
+        ? moeQtyItem * moePuItem
+        : null;
+
+      // Même code couleur que le comparatif principal et l'onglet Questions.
+      // Le comparatif des options n'en avait aucun.
+      const moeAUnTotal = Number.isFinite(moeMtItem) && moeMtItem !== 0;
+      const sansReponse = moeAUnTotal && isOfferUnanswered(off?.qty, off?.unit_price);
+      let classeQte = '';
+      let classePu = '';
+      let classeMt = '';
+      let styleSansReponse = '';
+      let titreSansReponse = '';
+      if (sansReponse) {
+        classeQte = classePu = classeMt = 'ecart-unanswered';
+        styleSansReponse = ` style="${unansweredStyleStr(unansweredConfig.color)}"`;
+        titreSansReponse = unansweredConfig.comment
+          ? ` title="${escapeHtml(unansweredConfig.comment)}"`
+          : '';
+      } else if (getUnitMismatchInfo(item.unit, offUnit, mt).hasMismatch) {
+        classeQte = classePu = classeMt = 'unit-mismatch-cell';
       } else {
-        const moeQty = parseNum(item.moe_qty);
-        const moePu = parseNum(item.moe_unit_price);
-        const deltaQty = (Number.isFinite(moeQty) && Number.isFinite(parseNum(qty))) ? (moeQty - parseNum(qty)) : null;
+        classeQte = deviationClass(deviationPct(item.moe_qty, off?.qty), seuils.qty);
+        classePu = deviationClass(deviationPct(item.moe_unit_price, off?.unit_price), seuils.price);
+        classeMt = deviationClass(deviationPct(moeMtItem, mt), seuils.amount);
+      }
+
+      if (entrepriseMode) {
+        tr += `<td class="company-border">${offUnit}</td><td class="${classeQte}"${styleSansReponse}${titreSansReponse}>${fmtNum(qty)}</td><td class="${classePu}"${styleSansReponse}${titreSansReponse}>${fmtEuro(pu)}</td><td class="${classeMt}"${styleSansReponse}${titreSansReponse}>${fmtEuro(mt)}</td>`;
+      } else {
+        const deltaQty = (Number.isFinite(moeQtyItem) && Number.isFinite(parseNum(qty))) ? (moeQtyItem - parseNum(qty)) : null;
         const deltaQtyClass = deltaQty !== null ? (deltaQty > 0 ? 'delta-positive' : deltaQty < 0 ? 'delta-negative' : '') : '';
-        const deltaPuPct = (Number.isFinite(moePu) && moePu !== 0 && Number.isFinite(parseNum(pu)))
-          ? ((parseNum(pu) - moePu) / moePu) * 100
-          : null;
-        tr += `<td class="company-border">${offUnit}</td><td>${fmtNum(qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td>${fmtEuro(pu)}</td><td>${fmtEuro(mt)}</td><td>${fmtPct(deltaPuPct)}</td>`;
+        const deltaPuPct = deviationPct(item.moe_unit_price, pu);
+        tr += `<td class="company-border">${offUnit}</td><td class="${classeQte}"${styleSansReponse}${titreSansReponse}>${fmtNum(qty)}</td><td class="${deltaQtyClass}">${deltaQty !== null ? fmtNum(deltaQty) : ''}</td><td class="${classePu}"${styleSansReponse}${titreSansReponse}>${fmtEuro(pu)}</td><td class="${classeMt}"${styleSansReponse}${titreSansReponse}>${fmtEuro(mt)}</td><td>${fmtPct(deltaPuPct)}</td>`;
       }
       if (mt) totalsByCompany[c.id] = (totalsByCompany[c.id] || 0) + mt;
     }
