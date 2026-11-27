@@ -18,16 +18,21 @@ npm run demo:seed  # données de démo
 
 Variables critiques (le démarrage échoue sinon, via `security-init.js`) : `DATABASE_URL`, `JWT_SECRET`. Fréquentes : `ALLOWED_ORIGINS` (obligatoire en prod), `REDIS_URL`, `EMAIL_USER`/`EMAIL_PASS`, `HTTPS_PROXY`, `DB_SSL`.
 
-**Pas de lint ni de typecheck.** `npm test` (`node --test tests/*.test.js`) lance 6 fichiers, ~46 tests, tous sans base de données sauf le premier :
+**Pas de lint ni de typecheck.** `npm test` (`node --test tests/*.test.js`) lance ~98 tests, tous sans base de données sauf le premier :
 
 - `multitenancy.integration.test.js` — intégration PostgreSQL, ignoré par défaut (triple garde-fou anti-prod : `ALLOW_TEST_DATABASE` + `TEST_DATABASE_CONFIRM_TARGET`) ;
 - `tenant-utils.test.js` — hôte DEMO, cookies, contextes tenant ;
 - `import-utils.test.js` — `parseNumber`, matching de désignations, num d'articles. Les tests préfixés `PIEGE` documentent un comportement **actuel jugé dangereux** (ex. `parseNumber('REF-12') === -12`) : ne pas les « corriger » sans décision explicite ;
 - `import-preview.test.js` — détection de la ligne d'en-tête et auto-mapping, sur des classeurs `.xlsx` construits en mémoire avec exceljs ;
+- `import-offer.test.js` / `import-dpgf.test.js` — **moteur d'import de bout en bout** : matching séquentiel, postes ajoutés, lignes de total ignorées, résolution de l'entreprise, replace vs update, ce qui est réellement écrit en base. `runImportWithRows` accepte une connexion injectée (`client`) : les tests passent le double de `tests/helpers/faux-pg-import.js`, qui joue les requêtes SQL et **refuse toute requête inconnue** — ajouter une requête à l'import fait donc échouer les tests jusqu'à ce qu'elle soit déclarée dans le double ;
+- `import-options.test.js` — détection des sections OPTIONS / VARIANTES / PSE (`splitOptionRows`), exécutée avant tout matching et partagée avec les pastilles de l'aperçu ;
 - `company-scope.test.js` — restriction `entreprise` (voir ci-dessous) ;
+- `email.test.js` — envoi d'e-mails ;
 - `rate-limit-store.test.js` — store partagé de rate limiting.
 
-Reste non couvert : `exports`, `questions/config`, `lots` et tout le frontend.
+À part : `npm run test:browser` (`tests/import-isolation.browser.py`) exerce l'aperçu multi-offres dans un vrai navigateur, API simulée, **sans serveur ni base** — isolation des réglages par fichier, navigation interrompue, brouillon, retrait d'un fichier, aperçu en échec. Il n'est pas inclus dans `npm test` : il demande Playwright Python et Edge.
+
+Reste non couvert : `exports`, `questions/config`, `lots` et le reste du frontend.
 
 La vérification reste donc largement manuelle : `GET /api/healthz` (app + DB + Redis), puis auth / imports / comparaisons / exports, et `npm run tenant:audit` (lecture seule) pour l'intégrité multi-tenant. Audits ad hoc du module questions dans `server/tools/` : `diagnose-questions.mjs`, `audit-questions.mjs`, `audit-missing.mjs`, `audit-manual-duplicates.mjs`. Le dossier `tests/` **à la racine** est abandonné (décembre 2025 / mars 2026) et sans lien avec `npm test`.
 

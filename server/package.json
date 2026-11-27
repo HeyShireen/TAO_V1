@@ -13,7 +13,8 @@
     "tenant:repair-preflight-share": "node src/app/tools/repair-pre-migration-share.js",
     "tenant:validate-app-role": "node src/app/tools/validate-app-role.js",
     "tenant:harden-app-role": "node src/app/tools/harden-app-role.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "test:browser": "python tests/import-isolation.browser.py"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

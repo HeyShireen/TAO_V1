@@ -333,25 +333,34 @@ function normalizeImportOperation(value) {
   return value === 'update' ? 'update' : 'replace';
 }
 
-function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
+/**
+ * Coeur de l'import, une fois les lignes extraites du classeur.
+ *
+ * `client` est une couture de test : passer une connexion PostgreSQL (ou un
+ * double de test qui répond à `query`) évite d'ouvrir une connexion du pool et
+ * permet d'exercer tout le moteur de matching sans base de données. En
+ * production, laisser ce paramètre vide : chaque import prend sa connexion et
+ * sa transaction.
+ */
+export function runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true, client = null }) {
   const normalizedMapping = normalizeImportMapping(mapping);
   const operation = normalizeImportOperation(importOperation);
 
   if (dataRows.length === 0) throw new Error('Aucune donnée à importer');
 
   if (mode === 'dpgf') {
-    return importDPGF({ lotId, roundId, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions });
+    return importDPGF({ lotId, roundId, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions, client });
   }
   if (mode === 'offer') {
     if (!companyId && !companyName) throw new Error('Entreprise requise');
     if (!roundId) throw new Error('Round ID requis');
-    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions });
+    return importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping: normalizedMapping, importOperation: operation, detectOptions, client });
   }
   throw new Error(`Mode inconnu: ${mode}`);
 }
 
 /* =============== Import DPGF (crée items + MOE) =============== */
-async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
+async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOperation = 'replace', detectOptions = true, client: injectedClient = null }) {
   // Extraire les sections d'options avant le flux principal
   let itemRows = dataRows;
   let optionSections = [];
@@ -361,10 +370,14 @@ async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOper
     optionSections = split.sections;
   }
 
-  const client = await pool.connect();
+  const client = injectedClient || await pool.connect();
   try {
     await client.query('BEGIN');
-    const updateOnly = importOperation === 'update';
+    // `importOperation` ne s'applique PAS a l'import DPGF : rafraichir la trame
+    // est sa raison d'etre, donc les articles absents du fichier sont toujours
+    // supprimes (le front envoie d'ailleurs toujours `replace` en mode DPGF).
+    // Un `updateOnly` etait calcule ici et n'etait jamais lu, ce qui laissait
+    // croire a un mode conservatif inexistant. Verrouille par import-dpgf.test.js.
 
     const normalizeForMatch = (value) => normalizeArticleNum(value);
 
@@ -547,7 +560,8 @@ async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOper
     await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    // Une connexion injectée appartient à l'appelant : il la libère lui-même.
+    if (!injectedClient) client.release();
   }
 }
 
@@ -562,7 +576,7 @@ async function importDPGF({ lotId, roundId = null, dataRows, mapping, importOper
  *    On ne l'importe pas dans la DPGF, on le met dans un tableau à part avec du contexte.
  *    Le curseur DPGF ne bouge PAS (l'entreprise a juste inséré une ligne en plus).
  */
-async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true }) {
+async function importOffer({ lotId, roundId, companyId, companyName, dataRows, mapping, importOperation = 'replace', detectOptions = true, client: injectedClient = null }) {
   // Extraire les sections d'options avant le matching séquentiel : sans cela,
   // les lignes d'options finissaient en « postes ajoutés » parasites.
   let offerRows = dataRows;
@@ -573,7 +587,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     optionSections = split.sections;
   }
 
-  const client = await pool.connect();
+  const client = injectedClient || await pool.connect();
   try {
     await client.query('BEGIN');
     const updateOnly = importOperation === 'update';
@@ -1096,7 +1110,8 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    // Une connexion injectée appartient à l'appelant : il la libère lui-même.
+    if (!injectedClient) client.release();
   }
 }
 

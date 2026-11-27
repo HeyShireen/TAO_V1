@@ -80,8 +80,32 @@ function stripOptionNumPrefix(num) {
   return s;
 }
 
+/**
+ * Premiere valeur non vide des colonnes de numero, telle qu'ecrite dans le
+ * fichier.
+ *
+ * `buildArticleFields` ne retient que ce que `looksLikeArticleNum` reconnait, et
+ * un numero type option (« O1 », « OPT-3 », « PSE 4 ») n'en fait pas partie :
+ * il etait donc jete avant que la detection ci-dessous puisse le voir, et la
+ * regle « hors zone, une ligne numerotee O1 devient une option » ne
+ * s'appliquait jamais. On ne touche pas a `looksLikeArticleNum`, qui sert a
+ * tout le matching d'articles.
+ */
+function rawNumValue(row, mapping) {
+  const cols = (Array.isArray(mapping?.num) ? mapping.num : [mapping?.num])
+    .map(Number)
+    .filter(Number.isFinite);
+  for (const col of cols) {
+    const val = String(row[col] ?? '').trim();
+    if (val) return val;
+  }
+  return '';
+}
+
 function extractRecord(row, mapping) {
-  const { num, designation } = buildArticleFields(row, mapping);
+  const { num: numArticle, designation } = buildArticleFields(row, mapping);
+  const numBrut = rawNumValue(row, mapping);
+  const num = numArticle || (OPTION_NUM_RE.test(numBrut) ? numBrut : numArticle);
   const unit = mapping.unit ? String(row[mapping.unit] ?? '').trim() : null;
   const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
   const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
