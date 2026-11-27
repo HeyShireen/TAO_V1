@@ -39,14 +39,25 @@ const DEFAULT_LOT_THRESHOLDS = {
   amount_high_threshold: 10,
   amount_very_high_threshold: 25
 };
+/**
+ * Couleurs d'écart de l'export Excel.
+ *
+ * ⚠️ SOURCE UNIQUE PARTAGÉE : ces teintes doivent rester identiques aux
+ * variables `--ecart-*` du THÈME CLAIR dans `public/styles.css`. Un classeur
+ * Excel n'a pas de thème : c'est donc la variante claire qui fait foi, et
+ * l'utilisateur doit retrouver à l'écran les couleurs de son export.
+ *
+ * `accent` = la couleur pleine (bordure gauche et texte à l'écran),
+ * `bg` = sa version pâle pour le remplissage de la cellule.
+ */
 const QUESTION_EXPORT_STYLES = {
-  veryLow: { fg: 'FF000000', bg: 'FFBFD7FF', accent: 'FF0D6EFD', bold: true },
-  low: { fg: 'FF000000', bg: 'FFBDEFF8', accent: 'FF0DCAF0', bold: true },
-  high: { fg: 'FF000000', bg: 'FFFFD7B8', accent: 'FFFD7E14', bold: true },
-  veryHigh: { fg: 'FF000000', bg: 'FFF2B8BE', accent: 'FFDC3545', bold: true },
+  veryLow: { fg: 'FF000000', bg: 'FFCFDDED', accent: 'FF1A4F8A', bold: true },
+  low: { fg: 'FF000000', bg: 'FFDCE8EF', accent: 'FF4A7FA0', bold: true },
+  high: { fg: 'FF000000', bg: 'FFEFE0C7', accent: 'FFA9711F', bold: true },
+  veryHigh: { fg: 'FF000000', bg: 'FFEECCCB', accent: 'FFA8302C', bold: true },
   unanswered: { fg: 'FF000000', bg: 'FFFFF3CD', accent: 'FFFFC107', bold: true },
-  unitMismatch: { fg: 'FF000000', bg: 'FFFFE3A8', accent: 'FFF59E0B', bold: true },
-  amountMismatch: { fg: 'FF000000', bg: 'FFE6DAF5', accent: 'FF6F42C1', bold: true }
+  unitMismatch: { fg: 'FF000000', bg: 'FFE1DAF0', accent: 'FF6B4FA8', bold: true },
+  amountMismatch: { fg: 'FF000000', bg: 'FFEDE2D3', accent: 'FF9C6428', bold: true }
 };
 
 function toNumberOrNull(value) {

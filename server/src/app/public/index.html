@@ -2,6 +2,26 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
+  <script>
+    // Thème appliqué AVANT le premier rendu.
+    //
+    // `app.js` est chargé en `defer` : la page s'affichait donc d'abord avec le
+    // thème par défaut de la feuille de style, puis basculait — un flash de
+    // couleur à chaque chargement. Ce script résout aussi le mode « auto »,
+    // qui ne suivait pas réellement la préférence du système avant l'exécution
+    // du script principal.
+    (function () {
+      try {
+        var choix = localStorage.getItem('theme') || 'auto';
+        var resolu = choix === 'auto'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : choix;
+        document.documentElement.setAttribute('data-theme', resolu);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>AO Link — Comparateur d'offres</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">

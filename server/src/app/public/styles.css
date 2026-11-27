@@ -1,69 +1,33 @@
-/* Thème sombre (par défaut) - eco/industriel */
-:root, [data-theme="dark"]{
-  --bg:#091216;
-  --bg-rgb:9,18,22;
-  --bg-pattern:#0f2026;
-  --fg:#ecf4f1;
-  --muted:#8ba3a5;
-  --card:#101b20;
-  --border:#25343a;
-  --accent:#24c6c8;
-  --accent-rgb:36,198,200;
-  --accent-ghost:#102d31;
-  --accent-dim:#17999d;
-  --danger:#d85c5c;
-  --danger-rgb:216,92,92;
-  --success:#65b98f;
-  --success-rgb:101,185,143;
-  --sticky:#0d181d;
+/* ===================================================================
+   SOCLE STRUCTUREL — valeurs non thématiques (rayons, profondeurs, rythme).
+   Les COULEURS vivent dans les deux blocs de thème plus bas, et nulle part
+   ailleurs.
+
+   Historique : ce fichier portait ici une identité « eco/industriel » (teal,
+   cuivre, photos de fond) intégralement réécrite ~3 200 lignes plus bas par
+   le bloc « DESKTOP APP SKIN ». À spécificité égale, c'est le second qui
+   gagnait : la palette du haut était donc du code mort, et quiconque modifiait
+   une couleur ici ne voyait aucun effet. Les deux blocs ont été fusionnés.
+   =================================================================== */
+:root{
+  /* Rayons — échelle réelle, du contrôle compact à la carte. */
+  --radius-xs:2px;
+  --radius-sm:3px;
+  --radius-md:4px;
+  --radius-lg:6px;
+
+  /* Profondeurs */
   --z-app-chrome:2000;
   --z-app-tabs:1999;
-  --warning:#d99a44;
-  --blueprint:#54a9d8;
-  --blueprint-rgb:84,169,216;
-  --copper:#d7954c;
-  --input-bg:#0d181d;
-  --radius-xs:4px;
-  --radius-sm:4px;
-  --radius-md:4px;
-  --radius-lg:4px;
-  --shadow-soft:0 2px 10px rgba(0,0,0,0.25);
-  --shadow-strong:0 12px 32px rgba(0,0,0,0.45);
-  --background-image:url('./assets/background-dark.jpg');
-  --background-overlay:rgba(9,18,22,0.46);
-}
 
-/* Thème clair */
-[data-theme="light"]{
-  --bg:#f3f7f5;
-  --bg-rgb:243,247,245;
-  --bg-pattern:#d8e4e2;
-  --fg:#1b282b;
-  --muted:#5d7073;
-  --card:#ffffff;
-  --border:#bfd0cf;
-  --accent:#0c9399;
-  --accent-rgb:12,147,153;
-  --accent-ghost:#e0f4f2;
-  --accent-dim:#0e7379;
-  --danger:#c03c55;
-  --danger-rgb:192,60,85;
-  --success:#357d62;
-  --success-rgb:53,125,98;
-  --sticky:#f3f7f5;
-  --warning:#b87635;
-  --blueprint:#297ea9;
-  --blueprint-rgb:41,126,169;
-  --copper:#b87635;
-  --input-bg:#ffffff;
-  --radius-xs:4px;
-  --radius-sm:4px;
-  --radius-md:4px;
-  --radius-lg:4px;
-  --shadow-soft:0 2px 10px rgba(0,0,0,0.12);
-  --shadow-strong:0 12px 28px rgba(0,0,0,0.2);
-  --background-image:url('./assets/background-light.jpg');
-  --background-overlay:rgba(255,255,255,0.2);
+  /* Rythme vertical et horizontal. Le fichier n'avait aucune échelle : chaque
+     marge était écrite au cas par cas. */
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:24px;
+  --space-6:32px;
 }
 
 *{ box-sizing:border-box }
@@ -76,19 +40,16 @@ body{
   letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
+/* Voile de fond. Il portait une photo plein écran (--background-image) que le
+   bloc de thème actif annulait déjà (`background-image:none`) : les deux
+   fichiers de 740 Ko n'étaient donc plus affichés. On garde l'élément, qui
+   couvre la zone sous la barre d'application, mais sans la machinerie d'image. */
 body::before{
   content:'';
   position:fixed;
   inset:0;
   z-index:-1;
-  background-color: var(--bg);
-  background-image:
-    linear-gradient(var(--background-overlay), var(--background-overlay)),
-    var(--background-image);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: cover;
-  background-attachment: fixed;
+  background: var(--bg);
   pointer-events:none;
 }
 
@@ -3284,61 +3245,100 @@ td.question-cell-modified.question-cell-validated .question-text-editor {
    DESKTOP APP SKIN
    Direction: logiciel metier, dense, plat, sans effet "IA".
    ========================================================= */
+/* -------------------------------------------------------------------
+   THÈME CLAIR (défaut). Accent teal — l'identité assumée du projet —
+   posé sur les fonds neutres et denses du skin logiciel métier.
+   Les accents sont choisis assez foncés pour rester lisibles sur blanc
+   (~4,6:1), ce que ne garantissait aucune des deux palettes précédentes.
+   ------------------------------------------------------------------- */
 :root,
 [data-theme="light"]{
-  --bg:#e9ecef;
-  --bg-rgb:233,236,239;
-  --fg:#20262d;
-  --muted:#64707d;
-  --card:#f8f9fa;
-  --border:#b7c0ca;
-  --accent:#1f5f9f;
-  --accent-rgb:31,95,159;
-  --accent-ghost:#dce9f7;
-  --accent-dim:#184d82;
+  --bg:#f1f4f5;
+  --bg-rgb:241,244,245;
+  --bg-pattern:#dde4e6;
+  --fg:#1b2226;
+  --muted:#5b6b73;
+  --card:#ffffff;
+  --border:#c6d1d5;
+  --accent:#0f7f84;
+  --accent-rgb:15,127,132;
+  --accent-ghost:#e2f1f1;
+  --accent-dim:#0b666a;
   --danger:#b73e45;
   --danger-rgb:183,62,69;
-  --success:#34785f;
-  --success-rgb:52,120,95;
-  --sticky:#eef1f4;
+  --success:#2e7d55;
+  --success-rgb:46,125,85;
+  --sticky:#e8eded;
   --warning:#a86c1d;
-  --blueprint:#1f5f9f;
-  --blueprint-rgb:31,95,159;
-  --copper:#6f7781;
+  --blueprint:#2c6ca8;
+  --blueprint-rgb:44,108,168;
+  --copper:#9c6428;
   --input-bg:#ffffff;
-  --radius-xs:2px;
-  --radius-sm:3px;
-  --radius-md:4px;
-  --radius-lg:6px;
   --shadow-soft:none;
   --shadow-strong:0 18px 45px rgba(15,23,42,0.24);
-  --background-overlay:transparent;
+
+  /* Écarts — voir le bloc « Palette des écarts » pour l'usage.
+     ⚠️ Ces valeurs CLAIRES sont la référence de l'export Excel
+     (QUESTION_EXPORT_STYLES dans routes/exports/index.js). */
+  /* Les deux degrés d'une même direction se distinguent par la CLARTÉ, pas
+     par la teinte : « très bas » est soutenu, « bas » nettement plus pâle. */
+  --ecart-very-low:#1a4f8a;
+  --ecart-very-low-rgb:26,79,138;
+  --ecart-low:#4a7fa0;
+  --ecart-low-rgb:74,127,160;
+  --ecart-high:#a9711f;
+  --ecart-high-rgb:169,113,31;
+  --ecart-very-high:#a8302c;
+  --ecart-very-high-rgb:168,48,44;
+  --ecart-unit-mismatch:#6b4fa8;
+  --ecart-unit-mismatch-rgb:107,79,168;
+  --ecart-fill:0.15;
 }
 
+/* -------------------------------------------------------------------
+   THÈME SOMBRE. Les couleurs d'écart y sont ÉCLAIRCIES : la palette
+   précédente était identique dans les deux thèmes — des teintes Bootstrap
+   pensées pour fond clair — et devenait difficilement lisible sur sombre,
+   en particulier le rouge « très haut » et le bleu « très bas ».
+   ------------------------------------------------------------------- */
 [data-theme="dark"]{
-  --bg:#202429;
-  --bg-rgb:32,36,41;
-  --fg:#eef1f4;
-  --muted:#9aa6b2;
-  --card:#2b3036;
-  --border:#4a535e;
-  --accent:#7db0e8;
-  --accent-rgb:125,176,232;
-  --accent-ghost:#27394e;
-  --accent-dim:#5d95cf;
+  --bg:#171b1f;
+  --bg-rgb:23,27,31;
+  --bg-pattern:#232a2e;
+  --fg:#e8edf0;
+  --muted:#93a1a9;
+  --card:#1f252a;
+  --border:#333c43;
+  --accent:#2aa9ad;
+  --accent-rgb:42,169,173;
+  --accent-ghost:#16302f;
+  --accent-dim:#1d8488;
   --danger:#e07478;
   --danger-rgb:224,116,120;
-  --success:#7fbd9e;
-  --success-rgb:127,189,158;
-  --sticky:#252a30;
+  --success:#4fa97d;
+  --success-rgb:79,169,125;
+  --sticky:#1a2024;
   --warning:#d9a255;
-  --blueprint:#7db0e8;
-  --blueprint-rgb:125,176,232;
-  --copper:#b3bdc8;
-  --input-bg:#252a30;
+  --blueprint:#6ba6dd;
+  --blueprint-rgb:107,166,221;
+  --copper:#d7954c;
+  --input-bg:#141a1e;
   --shadow-soft:none;
   --shadow-strong:0 18px 45px rgba(0,0,0,0.42);
-  --background-overlay:transparent;
+
+  /* Même logique qu'en clair, inversée : « très bas » saturé, « bas » pâle. */
+  --ecart-very-low:#4f97e8;
+  --ecart-very-low-rgb:79,151,232;
+  --ecart-low:#a9c9dd;
+  --ecart-low-rgb:169,201,221;
+  --ecart-high:#edac56;
+  --ecart-high-rgb:237,172,86;
+  --ecart-very-high:#f27676;
+  --ecart-very-high-rgb:242,118,118;
+  --ecart-unit-mismatch:#b49ae8;
+  --ecart-unit-mismatch-rgb:180,154,232;
+  /* Fond un peu plus soutenu : sur sombre, 15 % se distingue mal. */
+  --ecart-fill:0.22;
 }
 
 body{
@@ -4253,3 +4253,57 @@ tbody tr:hover,
 }
 
 .tenant-context select { min-width: 150px; }
+
+/* ===================================================================
+   FINITIONS — ajoutées avec la refonte de l'identité visuelle.
+   =================================================================== */
+
+/* --- Chiffres tabulaires ---------------------------------------------
+   L'application compare des colonnes de montants, mais n'utilisait les
+   chiffres à chasse fixe qu'à UN seul endroit : les nombres ne s'alignaient
+   donc pas verticalement. C'est le correctif typographique au meilleur
+   rapport effet/effort pour ce logiciel. */
+#compare-table td, #compare-table th,
+#options-compare-table td, #options-compare-table th,
+#sheet-table td, #sheet-table th,
+#options-sheet-table td, #options-sheet-table th,
+#questions-editor-table td, #questions-editor-table th,
+#rounds-compare-table td, #rounds-compare-table th,
+.summary-table td, .summary-table th,
+.total-row, .ecart-legend-range {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --- Focus clavier ----------------------------------------------------
+   Le fichier ne comptait AUCUN `:focus-visible` : la navigation au clavier
+   était invisible. La grille d'édition se pilote pourtant beaucoup au
+   clavier (flèches, Tab, Ctrl+C/V). */
+:where(button, [role="button"], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+/* Dans les tableaux, le décalage déborderait sur la cellule voisine. */
+:where(td, th)[contenteditable]:focus-visible,
+#sheet-body td:focus-visible,
+#options-sheet-body td:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Le focus au clic reste discret : seul le focus clavier est souligné. */
+:where(button, a):focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* --- Mouvement réduit -------------------------------------------------
+   33 transitions étaient déclarées sans aucune prise en compte de la
+   préférence système. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
