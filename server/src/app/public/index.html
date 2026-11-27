@@ -1551,6 +1551,16 @@
               <input id="import-detect-options" type="checkbox" checked style="width:auto;margin:0" />
               Détecter les options
             </label>
+            <!-- Exclusion groupée des lignes détectées comme options : l'exclusion
+                 ligne à ligne existe déjà via la croix de chaque ligne. -->
+            <button id="import-exclude-options" type="button" class="btn ghost" style="display:none;padding:6px 10px;font-size:0.85em;white-space:nowrap"
+                    title="Ne pas importer du tout les lignes détectées comme options (elles sont exclues de l'import)">
+              Exclure les options détectées
+            </button>
+            <label id="import-replace-offers-field" for="import-replace-offers" title="Par défaut, un import d'offre met à jour les lignes présentes dans le fichier et conserve les autres : c'est ce qu'il faut après avoir dupliqué un tour. Cochez pour effacer d'abord TOUTES les offres de cette entreprise sur ce lot et ce tour." style="display:none;align-items:center;gap:6px;font-size:0.85em;cursor:pointer;white-space:nowrap">
+              <input id="import-replace-offers" type="checkbox" style="width:auto;margin:0" />
+              Remplacer toutes les offres
+            </label>
             <button id="import-toggle-controls" type="button" class="btn ghost" title="Réduire / afficher les options" aria-expanded="false" style="padding:6px 10px;line-height:1">▾ Options</button>
             <div class="field" style="margin:0">
               <label for="import-header-row" style="font-size:0.85em">Ligne en-tête :</label>

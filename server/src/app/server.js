@@ -189,7 +189,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token']
 }))
 app.use(express.json({ limit: '10mb' }))
-app.use(morgan('dev'))
+// `dev` est un format coloré destiné au terminal, illisible pour un agrégateur
+// de logs et verbeux en production (une ligne par requête, y compris les
+// fichiers statiques). On passe en `combined` hors développement.
+app.use(morgan(isDev ? 'dev' : 'combined', {
+  skip: (req, res) => !isDev && res.statusCode < 400 && req.path.startsWith('/assets'),
+}))
 app.disable('x-powered-by')
 
 // Sécurité: Headers HTTP avec Helmet

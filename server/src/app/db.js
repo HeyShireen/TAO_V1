@@ -30,9 +30,26 @@ if (process.env.DB_SSL === 'true' || isRenderHost) {
   sslConfig = false
 }
 
+// Le pool était laissé aux valeurs par défaut de node-postgres (max 10,
+// idleTimeoutMillis 10 s, pas de timeout d'acquisition). Les tailles sont
+// désormais explicites et réglables : sur Render comme sur un VPS, le nombre de
+// connexions autorisées par la base est la ressource limitante, surtout avec
+// PM2 en cluster où chaque instance ouvre son propre pool.
 const runtimePool = new Pool({
   connectionString,
-  ssl: sslConfig
+  ssl: sslConfig,
+  max: Number(process.env.DB_POOL_MAX || 10),
+  idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS || 30_000),
+  // Sans cette limite, une requête attend indéfiniment un client libre : la
+  // requête HTTP reste pendante au lieu d'échouer franchement.
+  connectionTimeoutMillis: Number(process.env.DB_POOL_ACQUIRE_MS || 10_000),
+})
+
+runtimePool.on('error', (err) => {
+  // Un client inactif qui tombe (coupure réseau, redémarrage de la base) émet
+  // une erreur sur le pool. Sans ce gestionnaire, Node considère l'événement
+  // comme non traité et arrête le process.
+  console.error('[db] erreur sur un client inactif du pool:', err.message)
 })
 
 function normalizedContext(extra = {}) {

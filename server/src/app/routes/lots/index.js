@@ -956,14 +956,17 @@ router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 're
     let pos = 0;
     
     // 1. Séparer items existants vs nouveaux
-    for (const r of rows) {
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const r = rows[rowIndex];
       pos += 1;
-      
+
       const designation = (r.designation ?? '').trim();
       const num = r.num ?? null;
       const unit = r.unit ?? null;
       const itemId = r.item_id ? Number(r.item_id) : null;
-      const rowIndex = rows.indexOf(r);
+      // `rowIndex` vient de la boucle : `rows.indexOf(r)` était en O(n²) sur la
+      // grille entière, et renvoyait le mauvais index si deux lignes
+      // partageaient la même référence d'objet.
       
       // Sauvegarder toutes les lignes pour préserver l'ordre DPGF (même les vides)
       // Utiliser un espace comme désignation minimale pour les lignes vides
@@ -1018,69 +1021,165 @@ router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 're
       );
     }
 
-    // 2. Batch UPDATE items existants (interdit pour entreprise)
+    // 2. UPDATE de tous les items existants en UNE requête.
+    //
+    // Les quatre blocs qui suivent étaient des boucles de requêtes unitaires
+    // malgré leur commentaire « Batch ». Sur une grille de 2 000 articles ×
+    // 5 entreprises, cela faisait ~12 000 allers-retours dans une seule
+    // transaction ; à ~17 ms de latence mesurée vers la base, la sauvegarde
+    // prenait plusieurs minutes. `unnest()` déplie les tableaux côté serveur et
+    // ramène chaque bloc à une seule requête.
     if (itemsToUpdate.length > 0 && !isEntreprise) {
-      for (const item of itemsToUpdate) {
-        await client.query(
-          'UPDATE items SET num=$2, designation=$3, unit=$4, position=$5 WHERE id=$1',
-          [item.id, item.num, item.designation, item.unit, item.pos]
-        );
-      }
+      await client.query(
+        `UPDATE items AS i
+            SET num = d.num,
+                designation = d.designation,
+                unit = d.unit,
+                position = d.pos
+           FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::int[])
+                AS d(id, num, designation, unit, pos)
+          WHERE i.id = d.id
+            AND i.lot_id = $1`,
+        [
+          lotId,
+          itemsToUpdate.map(i => i.id),
+          itemsToUpdate.map(i => i.num),
+          itemsToUpdate.map(i => i.designation),
+          itemsToUpdate.map(i => i.unit),
+          itemsToUpdate.map(i => i.pos),
+        ]
+      );
+      // `AND i.lot_id = $1` est un garde-fou ajouté au passage : un id d'item
+      // appartenant à un autre lot ne peut plus être modifié par cette route.
     }
 
-    // 3. Batch INSERT nouveaux items (interdit pour entreprise)
+    // 3. INSERT des nouveaux items en UNE requête.
+    //
+    // `position` est un compteur strictement croissant sur l'ensemble des
+    // lignes de la grille : il est donc unique parmi les insertions, ce qui en
+    // fait une clé fiable pour rattacher l'identifiant attribué par la base à
+    // la bonne ligne. On ne se repose pas sur l'ordre des lignes RETURNING.
     const newItemIds = [];
     if (itemsToInsert.length > 0 && !isEntreprise) {
-      for (const item of itemsToInsert) {
-        const ins = await client.query(
-          'INSERT INTO items (lot_id, num, designation, unit, position) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-          [lotId, item.num, item.designation, item.unit, item.pos]
-        );
-        newItemIds.push({ rowIndex: item.rowIndex, id: ins.rows[0].id });
+      const rowIndexByPos = new Map(itemsToInsert.map(i => [Number(i.pos), i.rowIndex]));
+      if (rowIndexByPos.size !== itemsToInsert.length) {
+        throw new Error('Positions non uniques : impossible de rattacher les nouveaux articles');
+      }
+
+      const ins = await client.query(
+        `INSERT INTO items (lot_id, num, designation, unit, position)
+         SELECT $1, d.num, d.designation, d.unit, d.pos
+           FROM unnest($2::text[], $3::text[], $4::text[], $5::int[])
+                AS d(num, designation, unit, pos)
+         RETURNING id, position`,
+        [
+          lotId,
+          itemsToInsert.map(i => i.num),
+          itemsToInsert.map(i => i.designation),
+          itemsToInsert.map(i => i.unit),
+          itemsToInsert.map(i => i.pos),
+        ]
+      );
+
+      for (const row of ins.rows) {
+        const rowIndex = rowIndexByPos.get(Number(row.position));
+        if (rowIndex === undefined) {
+          throw new Error('Article insere sans position correspondante dans la grille');
+        }
+        newItemIds.push({ rowIndex, id: row.id });
+      }
+      if (newItemIds.length !== itemsToInsert.length) {
+        throw new Error('Nombre d\'articles inseres incoherent avec la grille');
       }
     }
 
-    // 4. Mettre à jour les itemIds dans moeData et offersData
-    for (const newItem of newItemIds) {
+    // 4. Rattacher les identifiants fraîchement créés aux données MOE et offres.
+    //
+    // C'était auparavant une double boucle : O(nouveaux articles × lignes), soit
+    // des millions de comparaisons sur une grande grille. Une table de
+    // correspondance ramène l'étape à un seul passage.
+    if (newItemIds.length > 0) {
+      const idByRowIndex = new Map(newItemIds.map(n => [n.rowIndex, n.id]));
       for (const moe of moeData) {
-        if (moe.rowIndex === newItem.rowIndex && !moe.itemId) {
-          moe.itemId = newItem.id;
+        if (!moe.itemId) {
+          const id = idByRowIndex.get(moe.rowIndex);
+          if (id !== undefined) moe.itemId = id;
         }
       }
       for (const offer of offersData) {
-        if (offer.rowIndex === newItem.rowIndex && !offer.itemId) {
-          offer.itemId = newItem.id;
+        if (!offer.itemId) {
+          const id = idByRowIndex.get(offer.rowIndex);
+          if (id !== undefined) offer.itemId = id;
         }
       }
     }
 
-    // 5. Batch upsert MOE (interdit pour entreprise)
+    // 5. Upsert MOE en UNE requête (interdit pour entreprise).
+    //
+    // Déduplication par item_id obligatoire : `ON CONFLICT DO UPDATE` refuse de
+    // toucher deux fois la même ligne dans une seule instruction. On garde la
+    // dernière occurrence, ce qui reproduit le comportement de la boucle
+    // précédente (la dernière écriture gagnait).
     if (moeData.length > 0 && !isEntreprise) {
+      const parItem = new Map();
       for (const moe of moeData) {
         if (!moe.itemId) continue;
-        await client.query(`
-          INSERT INTO moe_items (item_id, qty, unit_price, amount)
-          VALUES ($1,$2,$3,$4)
-          ON CONFLICT (item_id) DO UPDATE
-          SET qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount
-        `, [moe.itemId, moe.q, moe.pu, moe.mt]);
+        parItem.set(Number(moe.itemId), moe);
+      }
+      const lignes = [...parItem.values()];
+      if (lignes.length > 0) {
+        await client.query(
+          `INSERT INTO moe_items (item_id, qty, unit_price, amount)
+           SELECT d.item_id, d.qty, d.unit_price, d.amount
+             FROM unnest($1::bigint[], $2::numeric[], $3::numeric[], $4::numeric[])
+                  AS d(item_id, qty, unit_price, amount)
+           ON CONFLICT (item_id) DO UPDATE
+             SET qty = EXCLUDED.qty,
+                 unit_price = EXCLUDED.unit_price,
+                 amount = EXCLUDED.amount`,
+          [
+            lignes.map(m => m.itemId),
+            lignes.map(m => m.q),
+            lignes.map(m => m.pu),
+            lignes.map(m => m.mt),
+          ]
+        );
       }
     }
 
-    // 6. Batch upsert OFFERS
-    // SÉCURITÉ: Entreprise ne peut sauvegarder que les offres de sa propre company
+    // 6. Upsert OFFERS en UNE requête.
+    // SÉCURITÉ: une entreprise ne peut sauvegarder que ses propres offres.
+    // Déduplication sur le triplet de la contrainte d'unicité.
     if (offersData.length > 0) {
+      const parCle = new Map();
       for (const offer of offersData) {
         if (!offer.itemId) continue;
-        // Entreprise: filtrer uniquement ses propres offres
-        if (isEntreprise && Number(offer.companyId) !== Number(userCompanyId)) continue;
-        await client.query(`
-          INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
-          VALUES ($1,$2,$3,$4,$5,$6,$7)
-          ON CONFLICT (item_id, company_id, round_id) DO UPDATE
-          SET unit=EXCLUDED.unit, qty=EXCLUDED.qty, unit_price=EXCLUDED.unit_price, amount=EXCLUDED.amount,
-              comment=COALESCE(offers.comment, EXCLUDED.comment)
-        `, [offer.itemId, offer.companyId, roundId, offer.u, offer.oq, offer.op, offer.om]);
+        if (isEntreprise && !scope.allows(offer.companyId)) continue;
+        parCle.set(`${Number(offer.itemId)}:${Number(offer.companyId)}`, offer);
+      }
+      const lignes = [...parCle.values()];
+      if (lignes.length > 0) {
+        await client.query(
+          `INSERT INTO offers (item_id, company_id, round_id, unit, qty, unit_price, amount)
+           SELECT d.item_id, d.company_id, $1, d.unit, d.qty, d.unit_price, d.amount
+             FROM unnest($2::bigint[], $3::bigint[], $4::text[], $5::numeric[], $6::numeric[], $7::numeric[])
+                  AS d(item_id, company_id, unit, qty, unit_price, amount)
+           ON CONFLICT (item_id, company_id, round_id) DO UPDATE
+             SET unit = EXCLUDED.unit,
+                 qty = EXCLUDED.qty,
+                 unit_price = EXCLUDED.unit_price,
+                 amount = EXCLUDED.amount,
+                 comment = COALESCE(offers.comment, EXCLUDED.comment)`,
+          [
+            roundId,
+            lignes.map(o => o.itemId),
+            lignes.map(o => o.companyId),
+            lignes.map(o => o.u),
+            lignes.map(o => o.oq),
+            lignes.map(o => o.op),
+            lignes.map(o => o.om),
+          ]
+        );
       }
     }
 

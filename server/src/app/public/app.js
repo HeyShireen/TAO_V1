@@ -8932,7 +8932,7 @@ function bindSmartImport() {
       selectedSheetsDpgf: Array.isArray(importState.selectedSheetsDpgf) ? [...importState.selectedSheetsDpgf] : [],
       sheetConfigsDpgf: importState.sheetConfigsDpgf || {},
       dpgfBaseMapping: importState.dpgfBaseMapping ? cloneMapping(importState.dpgfBaseMapping) : null,
-      importOperation: 'replace',
+      importOperation: resolveImportOperation(),
       companySelectValue: qs('#import-company-select')?.value || '',
       companyNewValue: qs('#import-company-new')?.value || '',
     };
@@ -8992,7 +8992,11 @@ function bindSmartImport() {
     importState.selectedSheetsDpgf = Array.isArray(draft.selectedSheetsDpgf) ? [...draft.selectedSheetsDpgf] : [];
     importState.sheetConfigsDpgf = draft.sheetConfigsDpgf || {};
     importState.dpgfBaseMapping = draft.dpgfBaseMapping ? cloneMapping(draft.dpgfBaseMapping) : null;
-    importState.importOperation = 'replace';
+    // Un brouillon d'import d'offre restaure son opération ; à défaut on reprend
+    // le défaut du mode (mise à jour pour une offre, remplacement pour la DPGF).
+    importState.importOperation = draft.importOperation
+      || (importState.mode === 'offer' ? 'update' : 'replace');
+    updateImportOperationUI();
     if (qs('#import-company-select')) qs('#import-company-select').value = draft.companySelectValue || '';
     if (qs('#import-company-new')) qs('#import-company-new').value = draft.companyNewValue || '';
     return true;
@@ -9510,9 +9514,39 @@ function bindSmartImport() {
     setDpgfSheetsDropdownOpen(false);
   });
 
+  /**
+   * Opération d'import effectivement envoyée au serveur.
+   *
+   * - mode DPGF : toujours `replace` (rafraîchissement de la trame) ;
+   * - mode offre : `update` par défaut, `replace` si la case est cochée.
+   */
+  function resolveImportOperation() {
+    if (importState.mode !== 'offer') return 'replace';
+    return qs('#import-replace-offers')?.checked ? 'replace' : 'update';
+  }
+
+  /**
+   * Affiche la case « Remplacer toutes les offres » en mode offre uniquement,
+   * et aligne son état sur `importState.importOperation`.
+   */
+  function updateImportOperationUI() {
+    const champ = qs('#import-replace-offers-field');
+    const caseACocher = qs('#import-replace-offers');
+    const estOffre = importState.mode === 'offer';
+    if (champ) champ.style.display = estOffre ? 'flex' : 'none';
+    if (caseACocher) caseACocher.checked = estOffre && importState.importOperation === 'replace';
+  }
+
   function setImportMode(mode) {
     importState.mode = mode;
-    importState.importOperation = 'replace';
+    // Import d'offre : par défaut on MET À JOUR les lignes présentes dans le
+    // fichier et on conserve les autres. C'est indispensable après la
+    // duplication d'un tour, où le remplacement effacerait les offres copiées
+    // pour toute ligne absente du nouveau fichier.
+    // Import DPGF : le remplacement reste la règle (c'est la façon de
+    // rafraîchir la trame), et il est confirmé explicitement avant d'agir.
+    importState.importOperation = mode === 'offer' ? 'update' : 'replace';
+    updateImportOperationUI();
     if (fileInput) fileInput.multiple = mode === 'offer';
 
     // Réinitialiser l'état multi-onglets DPGF lors du changement de mode
@@ -10114,7 +10148,9 @@ function bindSmartImport() {
       companyId: importState.mode === 'offer' ? (qs('#import-company-select')?.value || null) : null,
       companyName: importState.mode === 'offer' ? (qs('#import-company-new')?.value?.trim() || null) : null,
       fileId: importState.fileId || null,
-      importOperation: 'replace',
+      // En mode offre, « update » conserve les lignes absentes du fichier ; le
+      // remplacement intégral n'a lieu que si l'utilisateur l'a demandé.
+      importOperation: resolveImportOperation(),
       detectOptions: qs('#import-detect-options')?.checked !== false,
     };
 

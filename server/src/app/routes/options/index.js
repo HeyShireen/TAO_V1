@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { parseNumber } from '../../importers/import-utils.js';
+import { companyScope } from '../../utils/company-scope.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -50,13 +51,16 @@ router.get('/lot/:lotId', async (req, res) => {
   try {
     const { lotId } = req.params;
     const roundId = req.query.round_id;
-    const isEntreprise = req.user?.role === 'entreprise';
-    const userCompanyId = req.user?.company_id || null;
+    const scope = companyScope(req);
+    const isEntreprise = scope.isEntreprise;
+    if (scope.orphan) {
+      return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
+    }
 
     // SÉCURITÉ: Vérifier accès au projet
     const projectId = await getProjectIdForLot(lotId);
     if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
-    const canView = await canViewProject(req.user.id, projectId, req.user.role, req.user.company_id || null);
+    const canView = await canViewProject(req.user.id, projectId, req.user.role, scope.companyId);
     if (!canView) return res.status(403).json({ error: 'Accès refusé' });
 
     // Récupérer les options
@@ -74,56 +78,77 @@ router.get('/lot/:lotId', async (req, res) => {
     }
 
     const options = optionsRes.rows;
+    const optionIds = options.map(o => Number(o.id)).filter(Number.isFinite);
 
-    // Pour chaque option, récupérer ses items et offres
-    const enriched = [];
-    for (const opt of options) {
+    // Lignes d'options et offres récupérées en 2 requêtes, quel que soit le
+    // nombre d'options.
+    //
+    // La version précédente imbriquait trois niveaux de boucles : 1 requête par
+    // option, puis 1 par ligne d'option. Sur un lot à 6 options et 95 lignes,
+    // cela faisait une centaine d'allers-retours séquentiels.
+    const itemsByOption = new Map();
+    const offersByItem = new Map();
+
+    if (optionIds.length > 0) {
       const itemsRes = await query(
-        `SELECT oi.id, oi.num, oi.designation, oi.unit,
-                oim.qty as moe_qty, oim.unit_price as moe_unit_price
-         FROM option_items oi
-         LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
-         WHERE oi.option_id = $1
-         ORDER BY oi.num ASC, oi.id ASC`,
-        [opt.id]
+        `SELECT oi.option_id, oi.id, oi.num, oi.designation, oi.unit,
+                oim.qty AS moe_qty, oim.unit_price AS moe_unit_price
+           FROM option_items oi
+           LEFT JOIN option_item_moe oim ON oim.option_item_id = oi.id
+          WHERE oi.option_id = ANY($1::int[])
+          ORDER BY oi.option_id, oi.num ASC, oi.id ASC`,
+        [optionIds]
       );
 
-      // Pour chaque item, récupérer ses offres
-      const itemsWithOffers = [];
-      for (const item of itemsRes.rows) {
-        const offersRes = roundId
-          ? await query(
-            `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
+      const itemIds = itemsRes.rows.map(r => Number(r.id));
+      if (itemIds.length > 0) {
+        const params = [itemIds];
+        let roundFilter = '';
+        if (roundId) {
+          params.push(Number(roundId));
+          roundFilter = ` AND oio.round_id = $${params.length}`;
+        }
+        const offersRes = await query(
+          `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty,
+                  oio.unit_price, oio.unit, oio.round_id
              FROM option_item_offers oio
-             WHERE oio.option_item_id = $1 AND oio.round_id = $2
-               ${isEntreprise && userCompanyId ? 'AND oio.company_id = $3' : ''}`,
-            isEntreprise && userCompanyId ? [item.id, Number(roundId), userCompanyId] : [item.id, Number(roundId)]
-          )
-          : await query(
-            `SELECT oio.id, oio.option_item_id, oio.company_id, oio.qty, oio.unit_price, oio.unit, oio.round_id
-             FROM option_item_offers oio
-             WHERE oio.option_item_id = $1
-               ${isEntreprise && userCompanyId ? 'AND oio.company_id = $2' : ''}`,
-            isEntreprise && userCompanyId ? [item.id, userCompanyId] : [item.id]
-          );
-        itemsWithOffers.push({
-          ...item,
-          moe_qty: isEntreprise ? null : item.moe_qty,
-          moe_unit_price: isEntreprise ? null : item.moe_unit_price,
-          offers: offersRes.rows
-        });
+            WHERE oio.option_item_id = ANY($1::int[])${roundFilter}${scope.sqlAnd('oio.company_id')}`,
+          params
+        );
+        for (const row of offersRes.rows) {
+          const key = Number(row.option_item_id);
+          if (!offersByItem.has(key)) offersByItem.set(key, []);
+          offersByItem.get(key).push(row);
+        }
       }
 
-      enriched.push({
-        ...opt,
-        items: itemsWithOffers
-      });
+      for (const row of itemsRes.rows) {
+        const key = Number(row.option_id);
+        if (!itemsByOption.has(key)) itemsByOption.set(key, []);
+        itemsByOption.get(key).push({
+          id: row.id,
+          num: row.num,
+          designation: row.designation,
+          unit: row.unit,
+          // Les données MOE restent masquées pour le rôle entreprise.
+          moe_qty: isEntreprise ? null : row.moe_qty,
+          moe_unit_price: isEntreprise ? null : row.moe_unit_price,
+          offers: offersByItem.get(Number(row.id)) || [],
+        });
+      }
     }
+
+    const enriched = options.map(opt => ({
+      ...opt,
+      items: itemsByOption.get(Number(opt.id)) || [],
+    }));
 
     res.json(enriched);
   } catch (err) {
+    // Le message d'exception n'est pas renvoyé au client : il exposait la
+    // structure interne (noms de tables, contraintes) à l'appelant.
     console.error('Erreur récupération options:', err.message, err.stack);
-    res.status(500).json({ error: 'Impossible de récupérer les options: ' + err.message });
+    res.status(500).json({ error: 'Impossible de récupérer les options' });
   }
 });
 
@@ -258,11 +283,43 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
 
     const resultItems = [];
 
+    // Options et articles autorisés pour ce lot/tour, récupérés UNE fois.
+    //
+    // Chaque ligne déclenchait auparavant sa propre requête de validation, plus
+    // un upsert MOE et un upsert par entreprise. Les contrôles d'appartenance
+    // sont désormais faits en mémoire sur ces deux ensembles, et les upserts
+    // regroupés après la boucle. Les INSERT de nouvelles lignes restent
+    // unitaires : il faut l'identifiant attribué par la base pour le renvoyer au
+    // client, et `option_items` n'a pas de colonne d'ordre qui permettrait de
+    // recorréler un insert groupé de façon fiable.
+    const optionsValidesRes = await client.query(
+      'SELECT id FROM options WHERE lot_id = $1 AND round_id = $2',
+      [lotId, roundId]
+    );
+    const optionIdsValides = new Set(optionsValidesRes.rows.map(o => Number(o.id)));
+
+    const optionIdByItemId = new Map();
+    if (optionIdsValides.size > 0) {
+      const itemsValidesRes = await client.query(
+        'SELECT id, option_id FROM option_items WHERE option_id = ANY($1::int[])',
+        [[...optionIdsValides]]
+      );
+      for (const row of itemsValidesRes.rows) {
+        optionIdByItemId.set(Number(row.id), Number(row.option_id));
+      }
+    }
+
+    const aMettreAJour = [];
+    const moeAUpserter = [];
+    const offresAUpserter = [];
+
     for (const r of rows) {
       const clientIndex = Number.isFinite(Number(r.index)) ? Number(r.index) : null;
       const optionId = r.option_id ? Number(r.option_id) : null;
       let itemId = r.item_id ? Number(r.item_id) : null;
       if (!optionId) continue;
+      // L'option doit appartenir au lot et au tour visés.
+      if (!optionIdsValides.has(optionId)) continue;
 
       const num = String(r.num ?? '').trim();
       const designation = String(r.designation ?? '').trim();
@@ -279,25 +336,12 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
       if (!itemId && isEmpty) continue;
 
       if (itemId) {
-        const upd = await client.query(
-          `UPDATE option_items oi
-           SET num = $1, designation = $2, unit = $3
-           FROM options o
-           WHERE oi.id = $4
-             AND o.id = oi.option_id
-             AND oi.option_id = $5
-             AND o.lot_id = $6
-             AND o.round_id = $7
-           RETURNING oi.id`,
-          [num, designation, unit, itemId, optionId, lotId, roundId]
-        );
-        if (upd.rowCount === 0) continue; // item n'appartenant pas à ce lot/tour → ignoré
+        // L'article doit appartenir exactement à l'option déclarée par le
+        // client, et cette option au lot/tour : même contrôle qu'avant, fait
+        // en mémoire au lieu d'un aller-retour par ligne.
+        if (optionIdByItemId.get(itemId) !== optionId) continue;
+        aMettreAJour.push({ id: itemId, num, designation, unit });
       } else {
-        const optCheck = await client.query(
-          'SELECT id FROM options WHERE id = $1 AND lot_id = $2 AND round_id = $3',
-          [optionId, lotId, roundId]
-        );
-        if (optCheck.rowCount === 0) continue;
         const ins = await client.query(
           'INSERT INTO option_items (option_id, num, designation, unit) VALUES ($1, $2, $3, $4) RETURNING id',
           [optionId, num, designation, unit]
@@ -305,31 +349,78 @@ router.post('/lot/:lotId/save-grid', isResponsableOrAdmin, async (req, res) => {
         itemId = ins.rows[0].id;
       }
 
-      // MOE (une ligne par item : UNIQUE(option_item_id))
-      await client.query(
-        `INSERT INTO option_item_moe (option_item_id, qty, unit_price)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (option_item_id) DO UPDATE SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price`,
-        [itemId, moeQty, moePu]
-      );
+      moeAUpserter.push({ itemId, qty: moeQty, pu: moePu });
 
-      // Offres entreprises
       for (const [cid, val] of offerEntries) {
         const companyId = Number(cid);
         if (!Number.isFinite(companyId)) continue;
-        const offerQty = parseNumber(val?.qty);
-        const offerPu = parseNumber(val?.pu);
-        const offerUnit = String(val?.u ?? '').trim() || null;
-        await client.query(
-          `INSERT INTO option_item_offers (option_item_id, company_id, round_id, qty, unit_price, unit)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (option_item_id, company_id, round_id) DO UPDATE
-           SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, unit = EXCLUDED.unit`,
-          [itemId, companyId, roundId, offerQty, offerPu, offerUnit]
-        );
+        offresAUpserter.push({
+          itemId,
+          companyId,
+          qty: parseNumber(val?.qty),
+          pu: parseNumber(val?.pu),
+          unit: String(val?.u ?? '').trim() || null,
+        });
       }
 
       resultItems.push({ index: clientIndex, id: itemId, option_id: optionId });
+    }
+
+    // UPDATE groupé des articles existants
+    if (aMettreAJour.length > 0) {
+      await client.query(
+        `UPDATE option_items AS oi
+            SET num = d.num, designation = d.designation, unit = d.unit
+           FROM unnest($1::int[], $2::text[], $3::text[], $4::text[])
+                AS d(id, num, designation, unit)
+          WHERE oi.id = d.id`,
+        [
+          aMettreAJour.map(i => i.id),
+          aMettreAJour.map(i => i.num),
+          aMettreAJour.map(i => i.designation),
+          aMettreAJour.map(i => i.unit),
+        ]
+      );
+    }
+
+    // Upsert MOE groupé. Déduplication par article : `ON CONFLICT DO UPDATE`
+    // refuse de toucher deux fois la même ligne dans une seule instruction.
+    if (moeAUpserter.length > 0) {
+      const parItem = new Map(moeAUpserter.map(m => [Number(m.itemId), m]));
+      const lignes = [...parItem.values()];
+      await client.query(
+        `INSERT INTO option_item_moe (option_item_id, qty, unit_price)
+         SELECT d.item_id, d.qty, d.unit_price
+           FROM unnest($1::int[], $2::numeric[], $3::numeric[])
+                AS d(item_id, qty, unit_price)
+         ON CONFLICT (option_item_id) DO UPDATE
+           SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price`,
+        [lignes.map(m => m.itemId), lignes.map(m => m.qty), lignes.map(m => m.pu)]
+      );
+    }
+
+    // Upsert groupé des offres, dédupliqué sur la clé d'unicité.
+    if (offresAUpserter.length > 0) {
+      const parCle = new Map(
+        offresAUpserter.map(o => [`${Number(o.itemId)}:${Number(o.companyId)}`, o])
+      );
+      const lignes = [...parCle.values()];
+      await client.query(
+        `INSERT INTO option_item_offers (option_item_id, company_id, round_id, qty, unit_price, unit)
+         SELECT d.item_id, d.company_id, $1, d.qty, d.unit_price, d.unit
+           FROM unnest($2::int[], $3::int[], $4::numeric[], $5::numeric[], $6::text[])
+                AS d(item_id, company_id, qty, unit_price, unit)
+         ON CONFLICT (option_item_id, company_id, round_id) DO UPDATE
+           SET qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, unit = EXCLUDED.unit`,
+        [
+          roundId,
+          lignes.map(o => o.itemId),
+          lignes.map(o => o.companyId),
+          lignes.map(o => o.qty),
+          lignes.map(o => o.pu),
+          lignes.map(o => o.unit),
+        ]
+      );
     }
 
     await client.query('COMMIT');
