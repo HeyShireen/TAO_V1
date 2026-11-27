@@ -360,9 +360,15 @@ Configuration des textes de questions au niveau projet.
 | `unanswered_comment` | `TEXT` | Commentaire automatique pour article sans Réponse |
 | `unanswered_color` | `TEXT` | Couleur d'affichage pour article sans Réponse |
 | `offer_amount_mismatch_comment` | `TEXT` | Commentaire automatique si montant importe incoherent |
+| `ask_questions_*` | `BOOLEAN NOT NULL DEFAULT true` | Cases « Poser ces questions » par categorie (migration 044) |
+| `tolerance_pct` | `NUMERIC NOT NULL DEFAULT 0` | Taux de tolerance : poids minimum d un article dans le total MOE du lot pour declencher une question d ecart. 0 = desactive (migration 047) |
 | `updated_at` | `TIMESTAMPTZ DEFAULT now()` | Date de mise a jour |
 
 Les suffixes utilises sont notamment `very_low`, `low`, `high`, `very_high`.
+
+`lot_question_config` reprend ces colonnes avec, pour chacune, un flag
+`*_override` : la valeur du lot ne prime sur celle du projet que si le flag
+est vrai. Cela vaut pour les textes, les `ask_questions_*` et `tolerance_pct`.
 
 ### `lot_threshold_config`
 

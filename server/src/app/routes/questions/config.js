@@ -74,6 +74,35 @@ function effectiveAskQuestions(projectConfig, lotConfig = {}) {
   return out;
 }
 
+/**
+ * Taux de tolérance effectif, en % du total MOE du lot (cascade projet → lot).
+ *
+ * Seuil de MATÉRIALITÉ, pas seuil d'écart : un article dont le poids dans le
+ * lot est inférieur à ce taux ne déclenche aucune question d'écart, quel que
+ * soit l'écart constaté. 0 = désactivé, et c'est la valeur par défaut.
+ */
+function effectiveTolerancePct(projectConfig, lotConfig = {}) {
+  const brut = lotConfig?.tolerance_pct_override
+    ? lotConfig.tolerance_pct
+    : projectConfig?.tolerance_pct;
+  // NUMERIC arrive en string via node-postgres : conversion explicite.
+  const valeur = Number(brut);
+  if (!Number.isFinite(valeur) || valeur <= 0) return 0;
+  return valeur;
+}
+
+/** Normalise un taux de tolérance : pourcentage positif, 0 si invalide. */
+function normalizeTolerance(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') {
+    const repli = Number(fallback);
+    return Number.isFinite(repli) && repli > 0 ? repli : 0;
+  }
+  const nombre = Number(value);
+  if (!Number.isFinite(nombre) || nombre < 0) return 0;
+  // Au-delà de 100 % le filtre supprimerait toutes les questions : on borne.
+  return Math.min(nombre, 100);
+}
+
 function normalizeThreshold(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -369,11 +398,14 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
 
     const currentConfig = await getProjectQuestionConfig(projectId);
     const askValues = ASK_QUESTION_FIELDS.map(field => normalizeAskFlag(req.body[field], currentConfig[field] ?? DEFAULT_ASK_QUESTIONS[field]));
+    // Taux de tolérance : ajouté en DERNIER paramètre, après les booléens, pour
+    // ne pas décaler la numérotation positionnelle existante.
+    const toleranceValue = normalizeTolerance(req.body.tolerance_pct, currentConfig.tolerance_pct);
 
     const result = await query(
       `INSERT INTO project_question_config
-        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch, ${ASK_QUESTION_FIELDS.join(', ')}, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, ${ASK_QUESTION_FIELDS.map((_, idx) => `$${idx + 18}`).join(', ')}, now())
+        (project_id, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch, ${ASK_QUESTION_FIELDS.join(', ')}, tolerance_pct, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, ${ASK_QUESTION_FIELDS.map((_, idx) => `$${idx + 18}`).join(', ')}, $${18 + ASK_QUESTION_FIELDS.length}, now())
        ON CONFLICT (project_id)
        DO UPDATE SET
          question_qty_very_low = EXCLUDED.question_qty_very_low,
@@ -393,9 +425,10 @@ router.put('/project/:projectId', requireManager, async (req, res) => {
          offer_amount_mismatch_comment = EXCLUDED.offer_amount_mismatch_comment,
          question_unit_mismatch = EXCLUDED.question_unit_mismatch,
          ${ASK_QUESTION_FIELDS.map(field => `${field} = EXCLUDED.${field}`).join(',\n         ')},
+         tolerance_pct = EXCLUDED.tolerance_pct,
          updated_at = now()
        RETURNING *`,
-      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch, ...askValues]
+      [projectId, question_qty_very_low, question_qty_low, question_qty_high, question_qty_very_high, question_price_very_low, question_price_low, question_price_high, question_price_very_high, question_amount_very_low, question_amount_low, question_amount_high, question_amount_very_high, unanswered_comment, unanswered_color, offer_amount_mismatch_comment, question_unit_mismatch, ...askValues, toleranceValue]
     );
     
     res.json(result.rows[0]);
@@ -591,7 +624,9 @@ router.get('/lot/:lotId/question-config', requireManager, async (req, res) => {
     const lotConfig = await query('SELECT * FROM lot_question_config WHERE lot_id = $1', [lotId]);
     res.json({
       ...effectiveQuestions(projectConfig, lotConfig.rows[0] || {}),
-      ...effectiveAskQuestions(projectConfig, lotConfig.rows[0] || {})
+      ...effectiveAskQuestions(projectConfig, lotConfig.rows[0] || {}),
+      tolerance_pct: effectiveTolerancePct(projectConfig, lotConfig.rows[0] || {}),
+      tolerance_pct_override: Boolean(lotConfig.rows[0]?.tolerance_pct_override)
     });
   } catch (err) {
     console.error('Erreur recuperation questions lot:', err);
@@ -610,9 +645,15 @@ router.put('/lot/:lotId/question-config', requireManager, async (req, res) => {
     const askValues = ASK_QUESTION_FIELDS.map(field => normalizeAskFlag(req.body[field], projectConfig[field] ?? DEFAULT_ASK_QUESTIONS[field]));
     const askOverrideValues = ASK_QUESTION_FIELDS.map((field, idx) => askValues[idx] !== normalizeAskFlag(projectConfig[field], DEFAULT_ASK_QUESTIONS[field]));
 
-    const lotConfigFields = [...QUESTION_CONFIG_FIELDS, ...ASK_QUESTION_FIELDS];
-    const lotConfigValues = [...values, ...askValues];
-    const lotOverrideValues = [...overrideValues, ...askOverrideValues];
+    // Taux de tolerance : meme cascade projet -> lot, mais valeur numerique,
+    // d'ou une normalisation a part avant de rejoindre la liste generique.
+    const toleranceProjet = normalizeTolerance(projectConfig.tolerance_pct, 0);
+    const toleranceValue = normalizeTolerance(req.body.tolerance_pct, toleranceProjet);
+    const toleranceOverride = toleranceValue !== toleranceProjet;
+
+    const lotConfigFields = [...QUESTION_CONFIG_FIELDS, ...ASK_QUESTION_FIELDS, 'tolerance_pct'];
+    const lotConfigValues = [...values, ...askValues, toleranceValue];
+    const lotOverrideValues = [...overrideValues, ...askOverrideValues, toleranceOverride];
     const result = await query(
       `INSERT INTO lot_question_config
         (lot_id, ${lotConfigFields.join(', ')}, ${lotConfigFields.map(field => `${field}_override`).join(', ')}, updated_at)
@@ -626,7 +667,9 @@ router.put('/lot/:lotId/question-config', requireManager, async (req, res) => {
     );
     res.json({
       ...effectiveQuestions(projectConfig, result.rows[0]),
-      ...effectiveAskQuestions(projectConfig, result.rows[0])
+      ...effectiveAskQuestions(projectConfig, result.rows[0]),
+      tolerance_pct: effectiveTolerancePct(projectConfig, result.rows[0]),
+      tolerance_pct_override: Boolean(result.rows[0]?.tolerance_pct_override)
     });
   } catch (err) {
     console.error('Erreur mise a jour questions lot:', err);
@@ -686,6 +729,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
     const lotQuestionRes = await run('SELECT * FROM lot_question_config WHERE lot_id = $1', [safeLotId]);
     thresholds = effectiveThresholds(projectConfig, thresholds);
     const askQuestions = effectiveAskQuestions(projectConfig, lotQuestionRes.rows[0] || {});
+    const tolerancePct = effectiveTolerancePct(projectConfig, lotQuestionRes.rows[0] || {});
     
     const questionsRes = await run(
       'SELECT * FROM project_question_config WHERE project_id = $1',
@@ -728,6 +772,20 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
       [items.map(i => i.id)]
     );
     const moeByItem = new Map(moeRes.rows.map(m => [m.item_id, m]));
+
+    // Total MOE du lot, référence du taux de tolérance. Calculé en mémoire :
+    // toutes les lignes MOE sont déjà chargées, aucune requête supplémentaire.
+    let totalMoeLot = 0;
+    for (const m of moeRes.rows) {
+      const montant = Number.parseFloat(m?.amount);
+      if (Number.isFinite(montant)) {
+        totalMoeLot += montant;
+        continue;
+      }
+      const q = Number.parseFloat(m?.qty);
+      const pu = Number.parseFloat(m?.unit_price);
+      if (Number.isFinite(q) && Number.isFinite(pu)) totalMoeLot += q * pu;
+    }
     
     const offersRes = await run(
       'SELECT * FROM offers WHERE item_id = ANY($1::int[]) AND round_id = $2',
@@ -1025,11 +1083,30 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
       // (quantité / prix / montant) ; les niveaux devenus obsolètes sont supprimés.
       const staleTypes = ['unit_mismatch'];
 
+      // TAUX DE TOLÉRANCE — filtre de matérialité, en amont des seuils d'écart.
+      //
+      // Un article dont le poids dans le total MOE du lot est inférieur au taux
+      // ne déclenche aucune question d'écart : un article à 1 € dans un lot à
+      // 100 000 € n'en mérite pas, même avec un écart de 300 %.
+      //
+      // Le filtre ne fait que forcer les types à null : la synchronisation par
+      // `staleTypes` supprime alors d'elle-même les questions devenues sans
+      // objet, et `manual_edited` reste préservé comme pour tout autre type.
+      //
+      // En revanche « sans réponse » et « unité incohérente » ne sont PAS
+      // filtrés : ils relèvent de la qualité de la réponse, pas de son poids
+      // financier.
+      let articleMateriel = true;
+      if (tolerancePct > 0 && totalMoeLot > 0) {
+        const poidsPct = (Math.abs(getComparableAmount(moe) ?? 0) / totalMoeLot) * 100;
+        articleMateriel = poidsPct >= tolerancePct;
+      }
+
       // Écart quantité
       const moeQty = excelNumber(moe.qty);
       const offerQty = excelNumber(offer.qty);
       let qtyType = null;
-      if (askQuestions.ask_questions_qty && moeQty != null && offerQty != null && moeQty !== 0) {
+      if (articleMateriel && askQuestions.ask_questions_qty && moeQty != null && offerQty != null && moeQty !== 0) {
         const qtyDev = ((offerQty - moeQty) / moeQty) * 100;
         qtyType = classifyDeviation(qtyDev, thresholds, 'qty');
         if (qtyType) {
@@ -1050,7 +1127,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
       const moeUnitPrice = excelNumber(moe.unit_price);
       const offerUnitPrice = excelNumber(offer.unit_price);
       let priceType = null;
-      if (askQuestions.ask_questions_price && moeUnitPrice != null && offerUnitPrice != null && moeUnitPrice !== 0) {
+      if (articleMateriel && askQuestions.ask_questions_price && moeUnitPrice != null && offerUnitPrice != null && moeUnitPrice !== 0) {
         const priceDev = ((offerUnitPrice - moeUnitPrice) / moeUnitPrice) * 100;
         priceType = classifyDeviation(priceDev, thresholds, 'price');
         if (priceType) {
@@ -1070,7 +1147,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
       // Écart montant
       const moeAmount = getComparableAmount(moe, { allowCalculated: false });
       let amountType = null;
-      if (askQuestions.ask_questions_amount && moeAmount != null && offerAmount != null && moeAmount !== 0) {
+      if (articleMateriel && askQuestions.ask_questions_amount && moeAmount != null && offerAmount != null && moeAmount !== 0) {
         const amountDev = ((offerAmount - moeAmount) / moeAmount) * 100;
         amountType = classifyDeviation(amountDev, thresholds, 'amount');
         if (amountType) {

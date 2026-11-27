@@ -26,10 +26,19 @@ services:
         sync: false
       - key: APP_URL
         sync: false  # URL de votre app Render (ex: https://aolink-app.onrender.com)
+      # SMTP générique. Pour Brevo : EMAIL_HOST=smtp-relay.brevo.com,
+      # EMAIL_USER = identifiant SMTP, EMAIL_FROM = adresse d'expédition réelle
+      # (l'identifiant Brevo n'en est pas une).
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
       - key: EMAIL_USER
-        sync: false  # alban.michaud65@gmail.com
+        sync: false  # identifiant de connexion SMTP
       - key: EMAIL_PASS
-        sync: false  # App password Gmail
+        sync: false  # mot de passe applicatif ou clé SMTP
+      - key: EMAIL_FROM
+        sync: false  # adresse d'expédition, ex. "AO Link <contact@ao-link.fr>"
       - key: ALLOWED_ORIGINS
         sync: false  # À configurer manuellement si besoin
       - key: REDIS_URL

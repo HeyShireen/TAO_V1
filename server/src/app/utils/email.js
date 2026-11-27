@@ -1,14 +1,32 @@
-// server/src/utils.email.js
-// Service d'envoi d'emails avec nodemailer
+// server/src/app/utils/email.js
+// Service d'envoi d'emails — SOURCE UNIQUE du transporteur SMTP.
+//
+// `routes/exports/index.js` en entretenait une copie conforme ; tout passe
+// désormais par ce module, pour qu'un changement de fournisseur se fasse en un
+// seul endroit.
 
 import nodemailer from 'nodemailer';
 
 // Configuration du transporteur email
 let transporter = null;
 
-function getTransporter() {
+/**
+ * Transporteur SMTP mutualisé.
+ *
+ * Entièrement piloté par l'environnement, donc compatible avec n'importe quel
+ * fournisseur. Pour Brevo :
+ *   EMAIL_HOST=smtp-relay.brevo.com
+ *   EMAIL_PORT=587
+ *   EMAIL_USER=<identifiant SMTP Brevo, du type 9xxxxx@smtp-brevo.com>
+ *   EMAIL_PASS=<clé SMTP>
+ *   EMAIL_FROM="AO Link <contact@votredomaine.fr>"   <-- indispensable
+ *
+ * ⚠️ Chez Brevo, l'identifiant SMTP n'est PAS une adresse d'expédition valide.
+ * Sans `EMAIL_FROM`, les messages partiraient avec cet identifiant en
+ * expéditeur et seraient rejetés. C'est la raison d'être de `mailFrom()`.
+ */
+export function getTransporter() {
   if (!transporter) {
-    // Configuration SMTP (Gmail, SendGrid, Brevo, etc.)
     transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.EMAIL_PORT || '587'),
@@ -30,13 +48,34 @@ function getTransporter() {
 }
 
 /**
+ * Adresse d'expédition des messages.
+ *
+ * `EMAIL_FROM` d'abord (seule valeur correcte dès que l'identifiant SMTP n'est
+ * pas une adresse réelle), sinon repli sur `EMAIL_USER` pour ne rien casser des
+ * configurations existantes de type Gmail.
+ *
+ * Une valeur contenant déjà un chevron (« Nom <adresse> ») est reprise telle
+ * quelle ; une adresse nue est habillée du nom de l'application.
+ */
+export function mailFrom() {
+  const configure = (process.env.EMAIL_FROM || '').trim();
+  if (configure) return configure.includes('<') ? configure : `"AO Link" <${configure}>`;
+  return `"AO Link" <${process.env.EMAIL_USER}>`;
+}
+
+/** L'envoi d'emails est-il configuré ? */
+export function isEmailConfigured() {
+  return Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+}
+
+/**
  * Envoyer un email de vérification après inscription
  */
 export async function sendVerificationEmail(email, token) {
   const verificationUrl = `${process.env.APP_URL || 'http://localhost:4000'}/api/auth/verify-email/${token}`;
   
   const mailOptions = {
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: email,
     subject: 'Confirmez votre adresse email - AO Link',
     html: `
@@ -73,7 +112,7 @@ export async function sendTenantInvitationEmail(email, token, tenantName) {
   const invitationUrl = `${process.env.APP_URL || 'http://localhost:4000'}/login?invitation=${encodeURIComponent(token)}`;
   const safeTenantName = String(tenantName).replace(/[<>&"']/g, '');
   await getTransporter().sendMail({
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: email,
     subject: `Invitation AO Link - ${safeTenantName}`,
     html: `
@@ -91,7 +130,7 @@ export async function sendOperationalAlert(subject, message) {
   if (!recipient || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) return false;
   const safeMessage = String(message).replace(/[<>&]/g, '');
   await getTransporter().sendMail({
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: recipient,
     subject: `[AO Link] ${subject}`,
     text: safeMessage,
@@ -106,7 +145,7 @@ export async function sendAccessRequestNotification(responsableEmail, visionneur
   const dashboardUrl = `${process.env.APP_URL || 'http://localhost:4000'}`;
   
   const mailOptions = {
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: responsableEmail,
     subject: `Nouvelle demande d'accès - ${projectName}`,
     html: `
@@ -148,7 +187,7 @@ export async function sendAccessApprovedEmail(visionneurEmail, projectName) {
   const dashboardUrl = `${process.env.APP_URL || 'http://localhost:4000'}`;
   
   const mailOptions = {
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: visionneurEmail,
     subject: `Accès accordé - ${projectName}`,
     html: `
@@ -179,7 +218,7 @@ export async function sendAccessApprovedEmail(visionneurEmail, projectName) {
  */
 export async function sendAccessRejectedEmail(visionneurEmail, projectName, reason) {
   const mailOptions = {
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: visionneurEmail,
     subject: `Demande d'accès refusée - ${projectName}`,
     html: `
@@ -216,7 +255,7 @@ export async function sendPasswordResetEmail(email, token) {
   const resetUrl = `${process.env.APP_URL || 'http://localhost:4000'}/api/auth/reset-password/${token}`;
   
   const mailOptions = {
-    from: `"AO Link" <${process.env.EMAIL_USER}>`,
+    from: mailFrom(),
     to: email,
     subject: 'Réinitialisation de votre mot de passe - AO Link',
     html: `

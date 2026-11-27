@@ -620,6 +620,28 @@
               </div>
             </div>
 
+            <!-- Taux de tolérance : filtre de matérialité, en amont des seuils -->
+            <div style="margin-top:32px">
+              <h4 style="margin:0 0 8px;font-size:1.1rem;color:var(--fg)">Taux de tolérance</h4>
+              <div style="border-radius:12px;border:1px solid var(--border);background:var(--input-bg);padding:16px;max-width:760px">
+                <p style="margin:0 0 12px;font-size:0.9rem;color:var(--muted)">
+                  Un article dont le montant représente <strong>moins</strong> que ce pourcentage du
+                  total MOE du lot ne déclenche <strong>aucune question d'écart</strong> (quantité,
+                  prix unitaire, montant), même en cas d'écart important. Exemple : un article à 1 €
+                  dans un lot à 100 000 € pèse 0,001 %.<br />
+                  Les questions « article sans réponse » et « unité incohérente » ne sont pas
+                  filtrées : elles ne dépendent pas du poids financier.<br />
+                  <strong>0 = désactivé.</strong> Après modification, régénérez les fiches pour
+                  resynchroniser.
+                </p>
+                <label for="tolerance-pct" style="display:block;font-size:0.9rem;margin-bottom:6px;color:var(--fg)">
+                  Poids minimum d'un article dans le lot (%)
+                </label>
+                <input id="tolerance-pct" name="tolerance-pct" type="number" min="0" max="100" step="0.001" value="0"
+                       style="width:180px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg)" />
+              </div>
+            </div>
+
             <!-- Section Réponses Oubliées -->
             <div style="margin-top:32px">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 16px 0;max-width:560px">

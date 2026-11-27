@@ -223,7 +223,9 @@ const REQUIRED_COLUMNS = [
   ['project_question_config', 'ask_questions_qty'], // migration 044
   ['lot_question_config', 'ask_questions_qty_override'], // migration 044
   ['users', 'tenant_id'], // migration 045
-  ['projects', 'tenant_id'] // migration 045
+  ['projects', 'tenant_id'], // migration 045
+  ['project_question_config', 'tolerance_pct'], // migration 047
+  ['lot_question_config', 'tolerance_pct_override'] // migration 047
 ]
 
 async function assertSchemaSanity() {

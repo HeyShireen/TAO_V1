@@ -3,7 +3,7 @@ import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, BorderStyle, UnderlineType, HeadingLevel, AlignmentType } from 'docx';
 import JSZip from 'jszip';
-import nodemailer from 'nodemailer';
+import { getTransporter, mailFrom, isEmailConfigured } from '../../utils/email.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
@@ -551,26 +551,9 @@ async function fetchSelectedOptionTotals({ projectId, lotIds = [], roundIds = []
   return { moeByLot, moeByOption, offersByLotRoundCompany, companiesByLot, details };
 }
 
-// Transporteur email (réutilise la même config que utils/email.js)
-let emailTransporter = null;
-function getEmailTransporter() {
-  if (!emailTransporter) {
-    emailTransporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587'),
-      secure: process.env.EMAIL_PORT === '465',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 100,
-      connectionTimeout: 10000,
-    });
-  }
-  return emailTransporter;
-}
+// Le transporteur SMTP vit désormais dans utils/email.js : ce fichier en
+// entretenait une copie conforme, qu'il fallait penser à modifier en même
+// temps. Un changement de fournisseur ne se fait plus qu'à un seul endroit.
 
 // Export Excel du récapitulatif d'un tour
 async function fetchLotComparisonData({ lotId, roundId, req, selectedOptionIds = [] }) {
@@ -3779,7 +3762,7 @@ router.post('/send-questions-to-company', async (req, res) => {
       return res.status(400).json({ error: 'Adresse email invalide' });
     }
 
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    if (!isEmailConfigured()) {
       return res.status(500).json({ error: 'Configuration email non disponible sur le serveur' });
     }
 
@@ -3806,7 +3789,7 @@ router.post('/send-questions-to-company', async (req, res) => {
 
     const finalSubject = subject || `Fiches Questions - Lot ${lotId}`;
     const mailOptions = {
-      from: `"AO Link" <${process.env.EMAIL_USER}>`,
+      from: mailFrom(),
       to: email,
       subject: finalSubject,
       html: `
@@ -3825,7 +3808,7 @@ router.post('/send-questions-to-company', async (req, res) => {
       attachments: [{ filename, content: buffer, contentType }]
     };
 
-    await getEmailTransporter().sendMail(mailOptions);
+    await getTransporter().sendMail(mailOptions);
 
     // Enregistrer l'envoi
     await query(
@@ -3862,7 +3845,7 @@ router.post('/send-email', async (req, res) => {
     }
 
     // Vérifier que l'email est configuré
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    if (!isEmailConfigured()) {
       return res.status(500).json({ error: 'Configuration email non disponible sur le serveur' });
     }
 
@@ -3870,7 +3853,7 @@ router.post('/send-email', async (req, res) => {
 
     // Envoyer l'email avec la pièce jointe
     const mailOptions = {
-      from: `"AO Link" <${process.env.EMAIL_USER}>`,
+      from: mailFrom(),
       to: emailList.join(', '),
       subject: subject,
       html: `
@@ -3893,7 +3876,7 @@ router.post('/send-email', async (req, res) => {
       }]
     };
 
-    await getEmailTransporter().sendMail(mailOptions);
+    await getTransporter().sendMail(mailOptions);
     console.log(`✅ Export email envoyé à ${emailList.join(', ')} par ${req.user.email}`);
     res.json({ success: true, message: `Email envoyé à ${emailList.length} destinataire(s)` });
 

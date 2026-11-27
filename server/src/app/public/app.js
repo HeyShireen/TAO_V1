@@ -3904,6 +3904,8 @@ async function autoSaveProjectQuestionConfig() {
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
       question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim(),
+      // Taux de tolerance : filtre de materialite applique en amont des seuils.
+      tolerance_pct: Number(qs('#tolerance-pct')?.value) || 0,
       ...readAskQuestionFlagsFromLotDom()
     };
     const url = currentLot
@@ -3945,6 +3947,7 @@ async function loadProjectQuestionConfig(){
     qs('#q-unanswered-color').value = config.unanswered_color || '#fff3cd';
     qs('#q-offer-amount-mismatch-comment').value = config.offer_amount_mismatch_comment || 'Montant incohérent dans la DPGF : le montant importé est conservé.';
     if (qs('#q-unit-mismatch')) qs('#q-unit-mismatch').value = config.question_unit_mismatch || 'Pourquoi l\'unité de chiffrage est-elle différente de l\'unité MOE ({unit}) ?';
+    if (qs('#tolerance-pct')) qs('#tolerance-pct').value = Number(config.tolerance_pct) || 0;
     unansweredConfig.comment = config.unanswered_comment || 'Article sans réponse';
     unansweredConfig.color = config.unanswered_color || '#fff3cd';
     applyAskQuestionFlagsToLotDom(config);
@@ -3987,6 +3990,8 @@ async function saveProjectQuestionConfig(){
       unanswered_color: qs('#q-unanswered-color')?.value || '#fff3cd',
       offer_amount_mismatch_comment: (qs('#q-offer-amount-mismatch-comment')?.value || '').trim(),
       question_unit_mismatch: (qs('#q-unit-mismatch')?.value || '').trim(),
+      // Taux de tolerance : filtre de materialite applique en amont des seuils.
+      tolerance_pct: Number(qs('#tolerance-pct')?.value) || 0,
       ...readAskQuestionFlagsFromLotDom()
     };
     const url = currentLot
@@ -4058,7 +4063,7 @@ function attachProjectQuestionsListeners(){
                            'q-price-very-low', 'q-price-low', 'q-price-high', 'q-price-very-high',
                            'q-amount-very-low', 'q-amount-low', 'q-amount-high', 'q-amount-very-high',
                            'q-unanswered-comment', 'q-unanswered-color', 'q-offer-amount-mismatch-comment',
-                           'q-unit-mismatch',
+                           'q-unit-mismatch', 'tolerance-pct',
                            'ask-questions-qty', 'ask-questions-price', 'ask-questions-amount',
                            'ask-questions-unanswered', 'ask-questions-unit-mismatch', 'ask-questions-offer-amount-mismatch'];
   questionFieldIds.forEach(id => {
