@@ -1990,8 +1990,11 @@ body.demo-tutorial [data-demo-tip]::after {
   padding-right: 18px;
   vertical-align: top;
 }
-/* Code couleur des fiches questions : orange = modifiée par l'utilisateur, vert = validée.
-   L'ordre des règles fait gagner le vert quand les deux classes sont présentes. */
+/* Code couleur des fiches questions : orange = modifiée par l'utilisateur,
+   vert = validée. Les deux états sont indépendants (cf. questionCellStateClass
+   dans app.js) et doivent rester lisibles SIMULTANÉMENT : le fond porte la
+   validation, le liseré porte la modification. Ne pas revenir à un simple
+   ordre de déclaration, qui faisait disparaître l'orange au profit du vert. */
 td.question-cell-modified {
   background: rgba(253, 126, 20, 0.16);
   box-shadow: inset 3px 0 0 #fd7e14;
@@ -2007,6 +2010,15 @@ td.question-cell-validated {
 td.question-cell-validated .question-text-editor {
   background: rgba(25, 135, 84, 0.10) !important;
   border-color: rgba(25, 135, 84, 0.65) !important;
+}
+/* Modifiée ET validée : fond vert (validation) + liseré orange (modification). */
+td.question-cell-modified.question-cell-validated {
+  background: rgba(25, 135, 84, 0.16);
+  box-shadow: inset 3px 0 0 #fd7e14;
+}
+td.question-cell-modified.question-cell-validated .question-text-editor {
+  background: rgba(25, 135, 84, 0.10) !important;
+  border-color: rgba(253, 126, 20, 0.75) !important;
 }
 #questions-editor-table .question-company-resize-handle {
   position: absolute;

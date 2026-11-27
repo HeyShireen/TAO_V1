@@ -270,16 +270,23 @@ function hasBlockingUnitMismatch(expectedUnit, offeredUnit, offeredAmount) {
   return !areUnitsEquivalent(expectedUnit, offeredUnit);
 }
 
-function buildUnitMismatchComment(expectedUnit) {
-  const safeExpectedUnit = String(expectedUnit || '').trim();
-  if (!safeExpectedUnit) return '';
-  return `Ce poste doit être chiffré en ${safeExpectedUnit}.`;
-}
-
 const QUESTION_METRIC_LEVELS = ['very_low', 'low', 'high', 'very_high'];
 
 function metricQuestionTypes(metric) {
   return QUESTION_METRIC_LEVELS.map(level => `${metric}_${level}`);
+}
+
+// Ramène un type de question à sa famille de métrique : `qty_very_high` -> `qty`.
+// Les types qui ne portent pas de niveau d'écart (unanswered, unit_mismatch,
+// offer_amount_mismatch, manual) sont leur propre famille.
+// Sert à raisonner « par donnée » et non « par niveau d'écart », notamment pour
+// ne pas faire réapparaître une question supprimée sous un autre niveau.
+function questionMetricFamily(questionType) {
+  const type = String(questionType || '');
+  for (const metric of ['qty', 'price', 'amount']) {
+    if (type.startsWith(`${metric}_`)) return metric;
+  }
+  return type;
 }
 
 // Détermine le type de question correspondant à l'écart, selon les seuils effectifs.
@@ -749,12 +756,22 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
     );
     const existingTypesByCell = new Map();
     const userOccupiedCells = new Set();
+    // Familles de métriques explicitement abandonnées par l'utilisateur sur une
+    // cellule. Nécessaire parce que la clé d'unicité porte sur le NIVEAU
+    // (`qty_low`, `qty_high`...) : sans cela, supprimer `qty_low` puis voir
+    // l'écart basculer en `qty_high` fait réapparaître une question sur la même
+    // donnée. On raisonne donc par famille, pas par niveau.
+    const dismissedFamiliesByCell = new Map();
     for (const row of existingRes.rows) {
       const key = cellKey(row.item_id, row.option_item_id, row.company_id);
       if (!existingTypesByCell.has(key)) existingTypesByCell.set(key, new Set());
       existingTypesByCell.get(key).add(row.question_type);
       if (row.status !== 'dismissed' && (row.question_type === 'manual' || row.manual_edited)) {
         userOccupiedCells.add(key);
+      }
+      if (row.status === 'dismissed' && row.manual_edited) {
+        if (!dismissedFamiliesByCell.has(key)) dismissedFamiliesByCell.set(key, new Set());
+        dismissedFamiliesByCell.get(key).add(questionMetricFamily(row.question_type));
       }
     }
 
@@ -781,11 +798,24 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
       return !hasFilledNumber(row.qty) || !hasFilledNumber(row.unit_price);
     };
 
+    // ⚠️ `comment` est la colonne RÉPONSE (migration 014 a renommé `answer` en
+    // `comment`) : c'est l'entreprise ou le chargé d'affaire qui la remplit.
+    // La génération ne doit JAMAIS y écrire, sinon le texte automatique apparaît
+    // pré-rempli dans la colonne « Réponse » du web et des exports. Le paramètre
+    // est conservé pour les appels manuels ; laissé à null, il ne touche rien
+    // (cf. le COALESCE dans les clauses ON CONFLICT ci-dessous).
     const upsertQuestion = async ({ itemId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment = null }) => {
       // Cellule occupée par une question utilisateur active : ne pas ajouter de
       // nouveau type auto (les types déjà présents sont quand même mis à jour).
       const key = cellKey(itemId, optionItemId, companyId);
-      if (userOccupiedCells.has(key) && !existingTypesByCell.get(key)?.has(type)) {
+      const typeAlreadyPresent = Boolean(existingTypesByCell.get(key)?.has(type));
+      if (userOccupiedCells.has(key) && !typeAlreadyPresent) {
+        return false;
+      }
+      // Famille de métrique abandonnée par l'utilisateur : ne pas ressusciter la
+      // question sous un autre niveau d'écart. Pour la faire revenir, il faut
+      // passer par « régénérer la cellule », qui supprime réellement les lignes.
+      if (!typeAlreadyPresent && dismissedFamiliesByCell.get(key)?.has(questionMetricFamily(type))) {
         return false;
       }
       // Texte édité manuellement : si l'ancienne phrase générée est encore présente
@@ -817,7 +847,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
              deviation_pct = EXCLUDED.deviation_pct,
              comment = CASE
                WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
-               ELSE EXCLUDED.comment
+               ELSE COALESCE(EXCLUDED.comment, generated_questions.comment)
              END`,
           [safeLotId, itemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, safeRoundId]
         );
@@ -839,7 +869,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
              deviation_pct = EXCLUDED.deviation_pct,
              comment = CASE
                WHEN COALESCE(generated_questions.manual_edited, false) THEN generated_questions.comment
-               ELSE EXCLUDED.comment
+               ELSE COALESCE(EXCLUDED.comment, generated_questions.comment)
              END`,
           [safeLotId, optionItemId, companyId, type, text, moeValue, offerValue, deviationPct, comment, safeRoundId]
         );
@@ -933,8 +963,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
         text,
         moeValue: moeAmount,
         offerValue: null,
-        deviationPct: null,
-        comment: text
+        deviationPct: null
       });
     };
 
@@ -987,8 +1016,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
           text: unitMismatchText,
           moeValue: null,
           offerValue: offerAmount,
-          deviationPct: null,
-          comment: buildUnitMismatchComment(moeUnit)
+          deviationPct: null
         });
         continue;
       }
@@ -1085,8 +1113,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
               text: mismatchText,
               moeValue: calculatedAmt,
               offerValue: importedAmt,
-              deviationPct,
-              comment: mismatchText
+              deviationPct
             }));
           }
         }
@@ -1170,8 +1197,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
             text: unitMismatchText,
             moeValue: null,
             offerValue: offerAmount,
-            deviationPct: null,
-            comment: buildUnitMismatchComment(optionUnit)
+            deviationPct: null
           });
           continue;
         }
@@ -1268,8 +1294,7 @@ async function generateLotQuestions({ lotId, roundId, itemId = null, optionItemI
                 text: mismatchText,
                 moeValue: calculatedAmt,
                 offerValue: importedAmt,
-                deviationPct,
-                comment: mismatchText
+                deviationPct
               }));
             }
           }

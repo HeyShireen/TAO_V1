@@ -919,6 +919,12 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     const moe = moeByItem.get(key) || {};
     const moeQty = toNumberOrNull(moe.qty);
     const moePu = toNumberOrNull(moe.unit_price);
+    // Montant MOE FIGÉ : le montant enregistré prime, y compris à 0. On ne
+    // calcule qty × PU qu'à défaut. Même règle que les montants d'offre
+    // ci-dessous, et cohérent avec la génération de questions, qui refuse déjà
+    // le montant calculé (getComparableAmount(..., { allowCalculated: false })).
+    const moeAmount = toNumberOrNull(moe.amount)
+      ?? (moeQty !== null && moePu !== null ? moeQty * moePu : null);
 
     row.getCell(1).value = item.num || '';
     row.getCell(2).value = item.designation || '';
@@ -926,7 +932,7 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
     row.getCell(moeStartCol).value = item.unit || '';
     row.getCell(moeStartCol + 1).value = moeQty;
     row.getCell(moeStartCol + 2).value = moePu;
-    row.getCell(moeStartCol + 3).value = moeQty !== null && moePu !== null ? moeQty * moePu : null;
+    row.getCell(moeStartCol + 3).value = moeAmount;
 
     companies.forEach((company, cIdx) => {
       const start = firstCompanyCol + cIdx * companyWidth;
@@ -942,7 +948,6 @@ async function buildLotComparisonWorkbook({ lot, round, items, moeByItem, compan
       const unitMismatch = hasBlockingUnitMismatch(item.unit, offer.unit, amount);
       const qtyDeviation = moeQty && qty !== null ? ((qty - moeQty) / moeQty) * 100 : null;
       const puDeviation = moePu && pu !== null ? ((pu - moePu) / moePu) * 100 : null;
-      const moeAmount = moeQty !== null && moePu !== null ? moeQty * moePu : null;
       const amountDeviation = moeAmount && amount !== null ? ((amount - moeAmount) / moeAmount) * 100 : null;
       const generatedQuestions = questionsByItemCompany?.get(`${key}:${Number(company.id)}`) || [];
       const questionTexts = generatedQuestions

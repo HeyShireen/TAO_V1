@@ -897,25 +897,29 @@ router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 're
       }
 
       // Préparer MOE
-      let q = null, pu = null, mt = null;
-      q = parseGridNumber(r.moe?.qty);
-      pu = parseGridNumber(r.moe?.pu);
-      mt = parseGridNumber(r.moe?.mt);
-      if (q != null && pu != null) {
+      //
+      // Le montant est FIGÉ : on conserve celui transmis par la grille, y
+      // compris lorsqu'il vaut 0 (la MOE peut renseigner une quantité et un PU
+      // sans vouloir de total). On ne calcule qty × PU que si aucun montant
+      // n'est fourni. Le recalcul à la saisie est assuré côté client par
+      // recalcRowAmountsRow(), qui envoie alors la valeur recalculée.
+      const q = parseGridNumber(r.moe?.qty);
+      const pu = parseGridNumber(r.moe?.pu);
+      let mt = parseGridNumber(r.moe?.mt);
+      if (mt == null && q != null && pu != null) {
         mt = q * pu;
       }
       moeData.push({ itemId, q, pu, mt, rowIndex });
 
-      // Préparer OFFERS
+      // Préparer OFFERS — même règle de montant figé que pour la MOE.
       if (r.offers && typeof r.offers === 'object') {
         for (const [cid, val] of Object.entries(r.offers)) {
           const companyId = Number(cid);
           const u  = val?.u ?? null;
-          let oq = null, op = null, om = null;
-          oq = parseGridNumber(val?.qty);
-          op = parseGridNumber(val?.pu);
-          om = parseGridNumber(val?.mt);
-          if (oq != null && op != null) {
+          const oq = parseGridNumber(val?.qty);
+          const op = parseGridNumber(val?.pu);
+          let om = parseGridNumber(val?.mt);
+          if (om == null && oq != null && op != null) {
             om = oq * op;
           }
           offersData.push({ itemId, companyId, u, oq, op, om, rowIndex });

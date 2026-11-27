@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
+import { fileURLToPath } from 'url';
 import { promisify } from 'util';
 import { query, pool } from '../db.js';
 import {
@@ -1408,10 +1409,19 @@ function detectPdfHeader(lines) {
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Tente d'extraire les tableaux du PDF avec Tabula (Java).
+ *
+ * Renvoie TOUJOURS `null` en cas d'indisponibilité ou d'échec, jamais une
+ * exception : l'appelant (`convertPdfToExcelBuffer`) teste le résultat pour
+ * retomber sur le parseur JavaScript. Lever ici rendait ce repli
+ * inatteignable, donc l'import PDF échouait dès que Java ou le jar manquait.
+ */
 async function tryConvertPdfWithTabula(buffer) {
   const jarPath = resolveTabulaJarPath();
   if (!jarPath) {
-    throw new Error('Tabula introuvable. Placez tabula.jar dans server/tools/tabula/ ou definissez TABULA_JAR_PATH.');
+    console.warn('[PDF] tabula.jar introuvable (TABULA_JAR_PATH ou server/tools/tabula/) : repli sur le parseur JavaScript.');
+    return null;
   }
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'aolink-tabula-'));
@@ -1434,6 +1444,12 @@ async function tryConvertPdfWithTabula(buffer) {
     const wb = new ExcelJS.Workbook();
     await wb.csv.read(Readable.from([csvContent]), { worksheetName: 'PDF' });
     return wb.xlsx.writeBuffer();
+  } catch (error) {
+    const cause = error?.code === 'ENOENT'
+      ? 'runtime Java introuvable (apt install default-jre-headless)'
+      : (error?.message || 'erreur inconnue');
+    console.warn(`[PDF] Extraction Tabula echouee : ${cause}. Repli sur le parseur JavaScript.`);
+    return null;
   } finally {
     await safeUnlink(pdfPath);
     await safeUnlink(csvPath);
@@ -1444,8 +1460,17 @@ async function tryConvertPdfWithTabula(buffer) {
 function resolveTabulaJarPath() {
   const envPath = process.env.TABULA_JAR_PATH;
   if (envPath && fsSync.existsSync(envPath)) return envPath;
-  const defaultPath = path.resolve(process.cwd(), 'tools', 'tabula', 'tabula.jar');
-  if (fsSync.existsSync(defaultPath)) return defaultPath;
+
+  // Résolution relative au module, et non au répertoire de lancement : le
+  // serveur peut être démarré depuis n'importe quel cwd (PM2, deploy.sh...).
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url)); // server/src/app/importers
+  const candidates = [
+    path.resolve(moduleDir, '../../../tools/tabula/tabula.jar'),   // server/tools/tabula
+    path.resolve(process.cwd(), 'tools', 'tabula', 'tabula.jar'),  // compat lancement depuis server/
+  ];
+  for (const candidate of candidates) {
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
   return null;
 }
 

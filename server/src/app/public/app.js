@@ -441,11 +441,27 @@ function amountOf(q, pu){
   if (!Number.isFinite(n1) || !Number.isFinite(n2)) return '';
   return formatNum(n1 * n2);
 }
-function amountCellHtml(q, pu, comment, fallbackAmount = null){
-  const computed = amountOf(q, pu);
-  const amt = computed || (Number.isFinite(parseNum(fallbackAmount)) ? formatNum(parseNum(fallbackAmount)) : '');
+/**
+ * Montant FIGÉ : la valeur enregistrée (import ou saisie précédente) prime
+ * toujours sur qty × PU, Y COMPRIS lorsqu'elle vaut 0 — la MOE peut renseigner
+ * une quantité et un prix unitaire sans vouloir de total. On ne calcule que
+ * lorsqu'aucun montant n'est enregistré.
+ *
+ * Le recalcul n'a lieu qu'à la saisie de l'utilisateur, via l'option
+ * `recompute` de recalcRowAmountsRow().
+ */
+function frozenAmountValue(storedAmount, q, pu){
+  const stored = parseNum(storedAmount);
+  if (Number.isFinite(stored)) return formatNum(stored);
+  return amountOf(q, pu);
+}
+function amountBadgeHtml(amount, comment){
+  const amt = amount || '';
   if (!comment) return amt;
-  return `${amt || ''}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
+  return `${amt}<span class="comment-badge" title="${escapeHtml(comment)}">!</span>`;
+}
+function amountCellHtml(q, pu, comment, fallbackAmount = null){
+  return amountBadgeHtml(frozenAmountValue(fallbackAmount, q, pu), comment);
 }
 
 const QUESTIONS_UNIT_MISMATCH_COMMENT_TEMPLATE = 'Ce poste doit être chiffré en {unit}.';
@@ -5839,13 +5855,17 @@ function renderQuestionsEditorTable(lotData, questionsData) {
     html += '</td>';
     }
     html += `<td>${item.unit || ''}</td>`;
-    
+
+    // Validation par métrique, pour l'entreprise ciblée uniquement. On repart de
+    // TOUTES ses questions, pas de `displayQuestions` qui a pu être réduit pour
+    // l'affichage du texte.
+    const validatedMetrics = targetCompany ? validatedMetricsFor(existingQuestions) : new Set();
+
     if (isComparisonMode) {
       const selectedOffer = targetCompany
         ? itemOffers.find(o => Number(o.company_id) === selectedCompanyId)
         : null;
       const targetHighlightClass = targetCompany ? ' target-company-highlight' : '';
-      const isValidatedTarget = isValidated && targetCompany;
       const unansweredStyle = unansweredStyleStr(unansweredConfig.color);
       const unansweredTitle = unansweredConfig.comment ? ` title="${escapeHtml(unansweredConfig.comment)}"` : '';
       const selectedCommentBadge = selectedOffer
@@ -5864,7 +5884,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         if (selectedOffer?.unitMismatchInfo?.hasMismatch) {
           html += `<td class="unit-mismatch-cell${targetHighlightClass}">${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
           html += '<td class="unit-mismatch-cell">—</td>';
-        } else if (isValidatedTarget) {
+        } else if (validatedMetrics.has('qty')) {
           html += `<td class="validated-question-cell${targetHighlightClass}">${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
         } else if (selectedOffer?.isUnanswered) {
           html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtNum(selectedOffer?.quantity)}${selectedCommentBadge}</td>`;
@@ -5881,7 +5901,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         if (selectedOffer?.unitMismatchInfo?.hasMismatch) {
           html += `<td class="unit-mismatch-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
           html += '<td class="unit-mismatch-cell">—</td>';
-        } else if (isValidatedTarget) {
+        } else if (validatedMetrics.has('price')) {
           html += `<td class="validated-question-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
         } else if (selectedOffer?.isUnanswered) {
           html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtEuro(selectedOffer?.unit_price)}${selectedCommentBadge}</td>`;
@@ -5895,7 +5915,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
 
       if (showTotals) {
         html += `<td class="moe-cell questions-group-start">${fmtEuro(moeTotal)}</td>`;
-        if (isValidatedTarget) {
+        if (validatedMetrics.has('amount')) {
           html += `<td class="validated-question-cell${targetHighlightClass}">${fmtEuro(selectedOffer?.total)}${selectedCommentBadge}</td>`;
         } else if (selectedOffer?.isUnanswered) {
           html += `<td class="ecart-unanswered${targetHighlightClass}" style="${unansweredStyle}"${unansweredTitle}>${fmtEuro(selectedOffer?.total)}${selectedCommentBadge}</td>`;
@@ -5924,10 +5944,10 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         for (const offer of itemOffers) {
           const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
           const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+          const isTargetOffer = targetCompany && Number(offer.company_id) === Number(targetCompany);
           if (offer.unitMismatchInfo?.hasMismatch) {
             html += `<td class="unit-mismatch-cell${highlightClass}">${fmtNum(offer.quantity)}${commentBadge}</td>`;
-          } else if (isValidatedOfferTarget) {
+          } else if (isTargetOffer && validatedMetrics.has('qty')) {
             html += `<td class="validated-question-cell${highlightClass}">${fmtNum(offer.quantity)}${commentBadge}</td>`;
           } else if (offer.isUnanswered) {
             const sty = unansweredStyleStr(unansweredConfig.color);
@@ -5947,10 +5967,10 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         for (const offer of itemOffers) {
           const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
           const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
+          const isTargetOffer = targetCompany && Number(offer.company_id) === Number(targetCompany);
           if (offer.unitMismatchInfo?.hasMismatch) {
             html += `<td class="unit-mismatch-cell${highlightClass}">${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
-          } else if (isValidatedOfferTarget) {
+          } else if (isTargetOffer && validatedMetrics.has('price')) {
             html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.unit_price)}${commentBadge}</td>`;
           } else if (offer.isUnanswered) {
             const sty = unansweredStyleStr(unansweredConfig.color);
@@ -5970,8 +5990,8 @@ function renderQuestionsEditorTable(lotData, questionsData) {
         for (const offer of itemOffers) {
           const commentBadge = offerCommentBadgeHtml(offer.comment, offer.color, offer.name);
           const highlightClass = targetCompany && offer.company_id == targetCompany ? ' target-company-highlight' : '';
-          const isValidatedOfferTarget = isValidated && targetCompany && Number(offer.company_id) === Number(targetCompany);
-          if (isValidatedOfferTarget) {
+          const isTargetOffer = targetCompany && Number(offer.company_id) === Number(targetCompany);
+          if (isTargetOffer && validatedMetrics.has('amount')) {
             html += `<td class="validated-question-cell${highlightClass}">${fmtEuro(offer.total)}${commentBadge}</td>`;
           } else if (offer.isUnanswered) {
             const sty = unansweredStyleStr(unansweredConfig.color);
@@ -6043,6 +6063,32 @@ function questionCellStateClass(questions) {
   const validated = list.every(q => q.status === 'validated');
   const modified = list.some(q => q.manual_edited);
   return `${modified ? ' question-cell-modified' : ''}${validated ? ' question-cell-validated' : ''}`;
+}
+
+// Renvoie l'ensemble des métriques ('qty' | 'price' | 'amount') dont la question
+// est validée, pour une entreprise donnée.
+//
+// La validation est volontairement PAR MÉTRIQUE : valider la question de
+// quantité ne doit pas reverdir le prix unitaire ni le montant, sinon un seul
+// clic efface les couleurs d'écart des trois colonnes.
+// Les types qui ne visent pas une métrique précise (unanswered, unit_mismatch,
+// offer_amount_mismatch, manual) concernent toute la ligne : ils valident donc
+// les trois.
+function validatedMetricsFor(questions) {
+  const metrics = new Set();
+  for (const q of (questions || [])) {
+    if (!q || q.status !== 'validated') continue;
+    const type = String(q.question_type || '');
+    if (type.startsWith('qty_')) metrics.add('qty');
+    else if (type.startsWith('price_')) metrics.add('price');
+    else if (type.startsWith('amount_')) metrics.add('amount');
+    else {
+      metrics.add('qty');
+      metrics.add('price');
+      metrics.add('amount');
+    }
+  }
+  return metrics;
 }
 
 function regenerateQuestionButtonHtml({ itemId, companyId, saveKey, disabled = false } = {}) {
@@ -7458,11 +7504,11 @@ function valueForCell(row, key){
   if (key === 'unit') return row.unit ?? '';
   if (key === 'moe.qty') return row.moe?.qty ?? '';
   if (key === 'moe.pu')  return row.moe?.pu  ?? '';
-  if (key === 'moe.mt')  return amountOf(row.moe?.qty, row.moe?.pu) || (row.moe?.mt ?? '');
+  if (key === 'moe.mt')  return frozenAmountValue(row.moe?.mt, row.moe?.qty, row.moe?.pu);
   if (key.startsWith('c.')){
     const [, cid, sub] = key.split('.');
     const o = row.offers?.[cid] || {};
-    if (sub === 'mt') return amountOf(o.qty, o.pu) || (o.mt ?? '');
+    if (sub === 'mt') return frozenAmountValue(o.mt, o.qty, o.pu);
     return o[sub] ?? '';
   }
   return '';
@@ -7510,8 +7556,26 @@ function setCell(r, c, text, updateDOM = true){
 }
 
 /** recalcul par ligne (MOE + chaque entreprise) */
-function recalcRowAmountsRow(r){
+/**
+ * Rafraîchit une ligne de la grille (montants + styles « sans réponse »).
+ *
+ * `recompute` dit si les montants doivent être RECALCULÉS ou seulement
+ * RÉAFFICHÉS en respectant la valeur figée :
+ *   - absent / false  : rendu seul. Les montants enregistrés ne sont ni
+ *                       recalculés ni écrasés dans le modèle. C'est le cas du
+ *                       rendu initial et des rafraîchissements de style.
+ *   - 'all'           : recalcule MOE et toutes les entreprises (collage,
+ *                       effacement de plage, annuler/rétablir).
+ *   - 'moe.qty', 'c.12.pu'... : recalcule uniquement le groupe de la colonne
+ *                       éditée, pour ne pas écraser les montants figés des
+ *                       autres entreprises de la même ligne.
+ */
+function recalcRowAmountsRow(r, { recompute = false } = {}){
   const rowEl = qsa('#sheet-body tr')[r]; if (!rowEl) return;
+  const recomputeKey = typeof recompute === 'string' ? recompute : '';
+  const recomputeAll = recompute === 'all';
+  const shouldRecomputeMoe = recomputeAll || recomputeKey.startsWith('moe.');
+  const shouldRecomputeCompany = (cid) => recomputeAll || recomputeKey.startsWith(`c.${cid}.`);
   // MOE
   const cQty = colModel.findIndex(c => c.key === 'moe.qty');
   const cPu  = colModel.findIndex(c => c.key === 'moe.pu');
@@ -7524,8 +7588,15 @@ function recalcRowAmountsRow(r){
     const qty = moeQtyVal;
     const pu  = moePuVal;
     const mt  = getCell(r,cMt );
-    const amount = amountOf(qty, pu);
-    if (sheetRows[r]?.moe) sheetRows[r].moe.mt = amount;
+    let amount;
+    if (shouldRecomputeMoe) {
+      // Saisie utilisateur sur la quantité ou le PU : la saisie reprend la main
+      // sur le montant importé.
+      amount = amountOf(qty, pu);
+      if (sheetRows[r]?.moe) sheetRows[r].moe.mt = amount;
+    } else {
+      amount = frozenAmountValue(sheetRows[r]?.moe?.mt, qty, pu);
+    }
     if (mt) mt.textContent = amount;
   }
   // Entreprises
@@ -7545,7 +7616,14 @@ function recalcRowAmountsRow(r){
         const isUnanswered = moeHasTotal && isOfferUnanswered(qty, pu, existingAmount);
         const isUnexpected = isOfferUnexpected(moeHasTotal, qty, pu);
         const cellComment = isUnanswered && unansweredConfig.comment ? unansweredConfig.comment : existingComment;
-        mt.innerHTML = amountCellHtml(qty, pu, cellComment, existingAmount);
+        let displayedAmount;
+        if (shouldRecomputeCompany(c.id)) {
+          displayedAmount = amountOf(qty, pu);
+          if (sheetRows[r]?.offers?.[c.id]) sheetRows[r].offers[c.id].mt = displayedAmount;
+        } else {
+          displayedAmount = frozenAmountValue(existingAmount, qty, pu);
+        }
+        mt.innerHTML = amountBadgeHtml(displayedAmount, cellComment);
         if (isUnanswered) {
           applyUnansweredStyle(mt, unansweredConfig.color);
           mt.title = unansweredConfig.comment || '';
@@ -7746,15 +7824,34 @@ function applySheetClipboardGrid(startR, startC, grid, sourceKeys = null){
   let wrote = false;
   let maxR = startR;
   let maxC = startC;
+  // `sourceKeys` n'est fourni que pour un collage interne à la grille : on sait
+  // alors de quelles colonnes viennent les valeurs. Un collage externe (Excel,
+  // comparatif, texte) n'a pas cette information.
+  const isInternalPaste = Boolean(sourceKeys);
 
   for (let i = 0; i < grid.length; i++) {
     let col = startC;
     for (let j = 0; j < grid[i].length; j++) {
-      // Collage interne : ignorer les valeurs issues des colonnes calculées (.mt)
-      // sans consommer de colonne cible — elles seront recalculées par recalcRowAmountsRow
-      if (sourceKeys && sourceKeys[j] && sourceKeys[j].endsWith('.mt')) continue;
-      let guard = 0;
-      while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
+      if (isInternalPaste) {
+        // La source connaît ses colonnes : une valeur issue d'une colonne
+        // calculée (.mt) est ignorée SANS consommer de colonne cible, puisque
+        // la copie ne l'a pas vraiment « occupée ».
+        if (sourceKeys[j] && sourceKeys[j].endsWith('.mt')) continue;
+        let guard = 0;
+        while (col < colModel.length && !colModel[col].editable && guard++ < 100) col++;
+      } else {
+        // Collage externe : alignement POSITIONNEL colonne par colonne. Si la
+        // colonne cible est calculée (montant), on consomme la valeur source et
+        // on avance d'une colonne au lieu de reporter cette valeur sur la
+        // colonne éditable suivante — sans quoi tout le reste de la ligne se
+        // décalait vers la droite (les montants d'Excel atterrissaient dans la
+        // quantité de l'entreprise suivante). Les montants sont de toute façon
+        // recalculés par recalcRowAmountsRow.
+        if (col < colModel.length && !colModel[col].editable) {
+          col++;
+          continue;
+        }
+      }
       if (col >= colModel.length) break;
 
       const cellTarget = getCell(startR + i, col);
@@ -7773,7 +7870,8 @@ function applySheetClipboardGrid(startR, startC, grid, sourceKeys = null){
       maxC = Math.max(maxC, col);
       col++;
     }
-    recalcRowAmountsRow(startR + i);
+    // Collage : plusieurs colonnes touchées, on recalcule toute la ligne.
+    recalcRowAmountsRow(startR + i, { recompute: 'all' });
   }
 
   if (wrote) {
@@ -7801,7 +7899,7 @@ function clearSheetSelectionCells(range = getSheetSelectionRange()){
     }
   }
 
-  touchedRows.forEach(r => recalcRowAmountsRow(r));
+  touchedRows.forEach(r => recalcRowAmountsRow(r, { recompute: 'all' }));
   if (touchedRows.size > 0) markAsChanged();
 }
 
@@ -7846,7 +7944,8 @@ function attachSheetDelegates(){
     const td = e.target.closest('td'); if (!td) return;
     const r = Number(td.dataset.r), c = Number(td.dataset.c);
     setCell(r, c, td.textContent.trim(), false); // false = ne pas modifier le DOM
-    recalcRowAmountsRow(r);
+    // Saisie : seul le groupe de la colonne éditée est recalculé.
+    recalcRowAmountsRow(r, { recompute: colModel[c]?.key || 'all' });
   });
 
   // navigation clavier
@@ -8104,7 +8203,7 @@ function undo(){
   redoStack.push(ch);
   setCell(ch.r, ch.c, ch.prev);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
-  recalcRowAmountsRow(ch.r);
+  recalcRowAmountsRow(ch.r, { recompute: ch.key || 'all' });
   markAsChanged();
 }
 function redo(){
@@ -8112,7 +8211,7 @@ function redo(){
   undoStack.push(ch);
   setCell(ch.r, ch.c, ch.next);
   const td = getCell(ch.r, ch.c); if (td) td.dataset.prev = td.textContent;
-  recalcRowAmountsRow(ch.r);
+  recalcRowAmountsRow(ch.r, { recompute: ch.key || 'all' });
   markAsChanged();
 }
 
