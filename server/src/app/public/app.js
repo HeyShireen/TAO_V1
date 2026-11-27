@@ -841,6 +841,45 @@ async function refreshSession() {
   return refreshSessionPromise;
 }
 
+/**
+ * En-tetes d'authentification pour les `fetch` bruts (televersements,
+ * telechargements) qui ne passent pas par api().
+ *
+ * ATTENTION : ne JAMAIS poser l'en-tete quand le jeton est absent. Cote
+ * serveur, requireAuth ne se rabat sur le cookie HttpOnly que si l'en-tete
+ * Authorization est vide ; un `Bearer null` litteral desactive ce repli et
+ * produit un 401 alors que la session est parfaitement valide.
+ */
+function authHeaders(extra = {}) {
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
+}
+
+/**
+ * `fetch` authentifie pour les appels qui ne passent PAS par api() :
+ * televersements et telechargements, qui manipulent du FormData ou un Blob.
+ *
+ * Il leur apporte la seule chose qui leur manquait : sur 401, rafraichir la
+ * session puis rejouer UNE fois. Sans cela, un jeton expire (15 min) rend
+ * l'operation definitivement impossible — recliquer renvoie le meme jeton
+ * perime, et l'utilisateur n'a aucun moyen de s'en sortir sans recharger la
+ * page. Cas typique : une preview reussie, puis un apply declenche apres
+ * plusieurs minutes de reglage du mapping.
+ */
+async function fetchAuth(url, opts = {}, rejoue = false) {
+  const { headers: enTetesSupplementaires, ...reste } = opts;
+  const res = await fetch(url, {
+    ...reste,
+    headers: authHeaders(enTetesSupplementaires),
+    credentials: 'include',
+  });
+  if (res.status !== 401 || rejoue) return res;
+  if (await refreshSession()) return fetchAuth(url, opts, true);
+  token = null;
+  localStorage.removeItem('token');
+  window.location.href = '/login';
+  return res;
+}
+
 async function api(path, opts = {}) {
   const url = API_BASE + path;
   const headers = opts.headers || {};
@@ -9780,9 +9819,8 @@ function bindSmartImport() {
 
     try {
       showLoader();
-      const resp = await fetch(`${API_BASE}/lots/${lotId}/import-preview`, {
+      const resp = await fetchAuth(`${API_BASE}/lots/${lotId}/import-preview`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: formData,
         credentials: 'include',
         signal: abortController.signal,
@@ -10313,9 +10351,8 @@ function bindSmartImport() {
           const formData = new FormData();
           formData.append('file', file);
           formData.append('params', JSON.stringify(sheetParams));
-          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+          const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
             body: formData,
             credentials: 'include',
           });
@@ -10367,9 +10404,8 @@ function bindSmartImport() {
 
           confirmBtn.innerHTML = `<span class="spinner-small"></span> Import ${i + 1}/${selectedFiles.length}…`;
 
-          const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+          const resp = await fetchAuth(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
             body: formData,
             credentials: 'include',
           });
@@ -10397,9 +10433,8 @@ function bindSmartImport() {
         if (!importState.fileId) formData.append('file', importState.file);
         formData.append('params', JSON.stringify(params));
 
-        const resp = await fetch(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+        const resp = await fetchAuth(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
           body: formData,
           credentials: 'include',
         });
@@ -11115,9 +11150,8 @@ function bindImportDpgfLots() {
     if (headerRow >= 1) formData.append('headerRow', String(headerRow));
     try {
       showLoader();
-      const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+      const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: formData,
         credentials: 'include',
       });
@@ -11167,9 +11201,8 @@ function bindImportDpgfLots() {
     if (headerRow >= 1) formData.append('headerRow', String(headerRow));
     try {
       showLoader();
-      const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+      const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: formData,
         credentials: 'include',
       });
@@ -11502,9 +11535,8 @@ function bindImportDpgfLots() {
               formData.append('file', file);
               const headerRow = Number(fileCfg.headerRow || 1) || 1;
               if (headerRow >= 1) formData.append('headerRow', String(headerRow));
-              const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
+              const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf-preview`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
                 credentials: 'include',
               });
@@ -11547,9 +11579,8 @@ function bindImportDpgfLots() {
             const formData = new FormData();
             formData.append('file', file);
             formData.append('params', JSON.stringify(params));
-            const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+            const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
               body: formData,
               credentials: 'include',
             });
@@ -11579,9 +11610,8 @@ function bindImportDpgfLots() {
           const formData = new FormData();
           formData.append('file', file);
           formData.append('params', JSON.stringify(params));
-          const resp = await fetch(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
+          const resp = await fetchAuth(`${API_BASE}/projects/${currentProject.id}/import-dpgf`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
             body: formData,
             credentials: 'include',
           });
