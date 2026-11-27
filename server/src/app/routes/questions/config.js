@@ -555,6 +555,42 @@ router.get('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   }
 });
 
+// Seuils effectifs d'un lot, en LECTURE SEULE et ouverts a tout role qui peut
+// voir le projet.
+//
+// La route ci-dessus ne convient pas a l'affichage : elle est reservee aux
+// managers, et elle CREE une ligne de lot_threshold_config au passage. Or le
+// comparatif a besoin des seuils pour colorier ses ecarts, y compris pour un
+// visionneur ou une entreprise — a qui le front retombait silencieusement sur
+// les valeurs par defaut, affichant donc des couleurs qui ne correspondaient
+// pas aux seuils reellement appliques par le serveur.
+// On ne renvoie que les douze seuils : aucune donnee d'un autre lot, aucun
+// texte de question, aucune liste de lots.
+router.get('/lot/:lotId/effective-thresholds', async (req, res) => {
+  try {
+    const { lotId } = req.params;
+    const projectId = await getProjectIdForLot(lotId);
+    if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
+    const canView = await canViewProject(
+      req.user.id,
+      projectId,
+      req.user.role,
+      req.user?.company_id || null
+    );
+    if (!canView) return res.status(403).json({ error: 'Accès refusé' });
+
+    const projectConfig = await getProjectQuestionConfig(projectId);
+    const lotConfig = await query(
+      'SELECT * FROM lot_threshold_config WHERE lot_id = $1',
+      [lotId]
+    );
+    res.json(effectiveThresholds(projectConfig, lotConfig.rows[0] || {}));
+  } catch (err) {
+    console.error('Erreur recuperation des seuils effectifs du lot:', err);
+    res.status(500).json({ error: 'Impossible de récupérer les seuils' });
+  }
+});
+
 // Mettre à jour les seuils pour un lot
 router.put('/lot/:lotId/thresholds', requireManager, async (req, res) => {
   try {

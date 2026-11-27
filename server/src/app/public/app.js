@@ -665,22 +665,97 @@ const ECART_METRIQUES = [
   { cle: 'amount', prefixe: 'amount', libelle: 'Montant' },
 ];
 
+// Repli ultime, aligné sur DEFAULT_LOT_THRESHOLDS côté serveur
+// (routes/questions/config.js).
+const SEUILS_ECART_DEFAUT = { veryLow: 25, low: 10, high: 10, veryHigh: 25 };
+
+// Seuils effectifs par lot, tels que le serveur les calcule (cascade projet ->
+// lot). Indispensable pour les rôles qui ne chargent pas la configuration du
+// projet : un visionneur ou une entreprise n'a pas accès aux champs de saisie,
+// et le comparatif retombait donc sur les valeurs par défaut.
+const seuilsEffectifsParLot = new Map();
+
+async function ensureLotThresholds(lotId) {
+  if (!lotId) return;
+  const cle = String(lotId);
+  if (seuilsEffectifsParLot.has(cle)) return;
+  try {
+    const seuils = await api(`/question-config/lot/${lotId}/effective-thresholds`, {
+      showLoader: false,
+    });
+    seuilsEffectifsParLot.set(cle, seuils);
+  } catch (err) {
+    // Non bloquant : on retombera sur les seuils du projet, puis sur les valeurs
+    // par défaut.
+    console.error('Erreur chargement des seuils effectifs du lot:', err);
+  }
+}
+
+/** À appeler après toute écriture de seuils, projet ou lot. */
+function invalidateLotThresholdsCache() {
+  seuilsEffectifsParLot.clear();
+}
+
+/**
+ * Seuils d'écart EFFECTIFS d'un lot, dans l'ordre : seuils du lot (overrides
+ * compris, tels que renvoyés par le serveur) -> seuils du projet -> champs de
+ * saisie -> valeurs par défaut.
+ *
+ * C'est la seule source à utiliser pour colorier des données : les champs de
+ * configuration ne contiennent que les seuils du PROJET, ignorent les
+ * overrides de lot, et n'existent pas du tout pour un visionneur ou une
+ * entreprise — chez qui le tableau retombait donc silencieusement sur les
+ * valeurs par défaut.
+ */
+function effectiveDeviationThresholds(lotId = currentLot?.id) {
+  const lotRow =
+    seuilsEffectifsParLot.get(String(lotId)) ||
+    (globalLotThresholds?.lots || []).find(
+      (l) => String(l.lot_id ?? l.id) === String(lotId)
+    );
+  const projet = globalLotThresholds?.global_thresholds || null;
+
+  const resoudre = (metrique, niveau, cleDom) => {
+    const champ = `${metrique}_${niveau}_threshold`;
+    const valeurLot = Number(lotRow?.[champ]);
+    if (Number.isFinite(valeurLot)) return valeurLot;
+    const valeurProjet = Number(projet?.[champ]);
+    if (Number.isFinite(valeurProjet)) return valeurProjet;
+    return readThresholdInput(metrique, cleDom, SEUILS_ECART_DEFAUT[nomNiveau(niveau)]);
+  };
+
+  const pour = (m) => ({
+    veryLow: resoudre(m, 'very_low', 'very-low'),
+    low: resoudre(m, 'low', 'low'),
+    high: resoudre(m, 'high', 'high'),
+    veryHigh: resoudre(m, 'very_high', 'very-high'),
+  });
+  return { qty: pour('qty'), price: pour('price'), amount: pour('amount') };
+}
+
+function nomNiveau(niveauSql) {
+  if (niveauSql === 'very_low') return 'veryLow';
+  if (niveauSql === 'very_high') return 'veryHigh';
+  return niveauSql;
+}
+
 function readThresholdInput(metrique, niveau, defaut) {
   const valeur = parseFloat(qs(`#threshold-${metrique}-${niveau}`)?.value);
   return Number.isFinite(valeur) ? valeur : defaut;
 }
 
 /**
- * Seuils d'écart effectifs, lus dans la configuration des questions.
- * Les champs vivent dans l'onglet Questions mais sont présents dans le DOM
- * quel que soit l'onglet affiché ; à défaut, on retombe sur 25/10/10/25.
+ * Seuils d'écart tels qu'ils sont SAISIS dans les champs de configuration.
+ * Réservé à la légende de l'onglet de configuration, pour qu'elle suive la
+ * frappe. Toute vue qui affiche des données doit utiliser
+ * effectiveDeviationThresholds().
  */
-function readDeviationThresholds() {
+function readDeviationThresholdsFromDom() {
   const pour = (m) => ({
-    veryLow: readThresholdInput(m, 'very-low', 25),
-    low: readThresholdInput(m, 'low', 10),
-    high: readThresholdInput(m, 'high', 10),
-    veryHigh: readThresholdInput(m, 'very-high', 25),
+    veryLow: readThresholdInput(m, 'very-low', SEUILS_ECART_DEFAUT.veryLow),
+    low: readThresholdInput(m, 'low', SEUILS_ECART_DEFAUT.low),
+    high: readThresholdInput(m, 'high', SEUILS_ECART_DEFAUT.high),
+    veryHigh: readThresholdInput(m, 'very-high', SEUILS_ECART_DEFAUT.veryHigh),
   });
   return { qty: pour('qty'), price: pour('price'), amount: pour('amount') };
 }
@@ -751,7 +826,7 @@ function buildDeviationLegendHtml(thresholds) {
 }
 
 /** Rend la légende dans tous les conteneurs présents (questions, comparatif). */
-function renderDeviationLegends(thresholds = readDeviationThresholds()) {
+function renderDeviationLegends(thresholds = effectiveDeviationThresholds()) {
   const html = buildDeviationLegendHtml(thresholds);
   for (const sel of ['#questions-legend', '#compare-legend']) {
     const el = qs(sel);
@@ -3752,6 +3827,10 @@ async function deleteRound(roundId){
 
 async function openLot(id, lotMeta){
   currentLot = { id, ...lotMeta };
+
+  // Avant tout rendu : les seuils effectifs du lot, sans quoi le comparatif
+  // colorie ses écarts avec les valeurs par défaut.
+  await ensureLotThresholds(id);
   
   // Si l'utilisateur est entreprise mais n'a pas de company_id, rafraîchir le token
   if (isEntreprise() && !currentUser?.company_id) {
@@ -3887,6 +3966,7 @@ async function autoSaveLotThresholds() {
       amount_very_high_threshold: parseFloat(qs('#threshold-amount-very-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
+    invalidateLotThresholdsCache();
     updateQuestionsLegend(body);
     showSaveStatus('#save-thresholds', 'saved');
   } catch (err) {
@@ -4005,7 +4085,9 @@ async function loadProjectQuestionConfig(){
  * trois métriques, et non les seuls seuils de quantité.
  */
 function updateQuestionsLegend(_thresholds) {
-  renderDeviationLegends();
+  // Ici, et seulement ici, on lit le DOM : cette légende accompagne la saisie
+  // des seuils du projet et doit suivre la frappe avant enregistrement.
+  renderDeviationLegends(readDeviationThresholdsFromDom());
   updateSheetLegend();
 }
 
@@ -4139,6 +4221,7 @@ async function saveLotThresholds(){
       amount_very_high_threshold: parseFloat(qs('#threshold-amount-very-high').value)
     };
     await api(`/question-config/lot/${currentLot.id}/thresholds`, { method: 'PUT', body });
+    invalidateLotThresholdsCache();
     updateQuestionsLegend(body);
     showNotify({ title: 'Succès', message: 'Seuils sauvegardés', type: 'success' });
   } catch (err) {
@@ -4271,6 +4354,7 @@ async function saveGlobalLotThresholds() {
       showLoader: false
     });
     globalLotThresholds = { ...(globalLotThresholds || {}), global_thresholds, question_config };
+    invalidateLotThresholdsCache();
     showSaveStatus('#save-global-thresholds', 'saved');
   } catch (err) {
     console.error('Erreur sauvegarde seuils globaux:', err);
@@ -5591,7 +5675,7 @@ function renderQuestionsEditorTable(lotData, questionsData) {
   // Seuils et classement des écarts : helpers partagés avec le comparatif, pour
   // que les deux vues ne puissent plus diverger. Les noms locaux sont conservés,
   // ils sont utilisés en de nombreux endroits dans cette fonction.
-  const thresholds = readDeviationThresholds();
+  const thresholds = effectiveDeviationThresholds();
   const getDeviationClass = deviationClass;
   
   if (!lotData.items || lotData.items.length === 0) {
@@ -7177,6 +7261,10 @@ async function refreshCompare({ silent = false } = {}){
     const roundParam = currentRound ? `?round_id=${currentRound.id}` : '';
     
     const data = await api('/lots/'+currentLot.id+'/table'+roundParam, { showLoader: !silent });
+
+    // refreshCompare est aussi appele hors de openLot (changement de tour,
+    // apres un import) : on garantit les seuils ici aussi. Cache deja chaud = no-op.
+    await ensureLotThresholds(currentLot.id);
     const entrepriseMode = isEntreprise();
     
     // Vérifier si l'utilisateur entreprise a des données
@@ -7227,9 +7315,12 @@ async function refreshCompare({ silent = false } = {}){
   const companyColors = {};
   data.companies.forEach(c => { companyColors[c.id] = c.color || null; });
 
-  // Seuils d'écart, lus une fois pour tout le tableau. Mêmes seuils et mêmes
-  // classes que l'onglet Questions.
-  const compareThresholds = readDeviationThresholds();
+  // Seuils d'écart : les seuils EFFECTIFS du lot (overrides compris), tels que
+  // le serveur les applique. Ils étaient lus dans les champs de la config, qui
+  // portent les seuils du projet et sont absents pour un visionneur ou une
+  // entreprise : le tableau pouvait donc être colorié avec 25/10/10/25 pendant
+  // que le serveur générait les questions avec de tout autres seuils.
+  const compareThresholds = effectiveDeviationThresholds();
 
   // Séparer les items normaux (DPGF) des items ajoutés par les entreprises
   const dpgfRows = data.rows.filter(r => !r.source_company_id);
@@ -8911,6 +9002,12 @@ let importState = {
   fileConfigs: [],
   globalMapping: null,
   activeFileIndex: 0,
+  // Index du fichier auquel appartiennent les `mapping` / `excludedRows`
+  // chargés. Il ne rejoint `activeFileIndex` qu'une fois l'aperçu du nouveau
+  // fichier reçu : sans cela, une sauvegarde de brouillon déclenchée pendant
+  // la requête écrit le mapping du fichier qu'on quitte dans la configuration
+  // du fichier visé.
+  mappingOwnerIndex: 0,
   preview: null,
   mapping: {},
   excludedRows: new Set(),
@@ -8921,6 +9018,57 @@ let importState = {
   dpgfBaseMapping: null,
   importOperation: 'replace',
 };
+
+/* ---------- Garde-fous communs aux deux modules d'import ---------- */
+
+// Alignee sur la limite multer du serveur (10 Mo). Au-dela, l'envoi est voue a
+// l'echec : autant le dire avant d'avoir televerse plusieurs Mo pour rien.
+const TAILLE_MAX_IMPORT = 10 * 1024 * 1024;
+
+function formaterTaille(octets) {
+  return `${(Number(octets || 0) / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
+/**
+ * Lecture d'une reponse d'import (apercu ou application).
+ *
+ * `resp.json()` etait appele directement sur ces reponses, ce qui masquait toute
+ * erreur emise AVANT l'application : un 413 du reverse proxy renvoie une page
+ * HTML, et l'utilisateur lisait « Unexpected token < » au lieu de la cause
+ * reelle. On ne parse donc qu'en presence de JSON, et on traduit les codes HTTP
+ * que l'application ne produit jamais elle-meme.
+ */
+async function lireReponseImport(resp) {
+  const type = resp.headers.get('content-type') || '';
+  if (type.includes('application/json')) {
+    // Pas de `await` ici : la promesse est renvoyee telle quelle a l'appelant.
+    return resp.json().catch(() => ({ error: 'Reponse du serveur illisible.' }));
+  }
+  await resp.text().catch(() => '');
+  if (resp.status === 413) {
+    return {
+      code: 'TROP_VOLUMINEUX',
+      error: "Fichier refuse car trop volumineux : la limite d'envoi est imposee en amont de l'application (serveur web). Allegez le fichier (onglets inutiles supprimes, enregistrement en .xlsx) ou faites relever « client_max_body_size » dans nginx.",
+    };
+  }
+  return { error: `Erreur serveur (HTTP ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}).` };
+}
+
+/**
+ * Ecarte, des la selection, les fichiers que le serveur refusera de toute facon.
+ */
+function filtrerFichiersTropVolumineux(fichiers) {
+  const trop = fichiers.filter((f) => f.size > TAILLE_MAX_IMPORT);
+  if (trop.length > 0) {
+    const detail = trop.map((f) => `${f.name} (${formaterTaille(f.size)})`).join(', ');
+    showNotify({
+      title: 'Fichier trop volumineux',
+      message: `${detail} : la limite est de ${formaterTaille(TAILLE_MAX_IMPORT)} par fichier. Ce fichier n'a pas ete retenu.`,
+      type: 'error',
+    });
+  }
+  return fichiers.filter((f) => f.size <= TAILLE_MAX_IMPORT);
+}
 
 function bindSmartImport() {
   const modal       = qs('#import-modal');
@@ -8967,6 +9115,7 @@ function bindSmartImport() {
       fileConfigs: [],
       globalMapping: null,
       activeFileIndex: 0,
+      mappingOwnerIndex: 0,
       preview: null,
       mapping: {},
       excludedRows: new Set(),
@@ -9118,6 +9267,7 @@ function bindSmartImport() {
     importState.globalMapping = draft.globalMapping ? cloneMapping(draft.globalMapping) : null;
     importState.preview = draft.preview || null;
     importState.mapping = normalizeMappingShape(draft.mapping || importState.fileConfigs[importState.activeFileIndex]?.mapping || {});
+    importState.mappingOwnerIndex = importState.activeFileIndex;
     importState.excludedRows = new Set((draft.excludedRows || []).filter(v => typeof v === 'number'));
     importState.autoExcludedRows = new Set();
     importState.fileId = null;
@@ -9335,12 +9485,23 @@ function bindSmartImport() {
   }
 
   function persistActiveFileConfig(setGlobalIfMissing = true) {
-    const idx = Math.max(0, importState.activeFileIndex || 0);
+    // On écrit sur le fichier auquel le mapping en mémoire appartient, et non
+    // sur le fichier actif : pendant un changement de fichier, les deux
+    // diffèrent tant que l'aperçu n'est pas revenu.
+    const owner = Number.isInteger(importState.mappingOwnerIndex)
+      ? importState.mappingOwnerIndex
+      : (importState.activeFileIndex || 0);
+    const idx = Math.max(0, owner);
     const cfg = getFileConfig(idx);
     if (!cfg) return;
 
-    cfg.mapping = normalizeMappingShape(importState.mapping || {});
-    cfg.excludedRows = [...(importState.excludedRows || new Set())].filter(v => typeof v === 'number');
+    // Mapping et lignes exclues n'ont de sens qu'avec un aperçu chargé. Sans
+    // aperçu (fichier retiré, sélection réinitialisée), on conserve la
+    // configuration déjà enregistrée au lieu de l'écraser avec du vide.
+    if (importState.preview) {
+      cfg.mapping = normalizeMappingShape(importState.mapping || {});
+      cfg.excludedRows = [...(importState.excludedRows || new Set())].filter(v => typeof v === 'number');
+    }
     cfg.headerRow = importState.preview?.headerRow || cfg.headerRow || null;
     cfg.sheetName = importState.preview?.selectedSheet || cfg.sheetName || null;
     cfg.fileId = importState.fileId || null;
@@ -9369,6 +9530,7 @@ function bindSmartImport() {
       importState.fileId = null;
       importState.preview = null;
       importState.mapping = {};
+      importState.mappingOwnerIndex = importState.activeFileIndex;
       importState.excludedRows = new Set();
       importState.autoExcludedRows = new Set();
       if (importState.files.length === 0) {
@@ -9768,8 +9930,8 @@ function bindSmartImport() {
 
   // File selection
   fileInput?.addEventListener('change', async () => {
-    const selectedFiles = Array.from(fileInput.files || []);
-    if (selectedFiles.length === 0) return;
+    const selectedFiles = filtrerFichiersTropVolumineux(Array.from(fileInput.files || []));
+    if (selectedFiles.length === 0) { fileInput.value = ''; return; }
 
     if (importState.mode === 'dpgf' && selectedFiles.length > 1) {
       showNotify({ title: 'Un seul fichier pour DPGF', message: 'Le mode DPGF utilise un seul fichier. Le premier fichier sélectionné sera utilisé.', type: 'info' });
@@ -9798,6 +9960,7 @@ function bindSmartImport() {
     importState.preview = null;
     const cfg = getFileConfig(importState.activeFileIndex);
     importState.mapping = normalizeMappingShape(cfg?.mapping || {});
+    importState.mappingOwnerIndex = importState.activeFileIndex;
     importState.excludedRows = new Set();
     importState.autoExcludedRows = new Set();
     fileInput.value = '';
@@ -9846,7 +10009,7 @@ function bindSmartImport() {
         credentials: 'include',
         signal: abortController.signal,
       });
-      const data = await resp.json();
+      const data = await lireReponseImport(resp);
       if (!resp.ok) throw new Error(data.error || 'Erreur preview');
       if (requestSeq !== previewRequestSeq || !currentLot || Number(currentLot.id) !== Number(lotId)) return;
 
@@ -9863,6 +10026,8 @@ function bindSmartImport() {
       } else {
         importState.mapping = normalizeMappingShape(data.suggestedMapping || {});
       }
+      // À partir d'ici, le mapping en mémoire décrit bien ce fichier.
+      importState.mappingOwnerIndex = fileIdx;
       importState.excludedRows = new Set((cfg?.excludedRows || []).filter(v => typeof v === 'number'));
       importState.autoExcludedRows = new Set();
       applyAutoExcludeRowsBeforeFirstArticle();
@@ -10381,7 +10546,7 @@ function bindSmartImport() {
             body: formData,
             credentials: 'include',
           });
-          const result = await resp.json();
+          const result = await lireReponseImport(resp);
           if (!resp.ok) throw new Error(`Onglet "${sheetName}" : ${result.error || 'Erreur import'}`);
           agg.lotsCreated += 1;
           agg.itemsImported += Number(result.itemsImported || 0);
@@ -10434,7 +10599,7 @@ function bindSmartImport() {
             body: formData,
             credentials: 'include',
           });
-          const result = await resp.json();
+          const result = await lireReponseImport(resp);
           if (!resp.ok) {
             throw new Error(`${file.name} : ${result.error || 'Erreur import'}`);
           }
@@ -10453,17 +10618,29 @@ function bindSmartImport() {
 
         finalResult = aggregated;
       } else {
-        const formData = new FormData();
-        // Envoyer le fichier uniquement si pas de fileId (fallback)
-        if (!importState.fileId) formData.append('file', importState.file);
-        formData.append('params', JSON.stringify(params));
+        // Le fichier part d'abord par reference (`fileId`, mis en cache lors de
+        // l'apercu) pour eviter un second televersement. Si le cache serveur l'a
+        // perdu entre-temps, on rejoue UNE fois en rattachant le fichier que le
+        // navigateur detient toujours. Meme raisonnement que le rejeu sur 401 :
+        // recliquer ne pouvait pas aider, puisque le `fileId` perime repartait a
+        // l'identique et l'import restait definitivement bloque.
+        const envoyerApply = async (avecFichier) => {
+          const corps = new FormData();
+          if (avecFichier || !importState.fileId) corps.append('file', importState.file);
+          corps.append('params', JSON.stringify(avecFichier ? { ...params, fileId: null } : params));
+          return fetchAuth(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
+            method: 'POST',
+            body: corps,
+            credentials: 'include',
+          });
+        };
 
-        const resp = await fetchAuth(`${API_BASE}/lots/${currentLot.id}/import-apply`, {
-          method: 'POST',
-          body: formData,
-          credentials: 'include',
-        });
-        const result = await resp.json();
+        let resp = await envoyerApply(false);
+        let result = await lireReponseImport(resp);
+        if (!resp.ok && result.code === 'FICHIER_CACHE_EXPIRE' && importState.file) {
+          resp = await envoyerApply(true);
+          result = await lireReponseImport(resp);
+        }
         if (!resp.ok) throw new Error(result.error || 'Erreur import');
         finalResult = result;
       }
@@ -11067,7 +11244,7 @@ function bindImportDpgfLots() {
   }
 
   fileInput.addEventListener('change', () => {
-    Array.from(fileInput.files || []).forEach(f => {
+    filtrerFichiersTropVolumineux(Array.from(fileInput.files || [])).forEach(f => {
       const exists = idlState.files.some(e => e.name === f.name && e.size === f.size);
       if (!exists) {
         idlState.files.push(f);
@@ -11180,7 +11357,7 @@ function bindImportDpgfLots() {
         body: formData,
         credentials: 'include',
       });
-      const data = await resp.json();
+      const data = await lireReponseImport(resp);
       if (!resp.ok) throw new Error(data.error || 'Erreur preview');
       idlState.preview = data;
       if (headerRowInput) headerRowInput.value = data.headerRow || 1;
@@ -11231,7 +11408,7 @@ function bindImportDpgfLots() {
         body: formData,
         credentials: 'include',
       });
-      const data = await resp.json();
+      const data = await lireReponseImport(resp);
       if (!resp.ok) throw new Error(data.error || 'Erreur preview');
       
       // Mettre à jour les données et le nom de l'onglet actuel
@@ -11565,7 +11742,7 @@ function bindImportDpgfLots() {
                 body: formData,
                 credentials: 'include',
               });
-              const result = await resp.json();
+              const result = await lireReponseImport(resp);
               if (!resp.ok) throw new Error(result.error || 'Erreur preview');
               return result;
             })();
@@ -11609,7 +11786,7 @@ function bindImportDpgfLots() {
               body: formData,
               credentials: 'include',
             });
-            const result = await resp.json();
+            const result = await lireReponseImport(resp);
             if (!resp.ok) {
               agg.errors.push({ file: `${file.name} / ${sheetName}`, error: result.error || 'Erreur inconnue' });
             } else {
@@ -11640,7 +11817,7 @@ function bindImportDpgfLots() {
             body: formData,
             credentials: 'include',
           });
-          const result = await resp.json();
+          const result = await lireReponseImport(resp);
           if (!resp.ok) {
             agg.errors.push({ file: file.name, error: result.error || 'Erreur inconnue' });
           } else {

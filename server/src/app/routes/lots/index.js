@@ -15,8 +15,13 @@ router.use(requireAuth);
 
 // Cache temporaire des fichiers import (preview → apply sans re-upload)
 const tempFileCache = new Map();
-const TEMP_FILE_TTL = 10 * 60 * 1000; // 10 minutes
-const TEMP_FILE_MAX_ENTRIES = 12;
+// 10 minutes ne couvraient pas la realite d'un import : entre l'apercu et la
+// validation, l'utilisateur regle le mapping, exclut des lignes et verifie les
+// colonnes, ce qui depasse largement ce delai sur une DPGF un peu fournie. Le
+// fichier cache disparaissait alors, et l'apply repondait « Fichier manquant »
+// sans qu'aucun nouveau clic ne puisse y remedier.
+const TEMP_FILE_TTL = 45 * 60 * 1000; // 45 minutes
+const TEMP_FILE_MAX_ENTRIES = 24;
 const TEMP_FILE_MAX_BYTES = 80 * 1024 * 1024; // 80 Mo max en memoire
 
 function getBufferSize(buffer) {
@@ -58,8 +63,30 @@ function cleanupTempFileCache(now = Date.now()) {
 const TEMP_FILE_REDIS_PREFIX = 'import:tempfile:';
 
 async function cacheTempFile(buffer, meta) {
-  const id = crypto.randomUUID();
-  tempFileCache.set(id, { buffer, ts: Date.now(), size: getBufferSize(buffer), ...meta });
+  cleanupTempFileCache();
+
+  // Chaque apercu rappelle cette fonction : changer d'onglet, corriger la ligne
+  // d'en-tete ou revenir a l'etape 1 creait une entree de plus pour le MEME
+  // fichier. Passe TEMP_FILE_MAX_ENTRIES, l'eviction supprimait l'entree dont
+  // l'etape apply avait besoin — d'ou des « Fichier manquant » sur un import
+  // pourtant tout juste previsualise. On reutilise donc l'entree existante
+  // lorsque l'empreinte du contenu est identique.
+  const empreinte = crypto.createHash('sha256').update(Buffer.from(buffer)).digest('hex');
+  let id = null;
+  for (const [cle, entree] of tempFileCache) {
+    if (entree.empreinte === empreinte) { id = cle; break; }
+  }
+
+  if (id) {
+    const entree = tempFileCache.get(id);
+    entree.ts = Date.now();
+    // Reinserer en fin de Map : l'eviction retire les entrees les plus anciennes.
+    tempFileCache.delete(id);
+    tempFileCache.set(id, entree);
+  } else {
+    id = crypto.randomUUID();
+    tempFileCache.set(id, { buffer, ts: Date.now(), size: getBufferSize(buffer), empreinte, ...meta });
+  }
   cleanupTempFileCache();
 
   try {
@@ -1272,7 +1299,14 @@ router.post('/:id/import-apply', requireRole(['platform_admin', 'tenant_admin', 
       mime = entry?.mime;
       name = entry?.name;
     }
-    if (!buffer) return res.status(400).json({ error: 'Fichier manquant. Veuillez relancer l\'import.' });
+    // `code` permet au front de rejouer l'appel en rattachant le fichier qu'il a
+    // toujours en memoire, au lieu d'imposer a l'utilisateur de tout reprendre.
+    if (!buffer) {
+      return res.status(400).json({
+        error: 'Fichier manquant. Veuillez relancer l\'import.',
+        code: 'FICHIER_CACHE_EXPIRE',
+      });
+    }
 
     const isPdf = isPdfFile({ mime, name });
     if (isPdf) {

@@ -21,6 +21,7 @@ import {
   normalizeDesignationForMatch,
   compactDesignationForMatch,
   scoreDesignationMatch,
+  isSameDesignationWithinTolerance,
 } from './import-utils.js';
 import {
   splitOptionRows,
@@ -688,120 +689,11 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       return normalizeArticleNum(n);
     }
 
-    function normalizeDesig(d) {
-      if (!d) return '';
-      return String(d).trim().toLowerCase()
-          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[\u00A0\u2007\u200B\u202F\u2009]/g, ' ')  // espaces spéciaux → espace normal
-        .replace(/\s+/g, ' ')            // compresser espaces multiples
-        .replace(/[''`]/g, "'")           // normaliser apostrophes
-        .replace(/[-–—]/g, '-')           // normaliser tirets
-        .trim();
-    }
-
-      function compactDesigForTolerance(d) {
-        return normalizeDesig(d)
-          .replace(/[^a-z0-9]/g, '');
-      }
-
-      function levenshteinDistance(a, b, maxDistance = Infinity) {
-        if (a === b) return 0;
-        if (!a.length) return b.length;
-        if (!b.length) return a.length;
-        if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
-
-        let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
-        for (let i = 1; i <= a.length; i++) {
-          const current = [i];
-          let minInRow = current[0];
-          for (let j = 1; j <= b.length; j++) {
-            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            const value = Math.min(
-              previous[j] + 1,
-              current[j - 1] + 1,
-              previous[j - 1] + cost
-            );
-            current[j] = value;
-            if (value < minInRow) minInRow = value;
-          }
-          if (minInRow > maxDistance) return maxDistance + 1;
-          previous = current;
-        }
-        return previous[b.length];
-      }
-
-      function isSameDesignationWithinTolerance(dpgfDesig, importDesig) {
-        const normalizedA = normalizeDesig(dpgfDesig);
-        const normalizedB = normalizeDesig(importDesig);
-        if (!normalizedA || !normalizedB) return normalizedA === normalizedB;
-        if (normalizedA === normalizedB) return true;
-
-        const compactA = compactDesigForTolerance(dpgfDesig);
-        const compactB = compactDesigForTolerance(importDesig);
-        if (!compactA || !compactB) return compactA === compactB;
-        if (compactA === compactB) return true;
-
-        const maxDistance = compactA.length <= 12 && compactB.length <= 12 ? 1 : 2;
-        const distance = levenshteinDistance(compactA, compactB, maxDistance);
-        const longestLength = Math.max(compactA.length, compactB.length);
-        return distance <= maxDistance && distance / longestLength <= 0.12;
-      }
-
-      function extractDesignationSeriesMarker(designation) {
-        const normalized = normalizeDesig(designation);
-        if (!normalized) return null;
-        const match = normalized.match(/^(.*?)(?:[\s\-_/().]+)(\d+|[a-z])$/i);
-        if (!match) return null;
-        const stem = match[1].trim();
-        const token = match[2].trim().toLowerCase();
-        if (!stem || !token) return null;
-        return {
-          stem,
-          token,
-          compactStem: stem.replace(/[^a-z0-9]/g, ''),
-          tokenType: /^\d+$/.test(token) ? 'number' : 'letter',
-        };
-      }
-
-      function hasConflictingSeriesMarker(dpgfDesig, importDesig) {
-        const markerA = extractDesignationSeriesMarker(dpgfDesig);
-        const markerB = extractDesignationSeriesMarker(importDesig);
-        if (!markerA || !markerB) return false;
-        if (markerA.tokenType !== markerB.tokenType) return false;
-        if (markerA.token === markerB.token) return false;
-        if (!markerA.compactStem || !markerB.compactStem) return false;
-
-        if (markerA.compactStem === markerB.compactStem) return true;
-
-        const longestStem = Math.max(markerA.compactStem.length, markerB.compactStem.length);
-        const stemMaxDistance = longestStem <= 12 ? 1 : 2;
-        const stemDistance = levenshteinDistance(markerA.compactStem, markerB.compactStem, stemMaxDistance);
-        return stemDistance <= stemMaxDistance && stemDistance / longestStem <= 0.12;
-      }
-
-    /** Compare deux désignations. Retourne un score de 0 (aucun match) à 100 (identique) */
-    function designationMatch(dpgfDesig, importDesig) {
-      const a = normalizeDesig(dpgfDesig);
-      const b = normalizeDesig(importDesig);
-      if (!a || !b) return 0;
-      // Si deux lignes ont la même base mais finissent par des marqueurs de série différents
-      // (1/2/3 ou A/B/C), on interdit le match pour éviter les permutations.
-      if (hasConflictingSeriesMarker(dpgfDesig, importDesig)) return 0;
-      // Match exact
-      if (a === b) return 100;
-      // L'import commence par la DPGF (l'entreprise a ajouté du texte après)
-      if (b.startsWith(a)) return 90;
-      // La DPGF commence par l'import (l'entreprise a tronqué)
-      if (a.startsWith(b) && b.length > a.length * 0.6) return 85;
-      // Calcul de similarité par mots communs
-      const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 2));
-      const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 2));
-      if (wordsA.size === 0 || wordsB.size === 0) return 0;
-      let common = 0;
-      for (const w of wordsA) { if (wordsB.has(w)) common++; }
-      const ratio = common / Math.max(wordsA.size, wordsB.size);
-      return Math.round(ratio * 80); // max 80 pour un match par mots
-    }
+    // La normalisation des designations, la distance de Levenshtein, le veto
+    // anti-permutation et le scoreur de similarite vivaient ici en DOUBLE, avec
+    // des regles divergentes de celles de import-utils.js : le resultat du
+    // matching dependait du chemin de code emprunte. Tout est desormais importe
+    // depuis import-utils.js, seul scoreur du projet.
 
     // Seuil minimum de similarité pour considérer que ça matche
     const MATCH_THRESHOLD = 50;
@@ -810,6 +702,9 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
     let matched = 0;
     let skipped = 0;
     let amountMismatchCount = 0;
+    let subtotalRowsSkipped = 0;      // Lignes « TOTAL » chiffrees de l'offre
+    let overwrittenOfferRows = 0;     // Lignes visant un article DPGF deja renseigne
+    const offeredItemIds = new Set(); // Articles DPGF ayant recu une valeur sur cet import
     const addedPosts = [];          // Postes ajoutés par l'entreprise (pas dans la DPGF)
     const matchDetails = [];
     let currentParentDpgfItem = null;
@@ -842,6 +737,16 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         num = null;
       } else if (num && designationNum?.num && normalizeNum(num) === normalizeNum(designationNum.num)) {
         importedDesignation = designationNum.designation;
+      }
+
+      // Une ligne « TOTAL », « Sous-total » ou « Chapitre » n'est pas un article.
+      // Elle est deja filtree a l'import de la DPGF, mais elle ne l'etait PAS ici :
+      // une ligne de total chiffree finissait en « poste ajoute par l'entreprise »,
+      // et gonflait le montant du lot.
+      if (isSubtotalOrTitleRow(importedDesignation)) {
+        skipped++;
+        subtotalRowsSkipped++;
+        continue;
       }
       const qty = mapping.qty ? parseNumber(row[mapping.qty]) : null;
       const pu = mapping.unit_price ? parseNumber(row[mapping.unit_price]) : null;
@@ -893,7 +798,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
           }
           // Match par désignation
           if (!emptyLineMatchesDpgf && importedDesignation) {
-            const score = designationMatch(dpgfItem.designation, importedDesignation);
+            const score = scoreDesignationMatch(dpgfItem.designation, importedDesignation);
             if (score >= MATCH_THRESHOLD) emptyLineMatchesDpgf = true;
           }
           if (emptyLineMatchesDpgf) {
@@ -950,7 +855,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         // 2. Match par désignation (si pas encore matché par Num)
         //    Pour le lookahead (look > 0), seuil relevé à 80 pour éviter les faux positifs
         if (!candidateMatch && importedDesignation) {
-          const score = designationMatch(dpgfItem.designation, importedDesignation);
+          const score = scoreDesignationMatch(dpgfItem.designation, importedDesignation);
           const threshold = look === 0 ? MATCH_THRESHOLD : (!num ? 90 : 80);
           const canDesignationLookahead = look === 0 || num || !dpgfItem.num;
           if (score >= threshold) {
@@ -1019,9 +924,18 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         }
         const offerComment = allComments.length > 0 ? allComments.join(' | ') : null;
 
+        // Le match par numero global autorise le retour arriere et ne verifiait pas
+        // que l'article DPGF avait deja recu une valeur : le ON CONFLICT ci-dessous
+        // ecrasait alors la premiere ligne en silence. On compte le cas pour le
+        // signaler dans le constat d'import.
+        if (offeredItemIds.has(dpgfItem.id)) {
+          overwrittenOfferRows++;
+        }
+        offeredItemIds.add(dpgfItem.id);
+
         // Sauvegarder la désignation entreprise si elle diffère de la désignation DPGF
-        const normDpgfDesig = normalizeDesig(dpgfItem.designation);
-        const normImportDesig = normalizeDesig(importedDesignation);
+        const normDpgfDesig = normalizeDesignationForMatch(dpgfItem.designation);
+        const normImportDesig = normalizeDesignationForMatch(importedDesignation);
         const offerDesignation = (normImportDesig && normDpgfDesig && !isSameDesignationWithinTolerance(dpgfItem.designation, importedDesignation))
           ? String(importedDesignation).trim()
           : null;
@@ -1147,6 +1061,12 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
         matched,
         skipped
       });
+    }
+    if (subtotalRowsSkipped > 0) {
+      warnings.push(subtotalRowsSkipped + ' ligne(s) de total ou de titre de chapitre ignorée(s) dans l\'offre.');
+    }
+    if (overwrittenOfferRows > 0) {
+      warnings.push(overwrittenOfferRows + ' ligne(s) de l\'offre visent un article DPGF déjà renseigné : seule la dernière valeur est conservée. À vérifier.');
     }
 
     return {
