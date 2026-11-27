@@ -6,6 +6,7 @@ import { requireAuth, preserveDbContext } from '../../middleware/auth.js';
 import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
+import { redisSet, redisGet } from '../../utils/redis.js';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10 Mo max
 const router = express.Router();
@@ -47,18 +48,87 @@ function cleanupTempFileCache(now = Date.now()) {
   }
 }
 
-function cacheTempFile(buffer, meta) {
+// Le cache mémoire ci-dessus est propre au process. Avec PM2 en cluster (ou un
+// redéploiement entre le preview et l'apply), l'étape apply peut être servie par
+// une autre instance et ne retrouve alors pas le fichier : l'utilisateur doit
+// tout recommencer. On double donc le stockage dans Redis, qui est partagé.
+// Redis absent → `redisSet`/`redisGet` retombent sur leur propre cache mémoire,
+// donc le comportement reste celui d'avant.
+const TEMP_FILE_REDIS_PREFIX = 'import:tempfile:';
+
+async function cacheTempFile(buffer, meta) {
   const id = crypto.randomUUID();
   tempFileCache.set(id, { buffer, ts: Date.now(), size: getBufferSize(buffer), ...meta });
   cleanupTempFileCache();
+
+  try {
+    await redisSet(
+      `${TEMP_FILE_REDIS_PREFIX}${id}`,
+      JSON.stringify({ ...meta, data: Buffer.from(buffer).toString('base64') }),
+      Math.floor(TEMP_FILE_TTL / 1000)
+    );
+  } catch (e) {
+    // Le cache mémoire suffit au cas mono-instance : on n'échoue pas l'import.
+    console.warn('[import] mise en cache Redis du fichier impossible:', e.message);
+  }
   return id;
 }
-function getTempFile(id) {
+
+async function getTempFile(id) {
   cleanupTempFileCache();
   const entry = tempFileCache.get(id);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > TEMP_FILE_TTL) { tempFileCache.delete(id); return null; }
-  return entry;
+  if (entry && Date.now() - entry.ts <= TEMP_FILE_TTL) return entry;
+  if (entry) tempFileCache.delete(id);
+
+  // Pas (ou plus) en mémoire locale : tenter le cache partagé.
+  try {
+    const raw = await redisGet(`${TEMP_FILE_REDIS_PREFIX}${id}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.data) return null;
+    const buffer = Buffer.from(parsed.data, 'base64');
+    const restored = {
+      buffer,
+      ts: Date.now(),
+      size: getBufferSize(buffer),
+      mime: parsed.mime,
+      name: parsed.name,
+    };
+    // Remettre en mémoire locale pour les éventuels appels suivants.
+    tempFileCache.set(id, restored);
+    cleanupTempFileCache();
+    return restored;
+  } catch (e) {
+    console.warn('[import] lecture du cache Redis impossible:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Compte ce que le mode « replace » peut détruire dans un lot, pour l'afficher
+ * avant confirmation. On ne simule pas le matching (trop coûteux à ce stade) :
+ * on expose l'état actuel, qui est la portée maximale de la suppression.
+ */
+async function getReplaceImpact(lotId) {
+  const { rows } = await query(
+    `SELECT
+       (SELECT count(*) FROM items WHERE lot_id = $1) AS items,
+       (SELECT count(*) FROM items
+          WHERE lot_id = $1 AND source_company_id IS NOT NULL) AS added_items,
+       (SELECT count(*) FROM moe_items m
+          JOIN items i ON i.id = m.item_id WHERE i.lot_id = $1) AS moe_rows,
+       (SELECT count(*) FROM offers o
+          JOIN items i ON i.id = o.item_id WHERE i.lot_id = $1) AS offers`,
+    [lotId]
+  );
+  const r = rows[0] || {};
+  // count(*) revient en string via node-postgres : conversion explicite.
+  return {
+    items: Number(r.items || 0),
+    addedItems: Number(r.added_items || 0),
+    moeRows: Number(r.moe_rows || 0),
+    offers: Number(r.offers || 0),
+  };
 }
 
 // Helper: Résoudre le project_id d'un lot
@@ -1051,8 +1121,10 @@ router.post('/:id/import-preview', requireRole(['platform_admin', 'tenant_admin'
       : req.file.buffer;
     const result = await previewExcel({ buffer, sheetName: isPdf ? 'PDF' : sheetName, headerRow: isPdf ? 1 : headerRow });
     // Cacher le fichier pour éviter un re-upload à l'étape apply
-    const fileId = cacheTempFile(req.file.buffer, { mime: req.file.mimetype, name: req.file.originalname });
-    res.json({ ...result, fileId });
+    const fileId = await cacheTempFile(req.file.buffer, { mime: req.file.mimetype, name: req.file.originalname });
+    // Portée maximale d'une suppression en mode « replace », à confirmer côté UI.
+    const replaceImpact = await getReplaceImpact(lotId);
+    res.json({ ...result, fileId, replaceImpact });
   } catch (e) {
     console.error('Preview error:', e);
     res.status(400).json({ error: e.message });
@@ -1087,7 +1159,7 @@ router.post('/:id/import-apply', requireRole(['platform_admin', 'tenant_admin', 
     let mime = req.file?.mimetype;
     let name = req.file?.originalname;
     if (!buffer && fileId) {
-      const entry = getTempFile(fileId);
+      const entry = await getTempFile(fileId);
       buffer = entry?.buffer;
       mime = entry?.mime;
       name = entry?.name;

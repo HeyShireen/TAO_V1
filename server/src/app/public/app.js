@@ -346,6 +346,7 @@ function initQuestionCompanyColumnResizes(companies = []) {
 
 /* ====== Delete Confirmation Modal ====== */
 let deleteConfirmationCallback = null;
+let deleteConfirmationCancelCallback = null;
 const showDeleteConfirmation = (options = {}) => {
   const {
     title = 'Confirmer la suppression',
@@ -386,16 +387,23 @@ const showDeleteConfirmation = (options = {}) => {
     }
   }
   
-  // Stocker le callback
+  // Stocker les callbacks
   deleteConfirmationCallback = onConfirm;
-  
+  deleteConfirmationCancelCallback = onCancel;
+
   // Afficher la modal
   show('#delete-confirmation-modal');
 };
 
 const hideDeleteConfirmation = () => {
   hide('#delete-confirmation-modal');
+  const onCancel = deleteConfirmationCancelCallback;
   deleteConfirmationCallback = null;
+  deleteConfirmationCancelCallback = null;
+  // `onCancel` était accepté en paramètre mais jamais appelé : un appelant qui
+  // attendait une réponse (promesse) restait bloqué si l'utilisateur fermait la
+  // modale au lieu de confirmer.
+  if (typeof onCancel === 'function') onCancel();
 };
 
 /* ====== Num parse/format (FR friendly) ====== */
@@ -6057,6 +6065,44 @@ function recalcQuestionsHeaderOffsets() {
 }
 
 // Classes d'état d'une cellule question : vert = validée, orange = modifiée par l'utilisateur
+/**
+ * Demande confirmation avant un import qui remplace le contenu d'un lot, en
+ * affichant ce que ce lot contient aujourd'hui — c'est la portée maximale de la
+ * suppression.
+ *
+ * Ne demande rien si le lot est vide (aucun risque) ou si le serveur n'a pas
+ * fourni le décompte : dans ce cas on ne bloque pas l'import.
+ *
+ * @param {{items:number, moeRows:number, offers:number, addedItems:number}|null} impact
+ * @returns {Promise<boolean>} true si l'import peut continuer
+ */
+function confirmReplaceImport(impact) {
+  const items = Number(impact?.items || 0);
+  if (!impact || items <= 0) return Promise.resolve(true);
+
+  const pluriel = (n, singulier, pluriel_) => `${n} ${n > 1 ? pluriel_ : singulier}`;
+  const lignes = [
+    pluriel(items, 'article', 'articles'),
+    Number(impact.moeRows) > 0 ? pluriel(Number(impact.moeRows), 'ligne de données MOE', 'lignes de données MOE') : null,
+    Number(impact.offers) > 0 ? pluriel(Number(impact.offers), 'réponse d\'entreprise', 'réponses d\'entreprise') : null,
+    Number(impact.addedItems) > 0 ? pluriel(Number(impact.addedItems), 'poste ajouté par une entreprise', 'postes ajoutés par une entreprise') : null,
+  ].filter(Boolean);
+
+  return new Promise((resolve) => {
+    showDeleteConfirmation({
+      title: 'Cet import remplace le contenu du lot',
+      message: 'Les articles de ce lot qui ne figurent pas dans le fichier seront supprimés, ainsi que les données MOE, les réponses d\'entreprise et les questions qui en dépendent.',
+      extra: `<strong>Le lot contient actuellement :</strong><ul style="margin:6px 0 0 18px">${
+        lignes.map(l => `<li>${escapeHtml(l)}</li>`).join('')
+      }</ul>`,
+      confirmLabel: 'Importer quand même',
+      confirmType: 'danger',
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
 function questionCellStateClass(questions) {
   const list = (questions || []).filter(Boolean);
   if (list.length === 0) return '';
@@ -10046,6 +10092,12 @@ function bindSmartImport() {
       }
     }
 
+    // L'import remplace le contenu du lot : les articles absents du fichier
+    // sont SUPPRIMÉS, et avec eux les données MOE, les offres et les questions
+    // liées (ON DELETE CASCADE). Un mapping validé peut être syntaxiquement
+    // correct et sémantiquement faux, donc on montre la portée avant d'agir.
+    if (!(await confirmReplaceImport(importState.preview?.replaceImpact))) return;
+
     // Disable button & show loading state
     confirmBtn.disabled = true;
     const originalHTML = confirmBtn.innerHTML;
@@ -11730,6 +11782,9 @@ function bindUI(){
   qs('#delete-confirmation-confirm')?.addEventListener('click', async () => {
     if (deleteConfirmationCallback && typeof deleteConfirmationCallback === 'function') {
       const onConfirm = deleteConfirmationCallback;
+      // Neutraliser l'annulation : la fermeture qui suit est une confirmation,
+      // pas un abandon.
+      deleteConfirmationCancelCallback = null;
       hideDeleteConfirmation();
       await onConfirm();
     }

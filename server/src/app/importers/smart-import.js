@@ -51,14 +51,58 @@ const normalize = (s) => (s ?? '').toString().trim().toLowerCase().replace(/\s+/
 const COLUMN_PATTERNS = {
   num:         ['n°', 'num', 'no', 'numéro', 'numero', 'n °', 'art', 'article', 'poste', 'ref', 'réf', 'code'],
   designation: ['désignation', 'designation', 'libellé', 'libelle', 'description', 'intitulé', 'intitule', 'ouvrage', 'prestation'],
-  unit:        ['unité', 'unite', 'u.'],
+  unit:        ['unité', 'unite', 'u.', 'u'],
   qty:         ['quantité', 'quantite', 'qté', 'qte', 'q', 'qt', 'nombre', 'nb'],
   unit_price:  ['prix unitaire', 'pu', 'p.u.', 'p.u', 'prix unit', 'prix u'],
   amount:      ['montant', 'mt', 'total', 'prix total', 'sous-total', 'sous total', 'somme'],
 };
 
 // Patterns courts qui ne doivent matcher qu'en mot entier (exact ou bordé par espaces)
-const WORD_BOUNDARY_PATTERNS = new Set(['pu', 'mt', 'q', 'qt', 'nb', 'no']);
+const WORD_BOUNDARY_PATTERNS = new Set(['pu', 'mt', 'q', 'qt', 'nb', 'no', 'u']);
+
+// Nombre de lignes d'en-tête candidates examinées, et nombre de lignes de
+// données scannées pour découvrir des colonnes apparaissant tardivement.
+const HEADER_SCAN_ROWS = 20;
+const DATA_SCAN_ROWS = 30;
+
+/**
+ * Détecte la ligne d'en-tête en retenant celle qui produit le MEILLEUR mapping
+ * automatique, et non la première ligne « assez remplie ».
+ *
+ * L'ancienne règle — première ligne comptant au moins 3 cellules — prenait un
+ * bloc de titre de projet (« Projet | Residence X | Mars 2026 ») pour l'en-tête :
+ * le mapping ressortait vide et la véritable ligne d'en-tête était traitée comme
+ * une ligne de données. On n'accepte donc une ligne que si elle fait reconnaître
+ * au moins deux colonnes métier, et on retombe sur l'ancienne heuristique à
+ * défaut, pour ne pas régresser sur les fichiers aux en-têtes exotiques.
+ *
+ * @param {import('exceljs').Worksheet} ws
+ * @returns {number} index de ligne (1-based)
+ */
+function detectHeaderRowIdx(ws) {
+  const maxScan = Math.min(HEADER_SCAN_ROWS, ws.rowCount);
+  let best = { idx: 0, score: 0 };
+  let firstFilledRow = 0;
+
+  for (let r = 1; r <= maxScan; r++) {
+    const row = ws.getRow(r);
+    if (!row) continue;
+    let filledCount = 0;
+    row.eachCell({ includeEmpty: false }, () => filledCount++);
+    if (filledCount === 0) continue;
+    if (!firstFilledRow && filledCount >= 3) firstFilledRow = r;
+
+    const candidateHeaders = [];
+    for (let c = 1; c <= (row.cellCount || 0); c++) {
+      candidateHeaders.push({ index: c, name: cellToString(row.getCell(c)) });
+    }
+    const score = Object.keys(autoDetectMapping(candidateHeaders)).length;
+    if (score > best.score) best = { idx: r, score };
+  }
+
+  if (best.score >= 2) return best.idx;
+  return firstFilledRow || 1;
+}
 
 // Signatures de fichiers. exceljs ne lit que l'OOXML (.xlsx / .xlsm), qui est une
 // archive ZIP. Un .xls Excel 97-2003 est un conteneur OLE2 binaire : sans ce
@@ -117,24 +161,16 @@ export async function previewExcel({ buffer, sheetName, headerRow: headerRowOver
   // Détecter la ligne d'en-tête (ou utiliser le choix de l'utilisateur)
   let headerRowIdx = headerRowOverride ? Number(headerRowOverride) : 0;
   if (!headerRowIdx || headerRowIdx < 1) {
-    headerRowIdx = 1;
-    const maxScan = Math.min(20, ws.rowCount);
-    for (let r = 1; r <= maxScan; r++) {
-      const row = ws.getRow(r);
-      let filledCount = 0;
-      row.eachCell({ includeEmpty: false }, () => filledCount++);
-      if (filledCount >= 3) {
-        headerRowIdx = r;
-        break;
-      }
-    }
+    headerRowIdx = detectHeaderRowIdx(ws);
   }
 
-  // Déterminer le nombre max de colonnes utilisées (en-tête + premières lignes de données)
+  // Déterminer le nombre max de colonnes utilisées (en-tête + lignes de données).
+  // On scanne largement : certaines DPGF n'ouvrent les colonnes de prix qu'après
+  // plusieurs lignes de chapitres, et une colonne non vue ici reste invisible
+  // dans l'écran de mapping.
   const headerRow = ws.getRow(headerRowIdx);
   let maxCol = headerRow.cellCount || 0;
-  // Scanner quelques lignes de données pour trouver des colonnes supplémentaires
-  for (let r = headerRowIdx + 1; r <= Math.min(headerRowIdx + 10, ws.rowCount); r++) {
+  for (let r = headerRowIdx + 1; r <= Math.min(headerRowIdx + DATA_SCAN_ROWS, ws.rowCount); r++) {
     const dr = ws.getRow(r);
     if (dr && dr.cellCount > maxCol) maxCol = dr.cellCount;
   }
