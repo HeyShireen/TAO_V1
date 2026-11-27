@@ -9000,7 +9000,7 @@ let importState = {
   file: null,
   files: [],
   fileConfigs: [],
-  globalMapping: null,
+  offerBaseMapping: null,
   activeFileIndex: 0,
   // Index du fichier auquel appartiennent les `mapping` / `excludedRows`
   // chargés. Il ne rejoint `activeFileIndex` qu'une fois l'aperçu du nouveau
@@ -9113,7 +9113,7 @@ function bindSmartImport() {
       file: null,
       files: [],
       fileConfigs: [],
-      globalMapping: null,
+      offerBaseMapping: null,
       activeFileIndex: 0,
       mappingOwnerIndex: 0,
       preview: null,
@@ -9189,7 +9189,10 @@ function bindSmartImport() {
     const key = getImportDraftKey();
     const files = getSelectedImportFiles();
     if (!key || files.length === 0) return;
-    persistActiveFileConfig(false);
+    persistActiveFileConfig();
+    // Pendant un chargement, l'aperçu visible appartient encore au fichier
+    // précédent. Le brouillon doit restaurer ce fichier, pas celui demandé.
+    const previewFileIndex = importState.preview ? importState.mappingOwnerIndex : null;
 
     const draft = {
       key,
@@ -9198,7 +9201,8 @@ function bindSmartImport() {
       lotId: currentLot?.id || null,
       roundId: currentRound?.id || null,
       mode: importState.mode,
-      activeFileIndex: importState.activeFileIndex || 0,
+      activeFileIndex: previewFileIndex ?? importState.activeFileIndex ?? 0,
+      previewFileIndex,
       files: files.map(file => ({
         name: file.name,
         type: file.type || 'application/octet-stream',
@@ -9206,7 +9210,7 @@ function bindSmartImport() {
         blob: file,
       })),
       fileConfigs: (importState.fileConfigs || []).map(serializeFileConfig),
-      globalMapping: importState.globalMapping ? cloneMapping(importState.globalMapping) : null,
+      offerBaseMapping: importState.offerBaseMapping ? cloneMapping(importState.offerBaseMapping) : null,
       preview: importState.preview || null,
       mapping: normalizeMappingShape(importState.mapping || {}),
       excludedRows: [...(importState.excludedRows instanceof Set ? importState.excludedRows : new Set())].filter(v => typeof v === 'number'),
@@ -9263,12 +9267,17 @@ function bindSmartImport() {
     importState.activeFileIndex = Math.max(0, Math.min(Number(draft.activeFileIndex || 0), files.length - 1));
     importState.file = files[importState.activeFileIndex] || files[0] || null;
     importState.fileConfigs = Array.isArray(draft.fileConfigs) ? draft.fileConfigs.map(serializeFileConfig) : [];
+    const baseMapping = draft.offerBaseMapping ?? draft.globalMapping;
+    importState.offerBaseMapping = baseMapping ? normalizeMappingShape(baseMapping) : null;
     ensureFileConfigs();
-    importState.globalMapping = draft.globalMapping ? cloneMapping(draft.globalMapping) : null;
-    importState.preview = draft.preview || null;
-    importState.mapping = normalizeMappingShape(draft.mapping || importState.fileConfigs[importState.activeFileIndex]?.mapping || {});
+    // Les anciens brouillons ne prouvent pas à quel fichier appartient leur
+    // aperçu. Conserver les configurations, mais redemander cet aperçu.
+    const hasOwnedPreview = draft.previewFileIndex === importState.activeFileIndex;
+    const cfg = getFileConfig(importState.activeFileIndex);
+    importState.preview = hasOwnedPreview ? (draft.preview || null) : null;
+    importState.mapping = normalizeMappingShape((hasOwnedPreview ? draft.mapping : cfg?.mapping) || {});
     importState.mappingOwnerIndex = importState.activeFileIndex;
-    importState.excludedRows = new Set((draft.excludedRows || []).filter(v => typeof v === 'number'));
+    importState.excludedRows = new Set(((hasOwnedPreview ? draft.excludedRows : cfg?.excludedRows) || []).filter(v => typeof v === 'number'));
     importState.autoExcludedRows = new Set();
     importState.fileId = null;
     importState.selectedSheetsDpgf = Array.isArray(draft.selectedSheetsDpgf) ? [...draft.selectedSheetsDpgf] : [];
@@ -9289,6 +9298,7 @@ function bindSmartImport() {
     if (previewAbortController) {
       previewAbortController.abort();
       previewAbortController = null;
+      hideLoader();
     }
   }
 
@@ -9477,6 +9487,12 @@ function bindSmartImport() {
     if (importState.fileConfigs.length > files.length) {
       importState.fileConfigs = importState.fileConfigs.slice(0, files.length);
     }
+    if (importState.mode === 'offer' && importState.offerBaseMapping) {
+      for (const cfg of importState.fileConfigs) {
+        // Un mapping vide peut être un choix explicite : ne pas le rétablir.
+        if (cfg.mapping == null) cfg.mapping = cloneMapping(importState.offerBaseMapping);
+      }
+    }
   }
 
   function getFileConfig(index = importState.activeFileIndex || 0) {
@@ -9484,7 +9500,7 @@ function bindSmartImport() {
     return importState.fileConfigs[index] || null;
   }
 
-  function persistActiveFileConfig(setGlobalIfMissing = true) {
+  function persistActiveFileConfig() {
     // On écrit sur le fichier auquel le mapping en mémoire appartient, et non
     // sur le fichier actif : pendant un changement de fichier, les deux
     // diffèrent tant que l'aperçu n'est pas revenu.
@@ -9505,41 +9521,43 @@ function bindSmartImport() {
     cfg.headerRow = importState.preview?.headerRow || cfg.headerRow || null;
     cfg.sheetName = importState.preview?.selectedSheet || cfg.sheetName || null;
     cfg.fileId = importState.fileId || null;
+  }
 
-    if (setGlobalIfMissing && !importState.globalMapping && Object.keys(cfg.mapping || {}).length > 0) {
-      importState.globalMapping = cloneMapping(cfg.mapping);
-      for (let i = 0; i < importState.fileConfigs.length; i += 1) {
-        if (!importState.fileConfigs[i].mapping) {
-          importState.fileConfigs[i].mapping = cloneMapping(importState.globalMapping);
-        }
-      }
-    }
+  function initializeOfferBaseMapping() {
+    if (importState.mode !== 'offer' || !importState.preview || importState.offerBaseMapping != null) return;
+    if (Object.keys(importState.mapping || {}).length === 0) return;
+    // Figer le premier mapping lorsque l'utilisateur quitte sa configuration,
+    // jamais lors d'une sauvegarde automatique ou d'une retouche ultérieure.
+    // Chaque fichier reçoit sa propre copie, tableaux de colonnes compris.
+    importState.offerBaseMapping = normalizeMappingShape(importState.mapping);
+    ensureFileConfigs();
   }
 
   function removeFileFromImport(fileIndex) {
     if (importState.files.length > fileIndex) {
-      persistActiveFileConfig(false);
+      cancelPreviewRequest();
+      persistActiveFileConfig();
+      const activeFile = getActiveImportFile();
       importState.files.splice(fileIndex, 1);
       if (importState.fileConfigs.length > fileIndex) {
         importState.fileConfigs.splice(fileIndex, 1);
       }
-      if (importState.activeFileIndex >= importState.files.length) {
-        importState.activeFileIndex = Math.max(0, importState.files.length - 1);
-      }
-      importState.file = importState.files[0] || null;
+      const remainingIndex = importState.files.indexOf(activeFile);
+      importState.activeFileIndex = remainingIndex >= 0
+        ? remainingIndex
+        : Math.max(0, Math.min(fileIndex, importState.files.length - 1));
+      importState.file = importState.files[importState.activeFileIndex] || null;
       importState.fileId = null;
       importState.preview = null;
       importState.mapping = {};
       importState.mappingOwnerIndex = importState.activeFileIndex;
       importState.excludedRows = new Set();
       importState.autoExcludedRows = new Set();
-      if (importState.files.length === 0) {
-        importState.globalMapping = null;
-      }
       updateImportFileSelectionUI();
       updateOfferImportUI();
       updateFileNavigatorUI();
       if (importState.files.length === 0) {
+        importState.offerBaseMapping = null;
         clearImportDraft();
       } else {
         scheduleImportDraftSave();
@@ -9628,7 +9646,8 @@ function bindSmartImport() {
           e.preventDefault();
           const fileIndex = Number(btn.dataset.fileIndex);
           if (Number.isNaN(fileIndex)) return;
-          persistActiveFileConfig(true);
+          persistActiveFileConfig();
+          initializeOfferBaseMapping();
           importState.activeFileIndex = fileIndex;
           updateImportFileSelectionUI();
           updateFileNavigatorUI();
@@ -9853,6 +9872,7 @@ function bindSmartImport() {
   }
 
   function setImportMode(mode) {
+    if (mode !== importState.mode) importState.offerBaseMapping = null;
     importState.mode = mode;
     // Import d'offre : par défaut on MET À JOUR les lignes présentes dans le
     // fichier et on conserve les autres. C'est indispensable après la
@@ -9932,6 +9952,8 @@ function bindSmartImport() {
   fileInput?.addEventListener('change', async () => {
     const selectedFiles = filtrerFichiersTropVolumineux(Array.from(fileInput.files || []));
     if (selectedFiles.length === 0) { fileInput.value = ''; return; }
+    cancelPreviewRequest();
+    persistActiveFileConfig();
 
     if (importState.mode === 'dpgf' && selectedFiles.length > 1) {
       showNotify({ title: 'Un seul fichier pour DPGF', message: 'Le mode DPGF utilise un seul fichier. Le premier fichier sélectionné sera utilisé.', type: 'info' });
@@ -9941,7 +9963,6 @@ function bindSmartImport() {
       importState.files = [selectedFiles[0]];
       importState.fileConfigs = [{ mapping: null, excludedRows: [], headerRow: null, sheetName: null, fileId: null, companyId: null, companyName: '' }];
       importState.activeFileIndex = 0;
-      importState.globalMapping = null;
     } else {
       const existing = getSelectedImportFiles();
       const allFiles = [...existing];
@@ -9973,13 +9994,16 @@ function bindSmartImport() {
   goStep2Btn?.addEventListener('click', async () => {
     const file = getActiveImportFile();
     if (!file) return;
-    persistActiveFileConfig(false);
+    persistActiveFileConfig();
     await doPreview(undefined, file, { keepExistingMapping: false, switchToStep2: true });
   });
 
   async function doPreview(sheetName, sourceFile = importState.file, options = {}) {
-    const { keepExistingMapping = false, switchToStep2 = true } = options;
+    const { keepExistingMapping = false, switchToStep2 = true, headerRow = null } = options;
     if (!sourceFile || !currentLot) return;
+    const files = getSelectedImportFiles();
+    const fileIdx = files.indexOf(sourceFile);
+    if (fileIdx < 0) return;
     const lotId = currentLot.id;
     if (previewAbortController) {
       previewAbortController.abort();
@@ -9987,13 +10011,12 @@ function bindSmartImport() {
     const requestSeq = ++previewRequestSeq;
     const abortController = new AbortController();
     previewAbortController = abortController;
-    const files = getSelectedImportFiles();
-    const fileIdx = Math.max(0, files.indexOf(sourceFile));
     importState.activeFileIndex = fileIdx;
     const cfg = getFileConfig(fileIdx);
     const requestedSheet = sheetName || cfg?.sheetName || null;
-    const requestedHeader = headerRowInput ? Number(headerRowInput.value) : 0;
-    const effectiveHeader = requestedHeader >= 1 ? requestedHeader : (cfg?.headerRow || 0);
+    // Le champ affiché peut encore décrire le fichier précédent. Seul un
+    // changement explicite d'en-tête ou la configuration de CE fichier compte.
+    const effectiveHeader = headerRow ?? cfg?.headerRow ?? 0;
 
     const formData = new FormData();
     formData.append('file', sourceFile);
@@ -10016,13 +10039,10 @@ function bindSmartImport() {
       importState.preview = data;
       importState.file = sourceFile;
       importState.fileId = data.fileId || null;
-      if (keepExistingMapping && importState.mapping && Object.keys(importState.mapping).length > 0) {
+      if (keepExistingMapping && importState.mappingOwnerIndex === fileIdx) {
         importState.mapping = normalizeMappingShape(importState.mapping);
-      } else if (cfg?.mapping && Object.keys(cfg.mapping).length > 0) {
+      } else if (cfg?.mapping != null) {
         importState.mapping = normalizeMappingShape(cfg.mapping);
-      } else if (importState.globalMapping && Object.keys(importState.globalMapping).length > 0) {
-        importState.mapping = normalizeMappingShape(importState.globalMapping);
-        cfg.mapping = cloneMapping(importState.mapping);
       } else {
         importState.mapping = normalizeMappingShape(data.suggestedMapping || {});
       }
@@ -10034,6 +10054,7 @@ function bindSmartImport() {
       cfg.sheetName = data.selectedSheet || cfg.sheetName || null;
       cfg.headerRow = data.headerRow || cfg.headerRow || null;
       cfg.fileId = data.fileId || null;
+      persistActiveFileConfig();
       // Mettre à jour l’input ligne d’en-tête
       if (headerRowInput) headerRowInput.value = data.headerRow || 1;
       renderStep2();
@@ -10048,6 +10069,12 @@ function bindSmartImport() {
       }
     } catch (err) {
       if (err?.name === 'AbortError') return;
+      if (requestSeq !== previewRequestSeq) return;
+      if (importState.preview) {
+        importState.activeFileIndex = importState.mappingOwnerIndex;
+        if (headerRowInput) headerRowInput.value = importState.preview.headerRow || 1;
+        updateFileNavigatorUI();
+      }
       showNotify({ title: 'Erreur', message: err.message, type: 'error' });
     } finally {
       if (requestSeq === previewRequestSeq) {
@@ -10064,7 +10091,7 @@ function bindSmartImport() {
     if (canUseDpgfMultiSheets()) {
       saveDpgfSheetConfig(importState.preview?.selectedSheet);
     }
-    persistActiveFileConfig(false);
+    persistActiveFileConfig();
     scheduleImportDraftSave();
     doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: !canUseDpgfMultiSheets(), switchToStep2: false });
   });
@@ -10101,7 +10128,7 @@ function bindSmartImport() {
     if (aExclure.length === 0) return;
     if (!(importState.excludedRows instanceof Set)) importState.excludedRows = new Set();
     for (const rn of aExclure) importState.excludedRows.add(rn);
-    persistActiveFileConfig(false);
+    persistActiveFileConfig();
     renderPreviewTable();
     scheduleImportDraftSave();
     updateExcludeOptionsButton();
@@ -10113,24 +10140,20 @@ function bindSmartImport() {
   });
 
   // Header row manual override
-  let headerRowDebounce = null;
   headerRowInput?.addEventListener('change', () => {
-    clearTimeout(headerRowDebounce);
-    headerRowDebounce = setTimeout(() => {
-      const val = Number(headerRowInput.value);
-      if (val >= 1 && val <= 100 && importState.preview) {
-        persistActiveFileConfig(false);
-        importState.preview.headerRow = val;
-        scheduleImportDraftSave();
-        doPreview(sheetSelect.value, getActiveImportFile(), { keepExistingMapping: true, switchToStep2: false });
-      }
-    }, 400);
+    const sourceFile = getActiveImportFile();
+    const val = Number(headerRowInput.value);
+    if (val >= 1 && val <= 100 && importState.preview && importState.mappingOwnerIndex === importState.activeFileIndex) {
+      persistActiveFileConfig();
+      doPreview(sheetSelect.value, sourceFile, { keepExistingMapping: true, switchToStep2: false, headerRow: val });
+    }
   });
 
   prevFileBtn?.addEventListener('click', async () => {
     const files = getSelectedImportFiles();
     if (importState.activeFileIndex <= 0 || files.length < 2) return;
-    persistActiveFileConfig(true);
+    persistActiveFileConfig();
+    initializeOfferBaseMapping();
     importState.activeFileIndex -= 1;
     updateFileNavigatorUI();
     scheduleImportDraftSave();
@@ -10140,7 +10163,8 @@ function bindSmartImport() {
   nextFileBtn?.addEventListener('click', async () => {
     const files = getSelectedImportFiles();
     if (importState.activeFileIndex >= files.length - 1 || files.length < 2) return;
-    persistActiveFileConfig(true);
+    persistActiveFileConfig();
+    initializeOfferBaseMapping();
     importState.activeFileIndex += 1;
     updateFileNavigatorUI();
     scheduleImportDraftSave();
@@ -10276,14 +10300,14 @@ function bindSmartImport() {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '×'; btn.title = 'Supprimer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--danger, #f87171);cursor:pointer;font-size:1.1em;font-weight:700;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.add(rowNum); persistActiveFileConfig(false); renderPreviewTable(); scheduleImportDraftSave(); });
+      btn.addEventListener('click', () => { excluded.add(rowNum); persistActiveFileConfig(); renderPreviewTable(); scheduleImportDraftSave(); });
       return btn;
     }
     function makeRestoreBtn(rowNum) {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.textContent = '↩'; btn.title = 'Restaurer cette ligne';
       btn.style.cssText = 'background:none;border:none;color:var(--success, #10b981);cursor:pointer;font-size:1em;padding:0 4px;line-height:1';
-      btn.addEventListener('click', () => { excluded.delete(rowNum); persistActiveFileConfig(false); renderPreviewTable(); scheduleImportDraftSave(); });
+      btn.addEventListener('click', () => { excluded.delete(rowNum); persistActiveFileConfig(); renderPreviewTable(); scheduleImportDraftSave(); });
       return btn;
     }
 
@@ -10346,7 +10370,7 @@ function bindSmartImport() {
         }
 
         applyAutoExcludeRowsBeforeFirstArticle();
-        persistActiveFileConfig(false);
+        persistActiveFileConfig();
         renderPreviewTable();
         scheduleImportDraftSave();
       });
@@ -10401,11 +10425,13 @@ function bindSmartImport() {
 
   // Back to step 1
   backBtn?.addEventListener('click', () => {
-    persistActiveFileConfig(true);
+    persistActiveFileConfig();
+    initializeOfferBaseMapping();
     step1.classList.remove('hidden');
     step2.classList.add('hidden');
     step3.classList.add('hidden');
     updateImportFileSelectionUI();
+    scheduleImportDraftSave();
   });
 
   cancelBtn?.addEventListener('click', closeModal);
@@ -10415,7 +10441,8 @@ function bindSmartImport() {
     const selectedFiles = getSelectedImportFiles();
     if (!selectedFiles.length || !currentLot || !importState.preview) return;
     if (confirmBtn.disabled) return;
-    persistActiveFileConfig(true);
+    persistActiveFileConfig();
+    initializeOfferBaseMapping();
     // Import d'offre mono-fichier : entreprise issue de l'etape 2 avec repli
     // sur le champ par fichier de l'etape 1.
     let offerCompany = { companyId: null, companyName: null };
@@ -10483,7 +10510,7 @@ function bindSmartImport() {
         showNotify({ title: 'Tour requis', message: 'Aucun tour sélectionné. Retournez à la liste des tours et sélectionnez un tour avant d\'importer une offre.', type: 'error' });
         return;
       }
-      if (!importState.mapping.qty && !importState.mapping.unit_price && !importState.mapping.amount) {
+      if (!batchMode && !importState.mapping.qty && !importState.mapping.unit_price && !importState.mapping.amount) {
         showNotify({ title: 'Mapping incomplet', message: 'Mappez au moins une colonne de données (Quantité, PU ou Montant).', type: 'error' });
         return;
       }
@@ -10572,22 +10599,49 @@ function bindSmartImport() {
           warnings: [],
         };
 
+        // Préparer tous les fichiers avant d'en importer un seul. Le mapping
+        // initial est déjà copié ; chaque fichier garde ses propres réglages
+        // et sa propre détection d'onglet et de ligne d'en-tête.
+        const preparedFiles = [];
         for (let i = 0; i < selectedFiles.length; i += 1) {
           const file = selectedFiles[i];
           const cfg = importState.fileConfigs[i] || {};
-          const mappingForFile = normalizeMappingShape(cfg.mapping || importState.globalMapping || importState.mapping || {});
+          if (cfg.mapping == null || !cfg.headerRow || !cfg.sheetName) {
+            const previewForm = new FormData();
+            previewForm.append('file', file);
+            if (cfg.sheetName) previewForm.append('sheetName', cfg.sheetName);
+            if (cfg.headerRow) previewForm.append('headerRow', String(cfg.headerRow));
+            confirmBtn.innerHTML = `<span class="spinner-small"></span> Vérification ${i + 1}/${selectedFiles.length}…`;
+            const previewResp = await fetchAuth(`${API_BASE}/lots/${currentLot.id}/import-preview`, {
+              method: 'POST', body: previewForm, credentials: 'include',
+            });
+            const preview = await lireReponseImport(previewResp);
+            if (!previewResp.ok) throw new Error(`${file.name} : ${preview.error || 'Erreur aperçu'}`);
+            cfg.mapping = normalizeMappingShape(cfg.mapping ?? preview.suggestedMapping ?? {});
+            cfg.headerRow = preview.headerRow;
+            cfg.sheetName = preview.selectedSheet;
+            cfg.fileId = preview.fileId || null;
+          }
+          const mappingForFile = normalizeMappingShape(cfg.mapping);
+          if (!mappingForFile.qty && !mappingForFile.unit_price && !mappingForFile.amount) {
+            throw new Error(`${file.name} : mappez au moins une colonne Quantité, PU ou Montant dans l'aperçu de ce fichier.`);
+          }
           const excludedForFile = Array.isArray(cfg.excludedRows) ? cfg.excludedRows.filter(v => typeof v === 'number') : [];
           const perFileParams = {
             ...params,
-            sheetName: cfg.sheetName || params.sheetName,
-            headerRow: cfg.headerRow || params.headerRow,
+            sheetName: cfg.sheetName,
+            headerRow: cfg.headerRow,
             mapping: mappingForFile,
             excludedRows: excludedForFile,
             companyId: cfg.companyId || null,
             companyName: (cfg.companyName || '').trim(),
             fileId: null,
           };
+          preparedFiles.push({ file, params: perFileParams });
+        }
 
+        for (let i = 0; i < preparedFiles.length; i += 1) {
+          const { file, params: perFileParams } = preparedFiles[i];
           const formData = new FormData();
           formData.append('file', file);
           formData.append('params', JSON.stringify(perFileParams));
