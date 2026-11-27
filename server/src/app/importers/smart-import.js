@@ -585,24 +585,35 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       });
     }
 
-    // Résoudre l'entreprise
-    let resolvedCompanyId = companyId ? Number(companyId) : null;
-    if (!resolvedCompanyId && companyName) {
+    // Résoudre l'entreprise.
+    // `importOperation` ne concerne que les LIGNES d'offre (conserver ou
+    // remplacer celles absentes du fichier) : il ne doit pas empêcher la
+    // création de l'entreprise, sinon le premier import d'une offre sous un
+    // nouveau nom échoue avec « Impossible de résoudre l'entreprise », alors
+    // que le mode « update » est la valeur par défaut côté UI.
+    const askedCompanyId = Number(companyId);
+    let resolvedCompanyId = Number.isFinite(askedCompanyId) && askedCompanyId > 0 ? askedCompanyId : null;
+    const askedCompanyName = String(companyName || '').trim();
+    let companyCreated = false;
+    if (!resolvedCompanyId && askedCompanyName) {
       const existing = await client.query(
         'SELECT id FROM companies WHERE lower(name) = lower($1)',
-        [companyName.trim()]
+        [askedCompanyName]
       );
       if (existing.rowCount > 0) {
         resolvedCompanyId = existing.rows[0].id;
-      } else if (!updateOnly) {
+      } else {
         const inserted = await client.query(
           'INSERT INTO companies (name) VALUES ($1) RETURNING id',
-          [companyName.trim()]
+          [askedCompanyName]
         );
         resolvedCompanyId = inserted.rows[0].id;
+        companyCreated = true;
       }
     }
-    if (!resolvedCompanyId) throw new Error('Impossible de résoudre l\'entreprise');
+    if (!resolvedCompanyId) {
+      throw new Error("Impossible de résoudre l'entreprise : sélectionnez une entreprise existante ou saisissez un nom.");
+    }
 
     // Associer l'entreprise au lot
     await client.query(
@@ -1143,6 +1154,7 @@ async function importOffer({ lotId, roundId, companyId, companyName, dataRows, m
       mode: 'offer',
       importOperation,
       companyId: resolvedCompanyId,
+      companyCreated,
       clearedExistingOffers,
       clearedAddedItems,
       matched,

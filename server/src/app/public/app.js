@@ -9658,6 +9658,27 @@ function bindSmartImport() {
   }
 
   /**
+   * Entreprise retenue pour un import d'offre mono-fichier.
+   *
+   * L'etape 1 propose un champ « Entreprise (obligatoire) » par fichier et
+   * l'etape 2 un selecteur + un champ « Nouvelle entreprise ». Sans ce repli,
+   * un nom saisi uniquement a l'etape 1 etait ignore pour un import simple,
+   * et l'import echouait faute d'entreprise.
+   */
+  function resolveSingleOfferCompany() {
+    const selectedId = qs('#import-company-select')?.value || '';
+    if (selectedId) return { companyId: selectedId, companyName: null };
+    const typedName = qs('#import-company-new')?.value?.trim() || '';
+    if (typedName) return { companyId: null, companyName: typedName };
+    ensureFileConfigs();
+    const cfg = importState.fileConfigs?.[importState.activeFileIndex || 0] || {};
+    if (cfg.companyId) return { companyId: cfg.companyId, companyName: null };
+    const stepOneName = String(cfg.companyName || '').trim();
+    if (stepOneName) return { companyId: null, companyName: stepOneName };
+    return { companyId: null, companyName: null };
+  }
+
+  /**
    * Affiche la case « Remplacer toutes les offres » en mode offre uniquement,
    * et aligne son état sur `importState.importOperation`.
    */
@@ -10230,6 +10251,9 @@ function bindSmartImport() {
     if (!selectedFiles.length || !currentLot || !importState.preview) return;
     if (confirmBtn.disabled) return;
     persistActiveFileConfig(true);
+    // Import d'offre mono-fichier : entreprise issue de l'etape 2 avec repli
+    // sur le champ par fichier de l'etape 1.
+    let offerCompany = { companyId: null, companyName: null };
 
     // Validation
     if (importState.mode === 'dpgf') {
@@ -10264,8 +10288,9 @@ function bindSmartImport() {
     }
     if (importState.mode === 'offer') {
       const batchMode = selectedFiles.length > 1;
-      const compId = qs('#import-company-select')?.value;
-      const compName = qs('#import-company-new')?.value?.trim();
+      if (!batchMode) offerCompany = resolveSingleOfferCompany();
+      const compId = offerCompany.companyId;
+      const compName = offerCompany.companyName;
       if (batchMode) {
         ensureFileConfigs();
         const missing = importState.fileConfigs
@@ -10317,8 +10342,8 @@ function bindSmartImport() {
       mapping: importState.mapping,
       excludedRows: [...importState.excludedRows].filter(v => typeof v === 'number'),
       roundId: currentRound?.id || null,
-      companyId: importState.mode === 'offer' ? (qs('#import-company-select')?.value || null) : null,
-      companyName: importState.mode === 'offer' ? (qs('#import-company-new')?.value?.trim() || null) : null,
+      companyId: importState.mode === 'offer' ? (offerCompany.companyId || null) : null,
+      companyName: importState.mode === 'offer' ? (offerCompany.companyName || null) : null,
       fileId: importState.fileId || null,
       // En mode offre, « update » conserve les lignes absentes du fichier ; le
       // remplacement intégral n'a lieu que si l'utilisateur l'a demandé.
