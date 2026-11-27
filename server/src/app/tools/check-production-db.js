@@ -34,7 +34,7 @@ async function checkProductionDB() {
     
     if (emailVerifiedCol.rows.length === 0) {
       console.log('❌ COLONNE email_verified MANQUANTE !');
-      console.log('   → Exécuter: node src/app/tools/run-migration-011.js\n');
+      console.log('   → Exécuter: npm run db:migrate (migration 011)\n');
     } else {
       console.log('✅ Colonne email_verified existe');
       console.log(`   Type: ${emailVerifiedCol.rows[0].data_type}`);
@@ -52,7 +52,7 @@ async function checkProductionDB() {
     
     if (emailVerifTable.rows.length === 0) {
       console.log('❌ TABLE email_verifications MANQUANTE !');
-      console.log('   → Exécuter: node src/app/tools/run-migration-011.js\n');
+      console.log('   → Exécuter: npm run db:migrate (migration 011)\n');
     } else {
       console.log('✅ Table email_verifications existe\n');
     }
@@ -68,7 +68,7 @@ async function checkProductionDB() {
     
     if (accessReqTable.rows.length === 0) {
       console.log('❌ TABLE access_requests MANQUANTE !');
-      console.log('   → Exécuter: node src/app/tools/run-migration-011.js\n');
+      console.log('   → Exécuter: npm run db:migrate (migration 011)\n');
     } else {
       console.log('✅ Table access_requests existe\n');
     }

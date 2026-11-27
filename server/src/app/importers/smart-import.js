@@ -204,36 +204,6 @@ function detectOptionRowsForPreview(previewRows, mapping) {
 }
 
 /**
- * Lit un fichier PDF et retourne un aperçu des données + suggestions de mapping.
- * Le PDF doit contenir un tableau avec colonnes séparées par des espaces.
- * @param {Buffer} buffer - Le buffer du fichier PDF
- * @param {number} [headerRow] - Numéro de ligne d'en-tête (optionnel)
- */
-export async function previewPdf({ buffer, headerRow }) {
-  const { headers, rows, headerRow: resolvedHeaderRow } = await parsePdfTable({ buffer, headerRow });
-  const suggestedMapping = autoDetectMapping(headers);
-
-  const previewRows = rows.map((r) => {
-    const obj = { _rowNum: r.rowNum };
-    for (const h of headers) {
-      obj[h.index] = r.cols[h.index - 1] ?? '';
-    }
-    return obj;
-  });
-
-  return {
-    sheets: ['PDF'],
-    selectedSheet: 'PDF',
-    headerRow: resolvedHeaderRow,
-    headers,
-    suggestedMapping,
-    previewRows,
-    totalRows: rows.length,
-    detectedOptionRows: detectOptionRowsForPreview(previewRows, suggestedMapping),
-  };
-}
-
-/**
  * Convertit un PDF en fichier Excel (en memoire) pour reutiliser le flow d'import existant.
  * @param {Buffer} buffer - Le buffer du fichier PDF
  * @param {number} [headerRow] - Ligne d'en-tete (optionnel)
@@ -312,41 +282,6 @@ export async function applyImport({ buffer, mode, lotId, roundId, companyId, com
     for (const h of headers) {
       if (usedCols.size && !usedCols.has(h.index)) continue;
       const val = cellToValue(row.getCell(h.index));
-      obj[h.index] = val;
-      if (val !== null && val !== '') hasAny = true;
-    }
-    if (hasAny) dataRows.push(obj);
-  }
-
-  return runImportWithRows({ mode, lotId, roundId, companyId, companyName, dataRows, mapping, importOperation, detectOptions });
-}
-
-/**
- * Applique l'import depuis un fichier PDF.
- */
-export async function applyImportPdf({ buffer, mode, lotId, roundId, companyId, companyName, headerRow, mapping, excludedRows, importOperation = 'replace', detectOptions = true }) {
-  const { headers, rows } = await parsePdfTable({ buffer, headerRow });
-
-  const excluded = new Set((excludedRows || []).map(Number));
-  const usedCols = new Set();
-  for (const [field, val] of Object.entries(mapping || {})) {
-    if (val == null) continue;
-    if (field === 'designation' || field === 'num') {
-      const arr = Array.isArray(val) ? val : [val];
-      arr.forEach(ci => usedCols.add(Number(ci)));
-    } else {
-      usedCols.add(Number(val));
-    }
-  }
-
-  const dataRows = [];
-  for (const r of rows) {
-    if (excluded.has(r.rowNum)) continue;
-    const obj = {};
-    let hasAny = false;
-    for (const h of headers) {
-      if (usedCols.size && !usedCols.has(h.index)) continue;
-      const val = r.cols[h.index - 1] ?? '';
       obj[h.index] = val;
       if (val !== null && val !== '') hasAny = true;
     }

@@ -393,7 +393,7 @@ Questions generees automatiquement ou creees manuellement.
 | `moe_value` | `NUMERIC` | Valeur MOE comparee |
 | `offer_value` | `NUMERIC` | Valeur entreprise comparee |
 | `deviation_pct` | `NUMERIC` | Ecart en pourcentage |
-| `status` | `TEXT DEFAULT 'pending'` | `pending`, `answered`, `dismissed` |
+| `status` | `TEXT DEFAULT 'pending'` | `pending`, `answered`, `validated`, `dismissed` |
 | `comment` | `TEXT` | Commentaire / Réponse interne |
 | `answered_at` | `TIMESTAMPTZ` | Date de Réponse |
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Date de creation |
@@ -405,6 +405,23 @@ Types valides finaux :
 - `amount_very_low`, `amount_low`, `amount_high`, `amount_very_high`
 - `unit_mismatch`
 - `manual`
+
+Statuts :
+
+- `pending` : question generee, sans reponse ;
+- `answered` : une reponse est enregistree dans `comment` ;
+- `validated` : la reponse est acceptee par le maitre d'oeuvre. Pose par
+  `PUT /api/question-config/question/:id/validate`, retire par
+  `/unvalidate` (qui repasse a `pending`), et pose en masse par
+  `PUT /api/question-config/lot/:lotId/validate`. **Cette valeur n'est
+  introduite par aucune migration** : elle a ete ajoutee cote code
+  uniquement, et le commentaire de la migration 004 ne la mentionne pas ;
+- `dismissed` : question supprimee (*soft delete*, accompagne de
+  `manual_edited = true`). Les lectures l'excluent par defaut.
+
+Aucune contrainte `CHECK` ne restreint cette colonne : tout texte est
+accepte en base. Une migration corrective pourrait ajouter la contrainte
+et documenter les quatre valeurs.
 
 Contraintes :
 

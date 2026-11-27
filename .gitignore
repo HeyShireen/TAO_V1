@@ -16,3 +16,10 @@
 
 # Documents de formation (captures d'ecran, GIF, manifeste...)
 /docs/formation_aolink/
+
+# Dependances Node (jamais versionnees)
+node_modules/
+
+# Caches Python des scripts de generation documentaire
+__pycache__/
+*.pyc
