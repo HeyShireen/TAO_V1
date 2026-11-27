@@ -231,14 +231,20 @@
     }
   });
 
-  // Prefill depuis le stockage local (si l'utilisateur a choisi de se souvenir)
+  // Prefill depuis le stockage local (si l'utilisateur a choisi de se souvenir).
+  //
+  // Seul l'EMAIL est memorise. Le mot de passe etait auparavant conserve en
+  // clair dans localStorage : n'importe quelle injection de script dans la page
+  // pouvait l'exfiltrer, et pas seulement voler une session (qui, elle, expire
+  // et peut etre revoquee). On nettoie aussi l'ancienne cle au passage.
   try {
+    localStorage.removeItem('rememberedPassword');
     const savedEmail = localStorage.getItem('rememberedEmail');
-    const savedPassword = localStorage.getItem('rememberedPassword');
-    if (savedEmail && savedPassword && !betaAccessConfig?.enabled) {
+    if (savedEmail && !betaAccessConfig?.enabled) {
       emailEl.value = savedEmail;
-      passEl.value = savedPassword;
       if (rememberMe) rememberMe.checked = true;
+      // Le focus va au mot de passe, qui reste a saisir.
+      try { passEl.focus(); } catch(_){}
     }
   } catch(_){}
 
@@ -279,15 +285,14 @@
       if (data.token) {
         try { localStorage.setItem('token', data.token); } catch(_){}
       }
-      // Option "Se souvenir" : stocker email/mdp si demandé, sinon nettoyer
+      // Option "Se souvenir" : seul l'email est memorise, jamais le mot de passe.
       try {
         if (rememberMe?.checked) {
           localStorage.setItem('rememberedEmail', email);
-          localStorage.setItem('rememberedPassword', password);
         } else {
           localStorage.removeItem('rememberedEmail');
-          localStorage.removeItem('rememberedPassword');
         }
+        localStorage.removeItem('rememberedPassword'); // purge d'une ancienne valeur
       } catch(_){ }
       // Rediriger vers l'application
       window.location.href = '/app';
@@ -349,7 +354,6 @@
           if (rememberMe?.checked) {
             try {
               localStorage.setItem('rememberedEmail', regEmailEl.value);
-              localStorage.setItem('rememberedPassword', regPassEl.value);
             } catch(_){ }
           }
         }

@@ -71,6 +71,22 @@ export function isRedisConnected() {
 // ============================================================================
 
 /**
+ * Programme l'expiration d'une clé du cache mémoire de repli.
+ *
+ * Le timer est `unref()` : une simple expiration de cache ne doit pas maintenir
+ * le process en vie. Sans cela, un script ou un test qui touche au cache ne
+ * rend jamais la main — il attend la fin du TTL, soit plusieurs minutes.
+ */
+function scheduleMemoryExpiry(key, ttlSeconds) {
+  const timer = setTimeout(() => {
+    memoryStore.delete(key);
+    memoryTimers.delete(key);
+  }, ttlSeconds * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
+  return timer;
+}
+
+/**
  * Stocke une valeur avec TTL optionnel (en secondes)
  */
 export async function redisSet(key, value, ttlSeconds = null) {
@@ -86,10 +102,7 @@ export async function redisSet(key, value, ttlSeconds = null) {
       if (ttlSeconds) {
         // Nettoyer le timer précédent s'il existe
         if (memoryTimers.has(key)) clearTimeout(memoryTimers.get(key));
-        memoryTimers.set(key, setTimeout(() => {
-          memoryStore.delete(key);
-          memoryTimers.delete(key);
-        }, ttlSeconds * 1000));
+        memoryTimers.set(key, scheduleMemoryExpiry(key, ttlSeconds));
       }
     }
   } catch (err) {
@@ -163,14 +176,35 @@ export async function redisIncr(key, ttlSeconds = null) {
     memoryStore.set(key, String(current));
     if (ttlSeconds && current === 1) {
       if (memoryTimers.has(key)) clearTimeout(memoryTimers.get(key));
-      memoryTimers.set(key, setTimeout(() => {
-        memoryStore.delete(key);
-        memoryTimers.delete(key);
-      }, ttlSeconds * 1000));
+      memoryTimers.set(key, scheduleMemoryExpiry(key, ttlSeconds));
     }
     return current;
   } catch (err) {
     return 1;
+  }
+}
+
+/**
+ * Décrémente un compteur sans descendre sous zéro.
+ * Utilisé par le rate limiting quand une requête réussie ne doit pas être
+ * comptée (`skipSuccessfulRequests`).
+ */
+export async function redisDecr(key) {
+  try {
+    if (isRedisConnected()) {
+      const val = await redisClient.decr(key);
+      if (val < 0) {
+        await redisClient.set(key, '0');
+        return 0;
+      }
+      return val;
+    }
+    const current = parseInt(memoryStore.get(key) || '0', 10) - 1;
+    const next = current < 0 ? 0 : current;
+    memoryStore.set(key, String(next));
+    return next;
+  } catch (err) {
+    return 0;
   }
 }
 

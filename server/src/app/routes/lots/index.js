@@ -7,6 +7,7 @@ import { requireRole, isResponsableOrAdmin } from '../../middleware/roles.js';
 import { canViewProject, canEditProject } from '../../utils/permissions.js';
 import { previewExcel, applyImport, convertPdfToExcelBuffer } from '../../importers/smart-import.js';
 import { redisSet, redisGet } from '../../utils/redis.js';
+import { companyScope } from '../../utils/company-scope.js';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10 Mo max
 const router = express.Router();
@@ -373,8 +374,12 @@ async function mergeLotCompanyInto(client, { lotId, fromCompanyId, toCompanyId }
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const roundId = req.query.round_id ? Number(req.query.round_id) : null;
-  const isEntreprise = req.user?.role === 'entreprise';
-  const userCompanyId = req.user?.company_id || null;
+  const scope = companyScope(req);
+  const isEntreprise = scope.isEntreprise;
+  const userCompanyId = scope.companyId;
+  if (scope.orphan) {
+    return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
+  }
 
   try {
     // SÉCURITÉ: Vérifier que l'utilisateur peut voir le projet de ce lot
@@ -405,7 +410,7 @@ router.get('/:id', async (req, res) => {
          FROM lot_companies lc2
          JOIN companies c2 ON c2.id = lc2.company_id
          WHERE lc2.lot_id = l.id
-         ${isEntreprise && userCompanyId ? 'AND c2.id = ' + userCompanyId : ''}) as companies,
+         ${scope.sqlAnd('c2.id')}) as companies,
         json_agg(jsonb_build_object(
           'id', o.id,
           'item_id', o.item_id,
@@ -417,9 +422,9 @@ router.get('/:id', async (req, res) => {
           'amount', o.amount,
           'offer_designation', o.offer_designation,
           'comment', o.comment
-        )) FILTER (WHERE o.id IS NOT NULL ${isEntreprise && userCompanyId ? 'AND o.company_id = ' + userCompanyId : ''}) as offers
+        )) FILTER (WHERE o.id IS NOT NULL${scope.sqlAnd('o.company_id')}) as offers
       FROM lots l
-      LEFT JOIN items i ON i.lot_id = l.id ${isEntreprise && userCompanyId ? `AND (i.source_company_id IS NULL OR i.source_company_id = ${Number(userCompanyId)})` : ''}
+      LEFT JOIN items i ON i.lot_id = l.id${scope.sqlAndOwnOrShared('i.source_company_id')}
       LEFT JOIN items parent_i ON parent_i.id = i.parent_item_id
       ${isEntreprise ? '' : 'LEFT JOIN moe_items m ON m.item_id = i.id'}
       LEFT JOIN offers o ON o.item_id = i.id ${offerCondition}
@@ -545,8 +550,12 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/table', async (req, res) => {
   const id = Number(req.params.id);
   const roundId = req.query.round_id ? Number(req.query.round_id) : null;
-  const isEntreprise = req.user?.role === 'entreprise';
-  const userCompanyId = req.user?.company_id || null;
+  const scope = companyScope(req);
+  const isEntreprise = scope.isEntreprise;
+  const userCompanyId = scope.companyId;
+  if (scope.orphan) {
+    return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
+  }
 
   try {
   // SÉCURITÉ: Vérifier que l'utilisateur peut voir le projet de ce lot
@@ -559,8 +568,7 @@ router.get('/:id/table', async (req, res) => {
     SELECT i.*, p.num AS parent_num, p.designation AS parent_designation
     FROM items i
     LEFT JOIN items p ON p.id = i.parent_item_id
-    WHERE i.lot_id=$1
-      ${isEntreprise && userCompanyId ? `AND (i.source_company_id IS NULL OR i.source_company_id = ${Number(userCompanyId)})` : ''}
+    WHERE i.lot_id=$1${scope.sqlAndOwnOrShared('i.source_company_id')}
     ORDER BY i.position NULLS LAST, i.id
   `, [id]);
   const itemIds = itemsRes.rows.map(r => r.id);
@@ -917,12 +925,13 @@ router.post('/:id/save-grid', requireRole(['platform_admin', 'tenant_admin', 're
   const projectId = await getProjectIdForLot(lotId);
   if (!projectId) return res.status(404).json({ error: 'Lot introuvable' });
   
-  const isEntreprise = req.user?.role === 'entreprise';
-  const userCompanyId = req.user?.company_id || null;
-  
+  const scope = companyScope(req);
+  const isEntreprise = scope.isEntreprise;
+  const userCompanyId = scope.companyId;
+
   // Entreprise: vérifier que leur company est liée au lot
   if (isEntreprise) {
-    if (!userCompanyId) return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
+    if (scope.orphan) return res.status(403).json({ error: 'Aucune entreprise associée à votre compte' });
     const companyLink = await query(
       'SELECT 1 FROM lot_companies WHERE lot_id = $1 AND company_id = $2',
       [lotId, userCompanyId]

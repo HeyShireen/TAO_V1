@@ -16,6 +16,7 @@ import jwt from 'jsonwebtoken'
 import { authQuery, query, ensureSchema } from './db.js'
 import { hashPassword } from './utils/hash.js'
 import { initRedis } from './utils/redis.js'
+import { sharedRateLimitStore } from './utils/rate-limit-store.js'
 import { sanitizeInput } from './middleware/security.js'
 import { DEMO_RESET_MESSAGE, isDemoHost } from './utils/tenant.js'
 import authRoutes from './routes/auth/index.js'
@@ -48,44 +49,58 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 const DEFAULT_DEMO_EMAIL = 'demo@ao-link.fr';
 const DEFAULT_DEMO_PASSWORD = 'DemoAoLink2026!';
 
+// Déclaré ici car utilisé dès la configuration des middlewares (journalisation),
+// bien avant les limiteurs de débit. Un `const` plus bas provoquerait une
+// ReferenceError au démarrage (zone morte temporelle), que `node --check` ne
+// détecte pas.
+const isDev = process.env.NODE_ENV === 'development';
+
 function isBetaAccessMode() {
   return process.env.BETA_ACCESS_MODE === 'true';
 }
 
+/**
+ * Identifiants du compte beta, exposes en clair par /api/public-config pour
+ * preremplir le formulaire de connexion.
+ *
+ * ⚠️ Le mode beta PUBLIE un mot de passe sur un domaine qui n'est pas l'hote de
+ * demonstration. Il exige donc une configuration explicite : plus aucun repli
+ * silencieux sur DEMO_USER_EMAIL / DEMO_USER_PASSWORD. Sans ce garde-fou,
+ * poser BETA_ACCESS_MODE=true sur le domaine de production suffisait a y
+ * publier le mot de passe du compte de demonstration.
+ */
 function getBetaAccessCredentials() {
-  const email = (process.env.BETA_USER_EMAIL || process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase();
-  const password = process.env.BETA_USER_PASSWORD
-    || process.env.DEMO_USER_PASSWORD
-    || '';
-
-  return { email, password };
+  const email = (process.env.BETA_USER_EMAIL || '').trim().toLowerCase();
+  const password = process.env.BETA_USER_PASSWORD || '';
+  if (!email || !password) return { email: '', password: '', configured: false };
+  return { email, password, configured: true };
 }
 
-async function ensureBetaAccessUser() {
-  if (!isBetaAccessMode() && !process.env.DEMO_USER_PASSWORD) return;
+/** Identifiants du compte de demonstration (hote DEMO uniquement). */
+function getDemoCredentials() {
+  return {
+    email: (process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase(),
+    password: process.env.DEMO_USER_PASSWORD || DEFAULT_DEMO_PASSWORD,
+    configured: true,
+  };
+}
 
-  const { email, password } = getBetaAccessCredentials();
-  const isDemoAccount = email === (process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase();
-  const role = isDemoAccount ? 'responsable' : (process.env.BETA_USER_ROLE || 'responsable');
-
-  if (!password) {
-    console.warn('Mode beta actif, mais aucun BETA_USER_PASSWORD/DEMO_USER_PASSWORD n\'est defini.');
-    return;
-  }
-
+/** Cree ou met a jour un compte a acces prerempli (demo ou beta). */
+async function ensureProvisionedAccount({ email, password, role, tenantSlug, label }) {
   const passwordHash = await hashPassword(password);
-  const tenant = await authQuery('SELECT id FROM tenants WHERE slug = $1', [isDemoAccount ? 'demo' : 'dmx']);
-  if (!tenant.rowCount) throw new Error('Tenant initial introuvable');
+  const tenant = await authQuery('SELECT id FROM tenants WHERE slug = $1', [tenantSlug]);
+  if (!tenant.rowCount) throw new Error(`Tenant initial introuvable: ${tenantSlug}`);
   const tenantId = tenant.rows[0].id;
   const existing = await authQuery('SELECT id, role FROM users WHERE lower(email) = lower($1)', [email]);
 
   if (existing.rowCount > 0) {
+    // Ne jamais degrader un compte plateforme en compte a acces prerempli.
     if (existing.rows[0].role === 'platform_admin') return;
     await authQuery(
       'UPDATE users SET password_hash = $2, role = $3, email_verified = true, tenant_id = $4 WHERE id = $1',
       [existing.rows[0].id, passwordHash, role, tenantId]
     );
-    console.log(`Compte beta mis a jour: ${email}`);
+    console.log(`Compte ${label} mis a jour: ${email}`);
     return;
   }
 
@@ -93,7 +108,46 @@ async function ensureBetaAccessUser() {
     'INSERT INTO users (email, password_hash, role, email_verified, tenant_id) VALUES ($1, $2, $3, true, $4)',
     [email, passwordHash, role, tenantId]
   );
-  console.log(`Compte beta cree: ${email}`);
+  console.log(`Compte ${label} cree: ${email}`);
+}
+
+/**
+ * Provisionne les comptes a identifiants preremplis. Les deux cas sont
+ * desormais traites separement : le compte de demonstration n'est plus utilise
+ * comme repli du compte beta.
+ */
+async function ensureBetaAccessUser() {
+  // Compte de demonstration : uniquement si un mot de passe est configure.
+  if (process.env.DEMO_USER_PASSWORD) {
+    const demo = getDemoCredentials();
+    await ensureProvisionedAccount({
+      email: demo.email,
+      password: demo.password,
+      role: 'responsable',
+      tenantSlug: 'demo',
+      label: 'demo',
+    });
+  }
+
+  // Compte beta : exige BETA_USER_EMAIL *et* BETA_USER_PASSWORD explicites.
+  if (isBetaAccessMode()) {
+    const beta = getBetaAccessCredentials();
+    if (!beta.configured) {
+      console.warn(
+        'BETA_ACCESS_MODE=true mais BETA_USER_EMAIL et/ou BETA_USER_PASSWORD manquent : '
+        + 'le mode beta reste INACTIF. Aucun repli sur le compte de demonstration, '
+        + 'pour ne pas publier son mot de passe sur ce domaine.'
+      );
+      return;
+    }
+    await ensureProvisionedAccount({
+      email: beta.email,
+      password: beta.password,
+      role: process.env.BETA_USER_ROLE || 'responsable',
+      tenantSlug: 'dmx',
+      label: 'beta',
+    });
+  }
 }
 
 // Valider que les origines sont configurées en production
@@ -172,13 +226,15 @@ app.use(helmet({
 // Dev: 10000 req/15min (quasi illimité), Prod: 2000 req/15min (usage intensif OK)
 // Note: 2000 req/15min = ~2 req/sec soutenu par utilisateur, largement suffisant
 // Un serveur moyen (4 CPU, 4GB RAM) peut gérer 500+ req/sec total
-const isDev = process.env.NODE_ENV === 'development';
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: isDev ? 10000 : 2000, // Dev: quasi illimité, Prod: usage intensif supporté
   message: { error: 'Trop de requêtes, réessayez dans 15 minutes' },
   standardHeaders: true,
   legacyHeaders: false,
+  // Compteurs partagés : sinon chaque instance PM2 a les siens et un
+  // redéploiement remet les blocages à zéro.
+  store: sharedRateLimitStore('rl:global:'),
 })
 
 // Rate Limiting Auth: 5 tentatives / 1 min (login/register)
@@ -196,6 +252,7 @@ const authLimiter = rateLimit({
     });
   },
   skipSuccessfulRequests: true, // Ne compte que les échecs
+  store: sharedRateLimitStore('rl:auth:'),
 })
 
 // Appliquer le rate limiter global sur toutes les routes API
@@ -209,18 +266,23 @@ app.use(sanitizeInput)
 // API
 app.get('/api', (_req, res) => res.json({ ok: true, name: 'offer-compare-server' }))
 app.get('/api/public-config', (req, res) => {
+  // ⚠️ Route PUBLIQUE, sans authentification : tout ce qui sort ici est lisible
+  // par n'importe qui. Elle ne peut donc exposer un mot de passe que dans deux
+  // cas volontaires et explicitement configures :
+  //   - l'hote de demonstration, dont les identifiants sont publics par nature ;
+  //   - le mode beta, qui exige BETA_USER_EMAIL *et* BETA_USER_PASSWORD.
+  // Hors de ces cas, email et mot de passe sortent vides.
   const demoAccessEnabled = isDemoHost(req);
-  const betaAccessEnabled = demoAccessEnabled || process.env.BETA_ACCESS_MODE === 'true';
-  const betaCredentials = demoAccessEnabled ? {
-    email: (process.env.DEMO_USER_EMAIL || DEFAULT_DEMO_EMAIL).trim().toLowerCase(),
-    password: process.env.DEMO_USER_PASSWORD || DEFAULT_DEMO_PASSWORD,
-  } : getBetaAccessCredentials();
+  const credentials = demoAccessEnabled
+    ? getDemoCredentials()
+    : (isBetaAccessMode() ? getBetaAccessCredentials() : { email: '', password: '', configured: false });
+  const prefillEnabled = credentials.configured;
 
   res.json({
     betaAccess: {
-      enabled: betaAccessEnabled,
-      email: betaAccessEnabled ? betaCredentials.email : '',
-      password: betaAccessEnabled ? betaCredentials.password : '',
+      enabled: prefillEnabled,
+      email: prefillEnabled ? credentials.email : '',
+      password: prefillEnabled ? credentials.password : '',
       registrationDisabled: true,
     },
     demo: {

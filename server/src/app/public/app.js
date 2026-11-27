@@ -926,8 +926,10 @@ function parseJwt(token) {
 
 function updateCurrentUser() {
   if (token) {
+    // Le payload du JWT n'est pas journalise : il contient l'identite, le role,
+    // l'entreprise et le tenant, et finissait en clair dans la console du
+    // navigateur (et dans toute capture d'ecran ou export de logs).
     const payload = parseJwt(token);
-    console.log('JWT Payload:', payload);
     if (payload) {
       currentUser = {
         id: payload.id,
@@ -938,7 +940,6 @@ function updateCurrentUser() {
         active_tenant_id: Number(payload.active_tenant_id || payload.tenant_id),
         active_tenant_type: payload.active_tenant_type || null,
       };
-      console.log('Current user updated:', currentUser);
       // Ajuster l'UI selon le rôle
       applyRoleVisibility();
     }

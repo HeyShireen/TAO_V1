@@ -7,8 +7,17 @@ import { redisIncr, redisGet, redisSet, redisDel, redisDelPattern } from '../uti
 // Préfixes Redis
 const LOGIN_ATTEMPTS_PREFIX = 'login_attempts:';
 const LOGIN_BLOCKED_PREFIX = 'login_blocked:';
-const LOGIN_ATTEMPTS_WINDOW_SECONDS = 60;
-const LOGIN_BLOCK_DURATION_SECONDS = 60;
+
+// Seuils anti-brute-force par ADRESSE EMAIL (le limiteur par IP est dans
+// server.js). Les valeurs precedentes — 20 tentatives par minute puis blocage
+// d'une minute — autorisaient environ 1 200 essais par heure sur un meme
+// compte, ce qui n'arrete pas une attaque par dictionnaire.
+//
+// Un login reussi appelle resetEmailAttempts() : un utilisateur qui se trompe
+// quelques fois puis entre le bon mot de passe repart de zero.
+const LOGIN_ATTEMPTS_WINDOW_SECONDS = Number(process.env.LOGIN_ATTEMPTS_WINDOW_SECONDS || 600); // 10 min
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 10);
+const LOGIN_BLOCK_DURATION_SECONDS = Number(process.env.LOGIN_BLOCK_DURATION_SECONDS || 600); // 10 min
 
 /**
  * Rate limiter par email (pas seulement par IP)
@@ -40,25 +49,31 @@ export function emailRateLimiter(req, res, next) {
       await redisDel(blockedKey);
     }
     
-    // Incrémenter les tentatives (TTL 1 min)
+    // Incrémenter les tentatives sur la fenêtre glissante
     const count = await redisIncr(attemptsKey, LOGIN_ATTEMPTS_WINDOW_SECONDS);
-    
-    // Bloquer après 20 tentatives
-    if (count > 20) {
+
+    if (count > LOGIN_MAX_ATTEMPTS) {
       const blockedUntilTs = Date.now() + LOGIN_BLOCK_DURATION_SECONDS * 1000;
-      await redisSet(blockedKey, String(blockedUntilTs), LOGIN_BLOCK_DURATION_SECONDS); // TTL 1 min
-      return res.status(429).json({ 
-        error: 'Trop de tentatives échouées. Compte bloqué pendant 1 minute.',
+      await redisSet(blockedKey, String(blockedUntilTs), LOGIN_BLOCK_DURATION_SECONDS);
+      const minutes = Math.max(1, Math.round(LOGIN_BLOCK_DURATION_SECONDS / 60));
+      return res.status(429).json({
+        error: `Trop de tentatives échouées. Compte bloqué pendant ${minutes} minute(s).`,
         cooldown: true,
         remainingSeconds: LOGIN_BLOCK_DURATION_SECONDS,
         blockedUntil: blockedUntilTs
       });
     }
-    
+
     req.userEmail = email;
     next();
-  }).catch(() => {
-    // Si Redis échoue, laisser passer (sécurité dégradée > blocage total)
+  }).catch((err) => {
+    // `utils/redis.js` retombe de lui-même sur un cache mémoire quand Redis est
+    // injoignable : arriver ici signale donc une anomalie, pas une simple
+    // indisponibilité. On laisse passer la requête pour ne pas bloquer toutes
+    // les connexions sur un bug de compteur — le limiteur par IP (5 échecs par
+    // minute, également partagé) reste actif — mais on le signale clairement
+    // au lieu de l'avaler en silence.
+    console.error('[security] limiteur par email hors service, protection degradee:', err);
     req.userEmail = email;
     next();
   });
